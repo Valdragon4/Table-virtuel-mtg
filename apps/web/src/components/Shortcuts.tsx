@@ -1,0 +1,424 @@
+/**
+ * Raccourcis clavier de la table.
+ *
+ * Deux familles, et une seule règle d'arbitrage, écrite ici et nulle part
+ * ailleurs :
+ *
+ *     carte survolée  >  sélection courante  >  action globale
+ *
+ * Un raccourci contextuel agit sur la carte sous le curseur ; s'il n'y en a
+ * pas, sur la sélection ; si la touche n'a pas de sens dans la zone de cette
+ * carte, on retombe sur l'action globale. C'est ce qui rend la collision
+ * volontaire lisible : `S` met une carte sur la pile quand on en survole une,
+ * et mélange la bibliothèque sinon.
+ *
+ * Pendant un glisser-déposer, le survol est ignoré : on est en train de
+ * déplacer une carte, pas de la commander au clavier.
+ *
+ * Les mots-clés de Magic restent en anglais (scry, surveil, mill, mulligan).
+ */
+import { useEffect } from 'react';
+import type { CardView, Intent, ObjectId, ZoneKind } from '@mtg/shared';
+import { useGame } from '../store/game.js';
+import { useCloseOnEscape } from '../lib/overlay.js';
+import { tapIntent } from '../lib/tap.js';
+
+interface Binding {
+  keys: string;
+  label: string;
+}
+
+/** Raccourcis agissant sur la carte survolée (ou, à défaut, la sélection). */
+const HAND_BINDINGS: Binding[] = [
+  { keys: 'P', label: 'Jouer' },
+  { keys: 'M', label: 'Jouer face cachée' },
+  { keys: 'S', label: 'Mettre sur la pile' },
+  { keys: 'G', label: 'Défausser' },
+  { keys: 'E', label: 'Exiler' },
+  { keys: 'L', label: 'Dessus de la bibliothèque' },
+  { keys: 'B', label: 'Dessous de la bibliothèque' },
+];
+
+const PERMANENT_BINDINGS: Binding[] = [
+  { keys: 'T', label: 'Engager / dégager' },
+  { keys: 'F', label: 'Transformer (recto-verso)' },
+  { keys: 'M', label: 'Retourner face cachée / visible' },
+  { keys: 'C', label: 'Copier en jeton' },
+  { keys: '+ / −', label: 'Marqueur +1/+1' },
+  { keys: 'H', label: 'Vers la main' },
+  { keys: 'G / Suppr', label: 'Au cimetière' },
+  { keys: 'E', label: 'Exiler' },
+  { keys: 'L / B', label: 'Dessus / dessous de la bibliothèque' },
+];
+
+const PILE_BINDINGS: Binding[] = [
+  { keys: 'P', label: 'Sur le champ de bataille' },
+  { keys: 'H', label: 'Vers la main' },
+  { keys: 'G / E', label: 'Au cimetière / exiler' },
+  { keys: 'L / B', label: 'Dessus / dessous de la bibliothèque' },
+];
+
+/** Raccourcis agissant quand aucune carte n'est survolée. */
+const GLOBAL_BINDINGS: Binding[] = [
+  { keys: 'D', label: 'Piocher une carte' },
+  { keys: 'U', label: 'Tout dégager' },
+  { keys: 'S', label: 'Mélanger la bibliothèque' },
+  { keys: 'E', label: 'Passer le tour' },
+  { keys: 'Y', label: 'Scry 1' },
+  { keys: 'Ctrl + Z', label: 'Annuler sa dernière action (10 s)' },
+  { keys: 'Entrée', label: 'Écrire un message' },
+  { keys: 'Échap', label: 'Vider la sélection, fermer un menu' },
+  { keys: '?', label: 'Cette aide' },
+];
+
+const POINTER_BINDINGS: Binding[] = [
+  { keys: 'Molette', label: 'Zoomer' },
+  { keys: 'Glisser', label: 'Lasso, depuis le fond : sélectionne vos permanents' },
+  { keys: 'Alt + Glisser', label: 'Lasso incluant les permanents adverses' },
+  { keys: 'Clic droit glissé', label: 'Déplacer la table' },
+  { keys: 'Clic milieu', label: "Déplacer la table, depuis n'importe où" },
+  { keys: 'Ctrl + Clic', label: 'Ajouter ou retirer de la sélection' },
+  { keys: 'Glisser une carte', label: 'La déposer dans une autre zone' },
+  { keys: 'Double-clic', label: 'Engager / dégager' },
+  { keys: 'Clic droit', label: 'Menu de la carte, de la pile ou de la table' },
+];
+
+export function useShortcuts(onHelp: () => void): void {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) {
+        return;
+      }
+
+      const state = useGame.getState();
+      if (!state.mySeat) return;
+
+      if (event.ctrlKey && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        state.send({ type: 'UNDO_LAST' });
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+      if (event.key === 'Escape') {
+        state.setSelection(new Set());
+        state.openMenu(null);
+        return;
+      }
+
+      // --- Arbitrage : carte survolée, sinon sélection, sinon global. -------
+      const hovered = state.drag
+        ? undefined
+        : state.hoveredCardId
+          ? state.cards.get(state.hoveredCardId)
+          : undefined;
+      const selected = [...state.selection]
+        .map((id) => state.cards.get(id))
+        .filter((card): card is CardView => Boolean(card));
+      const focus = hovered ?? selected[0];
+      const targets: ObjectId[] = hovered
+        ? state.selection.has(hovered.id)
+          ? [...state.selection]
+          : [hovered.id]
+        : selected.map((card) => card.id);
+
+      if (focus && targets.length > 0) {
+        const intents = contextualIntents(event.key, focus, targets);
+        if (intents.length > 0) {
+          event.preventDefault();
+          for (const intent of intents) state.send(intent);
+          return;
+        }
+      }
+
+      // --- Aucune carte concernée, ou touche sans effet ici : global. -------
+      const seat = state.mySeat;
+      switch (event.key.toLowerCase()) {
+        case 'd':
+          state.send({ type: 'DRAW', count: 1 });
+          break;
+        case 'u':
+          state.send({ type: 'UNTAP_ALL' });
+          break;
+        case 's':
+          state.send({ type: 'SHUFFLE', zone: { seat, kind: 'LIBRARY' } });
+          break;
+        case 'e':
+          state.send({ type: 'END_TURN' });
+          break;
+        case 'y':
+          state.send({ type: 'LOOK', zone: { seat, kind: 'LIBRARY' }, count: 1, mode: 'SCRY' });
+          break;
+        case '?':
+          onHelp();
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // Aucune dépendance d'état : tout est relu dans `useGame.getState()` au
+    // moment de la frappe. Un écouteur qui capturerait `mySeat` au montage
+    // resterait inerte, puisqu'il est monté avant qu'on ait un siège.
+  }, [onHelp]);
+}
+
+/**
+ * Intents d'un raccourci contextuel, selon la zone de la carte visée. Renvoie
+ * une liste vide si la touche n'a pas de sens ici — l'appelant retombe alors
+ * sur l'action globale.
+ */
+function contextualIntents(rawKey: string, focus: CardView, targets: ObjectId[]): Intent[] {
+  const key = rawKey.length === 1 ? rawKey.toLowerCase() : rawKey;
+  const zone = (kind: ZoneKind) => ({ seat: focus.owner, kind });
+  const move = (kind: ZoneKind, extra: Record<string, unknown> = {}): Intent[] =>
+    targets.map((cardId) => ({ type: 'MOVE_CARD', cardId, to: zone(kind), ...extra }) as Intent);
+
+  if (focus.zone.kind === 'HAND') {
+    switch (key) {
+      case 'p':
+        return move('BATTLEFIELD', { x: 60, y: 60 });
+      case 'm':
+        return move('BATTLEFIELD', { x: 60, y: 60, faceDown: true });
+      case 's':
+        return move('STACK_NOTE');
+      case 'g':
+        return move('GRAVEYARD');
+      case 'e':
+        return move('EXILE');
+      case 'l':
+        return move('LIBRARY', { index: 'TOP' });
+      case 'b':
+        return move('LIBRARY', { index: 'BOTTOM' });
+      default:
+        return [];
+    }
+  }
+
+  if (focus.zone.kind === 'BATTLEFIELD') {
+    switch (key) {
+      case 't':
+        // Bascule de groupe : règle unique, dans `lib/tap.ts`.
+        return [tapIntent(targets)];
+      case 'f':
+        return targets.map((cardId) => ({ type: 'FLIP_FACE', cardId }));
+      case 'm':
+        return targets.map((cardId) =>
+          focus.faceDown ? { type: 'TURN_FACE_UP', cardId } : { type: 'TURN_FACE_DOWN', cardId },
+        );
+      case 'c':
+        return [{ type: 'CREATE_TOKEN', copyOf: focus.id, x: focus.x + 24, y: focus.y + 24 }];
+      case '+':
+      case '=':
+        return targets.map((targetId) => ({ type: 'ADD_COUNTER', targetId, kind: '+1/+1', delta: 1 }));
+      case '-':
+        return targets.map((targetId) => ({ type: 'ADD_COUNTER', targetId, kind: '+1/+1', delta: -1 }));
+      case 'h':
+        return move('HAND');
+      case 'g':
+      // `Suppr` est le second chemin vers le cimetière, et le plus attendu :
+      // c'est la touche qu'on cherche quand un permanent meurt. Elle suit
+      // exactement la règle d'arbitrage du fichier — la carte survolée, ou
+      // toute la sélection si la carte survolée en fait partie — parce que
+      // c'est `targets` qui la porte, et non ce `case`.
+      case 'Delete':
+        return move('GRAVEYARD');
+      case 'e':
+        return move('EXILE');
+      case 'l':
+        return move('LIBRARY', { index: 'TOP' });
+      case 'b':
+        return move('LIBRARY', { index: 'BOTTOM' });
+      default:
+        return [];
+    }
+  }
+
+  if (['GRAVEYARD', 'EXILE', 'COMMAND', 'STACK_NOTE'].includes(focus.zone.kind)) {
+    switch (key) {
+      case 'p':
+        return move('BATTLEFIELD', { x: 60, y: 60 });
+      case 'h':
+        return move('HAND');
+      case 'g':
+        return focus.zone.kind === 'GRAVEYARD' ? [] : move('GRAVEYARD');
+      case 'e':
+        return focus.zone.kind === 'EXILE' ? [] : move('EXILE');
+      case 'l':
+        return move('LIBRARY', { index: 'TOP' });
+      case 'b':
+        return move('LIBRARY', { index: 'BOTTOM' });
+      default:
+        return [];
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Aide des raccourcis.
+ *
+ * C'est la première chose qu'un joueur ouvre en découvrant la table, donc elle
+ * se lit d'un coup d'œil : deux familles annoncées, des touches dessinées, une
+ * ligne par geste, et la règle d'arbitrage en tête — parce que c'est elle, et
+ * non la liste, qui explique pourquoi `S` fait deux choses.
+ *
+ * Palette : celle de `docs/ui-reference.md` (panneau `#1f2937`, bordure
+ * `#374151`, accent doré pour ce qui compte). Les mots-clés de Magic restent
+ * en anglais, le reste en français.
+ */
+export function ShortcutsHelp({ onClose }: { onClose: () => void }): React.ReactElement {
+  useCloseOnEscape(onClose);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm sm:p-8"
+      onClick={onClose}
+    >
+      <div
+        aria-label="Raccourcis clavier"
+        aria-modal
+        className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-edge bg-[#151c28] shadow-2xl shadow-black/70"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <header className="flex items-start gap-4 border-b border-edge bg-panel/70 px-6 py-4">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold tracking-tight text-slate-100">
+              Raccourcis clavier
+            </h2>
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
+              Une touche agit d'abord sur la carte{' '}
+              <span className="font-medium text-amber-200/90">sous le curseur</span>, sinon sur la{' '}
+              <span className="font-medium text-sky-300/90">sélection</span>, sinon sur la{' '}
+              <span className="font-medium text-slate-200">table</span>.
+            </p>
+          </div>
+          <button
+            aria-label="Fermer"
+            className="-mr-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-edge text-slate-400 transition hover:border-slate-500 hover:bg-white/5 hover:text-slate-100"
+            onClick={onClose}
+            type="button"
+          >
+            <svg aria-hidden fill="none" height="14" viewBox="0 0 14 14" width="14">
+              <path
+                d="M1.5 1.5 L12.5 12.5 M12.5 1.5 L1.5 12.5"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeWidth="1.6"
+              />
+            </svg>
+          </button>
+        </header>
+
+        <div className="scrollbar-thin flex-1 overflow-y-auto px-6 py-5">
+          <Group
+            hint="La carte sous le pointeur l'emporte sur la sélection. Pendant un glisser-déposer, le survol est ignoré."
+            title="Au survol d'une carte"
+          >
+            <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
+              <Section bindings={HAND_BINDINGS} title="En main" />
+              <Section bindings={PERMANENT_BINDINGS} title="Permanent en jeu" />
+              <Section bindings={PILE_BINDINGS} title="Cimetière, exil, commandement" />
+            </div>
+          </Group>
+
+          <Group
+            hint="Ces touches s'appliquent quand aucune carte n'est survolée ni sélectionnée."
+            title="Table et souris"
+          >
+            <div className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
+              <Section bindings={GLOBAL_BINDINGS} title="Actions globales" />
+              <Section bindings={POINTER_BINDINGS} title="Souris" />
+            </div>
+          </Group>
+        </div>
+
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-edge bg-panel/50 px-6 py-3 text-[11px] text-slate-500">
+          <span>Échap, ou un clic hors du panneau, referme cette aide.</span>
+          <span className="flex items-center gap-1.5">
+            <kbd className="kbd">?</kbd> la rouvre à tout moment.
+          </span>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+/** Famille de raccourcis : un titre, une phrase d'explication, puis ses colonnes. */
+function Group({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <section className="mb-6 last:mb-0">
+      <div className="mb-2.5 flex items-baseline gap-3">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-200/80">
+          {title}
+        </h3>
+        <span className="h-px flex-1 bg-edge" />
+      </div>
+      <p className="mb-3 max-w-2xl text-[11px] leading-relaxed text-slate-500">{hint}</p>
+      {children}
+    </section>
+  );
+}
+
+function Section({ title, bindings }: { title: string; bindings: Binding[] }): React.ReactElement {
+  return (
+    <div>
+      <h4 className="mb-2 border-b border-edge/60 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+        {title}
+      </h4>
+      <dl className="space-y-0.5">
+        {bindings.map((binding) => (
+          <div
+            className="flex items-center justify-between gap-3 rounded px-1 py-[3px] transition-colors hover:bg-white/[0.04]"
+            key={binding.keys}
+          >
+            <dt className="shrink-0">
+              <Keys keys={binding.keys} />
+            </dt>
+            <dd className="text-right text-[13px] leading-snug text-slate-300">{binding.label}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+/**
+ * Touches dessinées. `Ctrl + Z` se lit comme une combinaison, `L / B` comme un
+ * choix : le séparateur est conservé entre les pastilles au lieu d'être noyé
+ * dans une chaîne monospace.
+ */
+function Keys({ keys }: { keys: string }): React.ReactElement {
+  const parts = keys.split(/\s+(\+|\/)\s+/);
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {parts.map((part, index) =>
+        // `split` avec un groupe capturant intercale les séparateurs aux rangs
+        // impairs. On teste le rang, et non le texte : sans cela la touche `+`
+        // de « + / − » serait prise pour le liant d'une combinaison.
+        index % 2 === 1 ? (
+          <span className="kbd-join" key={index}>
+            {part}
+          </span>
+        ) : (
+          <kbd className="kbd" key={index}>
+            {part}
+          </kbd>
+        ),
+      )}
+    </span>
+  );
+}

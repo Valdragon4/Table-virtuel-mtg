@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  overscroll-behavior: none;
+}
+
+/* Le plan de table : pas de sélection de texte parasite au drag. */
+.table-surface {
+  user-select: none;
+  touch-action: none;
+}
+
+/**
+ * Rendu foil : un dégradé animé posé par-dessus l'image Scryfall, jamais un
+ * asset officiel. L'angle suit la carte, l'animation reste discrète.
+ */
+.foil::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  mix-blend-mode: color-dodge;
+  opacity: 0.45;
+  background: linear-gradient(
+    115deg,
+    transparent 20%,
+    rgba(255, 0, 128, 0.5) 35%,
+    rgba(0, 255, 255, 0.5) 45%,
+    rgba(255, 255, 0, 0.5) 55%,
+    transparent 75%
+  );
+  background-size: 300% 300%;
+  animation: foil-sweep 4s linear infinite;
+}
+
+@keyframes foil-sweep {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .foil::after { animation: none; }
+}
+
+.card-shadow {
+  box-shadow: 0 2px 8px rgb(0 0 0 / 55%);
+}
+
+.scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #2c333d; border-radius: 4px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+
+/**
+ * Capture provisoire par le lasso, pendant le tracé.
+ *
+ * Volontairement différent de la sélection définitive — qui est un anneau plein
+ * bleu ciel : ici un liseré ambré discontinu, pour qu'on lise « en cours » et
+ * non « acquis ». La classe est posée et retirée à la main pendant le geste,
+ * sans passer par React.
+ */
+.lasso-hit {
+  outline: 2px dashed #fbbf24;
+  outline-offset: 3px;
+  border-radius: 8px;
+  background: rgb(251 191 36 / 12%);
+}
+
+/**
+ * Sélection acquise — celle qui subsiste après le lasso, tant que le bloc reste
+ * sélectionné. Volontairement plus affirmée que la capture provisoire
+ * (`.lasso-hit`, ambre pointillé) : ici c'est un état, pas un aperçu.
+ */
+.selected-card {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+  border-radius: 8px;
+  box-shadow: 0 0 0 4px rgb(56 189 248 / 22%), 0 2px 10px rgb(0 0 0 / 55%);
+}
+
+/**
+ * Touches dessinées de l'aide des raccourcis.
+ *
+ * Une vraie touche, pas un bout de `font-mono` : fond légèrement plus clair que
+ * le panneau, liseré, et une ombre basse d'un pixel qui suggère le relief. La
+ * palette est celle relevée dans `docs/ui-reference.md` (panneau `#1f2937`,
+ * bordure `#374151`) — l'aide ne s'invente pas ses propres couleurs.
+ */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6rem;
+  padding: 0.125rem 0.4rem;
+  border: 1px solid #4b5563;
+  border-bottom-color: #6b7280;
+  border-radius: 5px;
+  background: linear-gradient(#374151, #2b3341);
+  box-shadow: 0 1px 0 rgb(0 0 0 / 45%), inset 0 1px 0 rgb(255 255 255 / 6%);
+  color: #e5e7eb;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+/* Le liant entre deux touches : « + » pour une combinaison, « / » pour un choix. */
+.kbd-join {
+  color: #6b7280;
+  font-size: 11px;
+}

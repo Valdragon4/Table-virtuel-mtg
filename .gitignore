@@ -1,0 +1,67 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build and types output
+dist/
+build/
+dist-types/
+**/dist-types/
+*.tsbuildinfo
+.tsbuildinfo
+
+# Testing, Coverage and verification screenshots
+coverage/
+playwright-report/
+test-results/
+.nyc_output/
+.verify/
+
+# Test screenshots & probes (preserve apps/web/public/ and app assets)
+/*.png
+scripts/*.png
+
+# Environment and secrets
+.env
+.env.local
+*.tsbuildinfo
+.env.*.local
+*.local
+
+# Runtime data & Databases
+.data/
+playwright-report/
+test-results/
+*.sqlite
+*.sqlite-journal
+*.db
+*.db-journal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Editor and OS files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# AI / Assistant tool files
+.claude/
+.cursor/
+.impeccable/

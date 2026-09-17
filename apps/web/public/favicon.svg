@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Table virtuelle MTG">
+  <!--
+    La marque : une table vue du dessus, et ses quatre places.
+
+    Création originale. Aucun symbole, cadre, glyphe de mana ou iconographie de
+    Wizards of the Coast n'est utilisé, cité ou approximé ici : ce sont cinq
+    rectangles. La place basse est plus large que les trois autres — c'est la
+    vôtre, celle depuis laquelle la table est cadrée à l'arrivée.
+  -->
+  <rect width="32" height="32" rx="7" fill="#7c3aed"/>
+  <g fill="#ece7d8">
+    <rect x="11" y="11" width="10" height="10" rx="2.6"/>
+    <rect x="12.5" y="5.4" width="7" height="3" rx="1.5"/>
+    <rect x="5.4" y="12.5" width="3" height="7" rx="1.5"/>
+    <rect x="23.6" y="12.5" width="3" height="7" rx="1.5"/>
+    <rect x="11" y="23.6" width="10" height="3" rx="1.5"/>
+  </g>
+</svg>

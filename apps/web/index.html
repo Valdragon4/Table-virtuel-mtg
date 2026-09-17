@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Table virtuelle MTG — quatre sièges, aucun arbitre</title>
+    <meta
+      name="description"
+      content="Une table de Magic dans le navigateur qui n'applique aucune règle : elle tient les cartes, les zones et l'information cachée, vous arbitrez le reste. Jusqu'à quatre joueurs, sans compte, par un simple lien."
+    />
+    <meta name="theme-color" content="#0b0e14" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Marque dessinée pour ce projet : une table vue du dessus et ses quatre
+         places. Aucun symbole de Wizards of the Coast n'y figure. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Les deux faces du site sont servies par nous, jamais par un CDN tiers. -->
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/archivo-latin.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/courier-prime-400-latin.woff2"
+      crossorigin
+    />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Table virtuelle MTG" />
+    <meta
+      property="og:description"
+      content="Quatre sièges, aucun arbitre, un lien. Une table de Magic dans le navigateur qui ne dit jamais non."
+    />
+    <meta property="og:image" content="/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body class="bg-table text-slate-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

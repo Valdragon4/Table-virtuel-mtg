@@ -1,0 +1,308 @@
+// Schéma de données. Voir docs/protocol.md pour l'état de partie, qui vit en mémoire
+// et n'est persisté que par snapshots et journal.
+//
+// Note de propriété intellectuelle : la table Card ne stocke AUCUN texte de règles
+// (pas d'oracle text, pas de flavor text) et aucune image. Seules des métadonnées
+// d'identification et les URLs d'images Scryfall, que le navigateur du client va
+// chercher lui-même.
+
+generator client {
+  provider = "prisma-client-js"
+  // L'image d'exécution est une Debian bookworm (OpenSSL 3.0). Sans cette cible
+  // explicite, le moteur généré ne correspond pas à celui attendu au démarrage.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DeckSource {
+  MANUAL
+  ARCHIDEKT
+  MOXFIELD
+  TEXT
+}
+
+enum DeckZone {
+  MAIN
+  COMMANDER
+  SIDEBOARD
+}
+
+enum GameMode {
+  COMMANDER
+  DUEL
+  PLANECHASE
+  DRAFT
+}
+
+enum RoomStatus {
+  LOBBY
+  PLAYING
+  ENDED
+}
+
+enum TokenPurpose {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  passwordHash    String
+  displayName     String    @unique
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+
+  sessions   Session[]
+  decks      Deck[]
+  playmats   Playmat[]
+  prefs      UserPrefs?
+  authTokens AuthToken[]
+  rooms      GameRoom[]  @relation("HostedRooms")
+  seats      GameSeat[]
+
+  @@index([lastSeenAt])
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  expiresAt DateTime
+  userAgent String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Jetons à usage unique, stockés hachés : vérification d'email, réinitialisation.
+model AuthToken {
+  id        String       @id @default(uuid())
+  userId    String
+  purpose   TokenPurpose
+  tokenHash String       @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+}
+
+model Deck {
+  id            String     @id @default(uuid())
+  userId        String
+  name          String
+  format        String?
+  source        DeckSource @default(MANUAL)
+  sourceUrl     String?
+  sourceDeckId  String?
+  lastSyncedAt  DateTime?
+  /// Tapis et dos de carte propres à ce deck : ils s'appliquent au siège quand on
+  /// le charge. Ils nous appartiennent, pas à la source externe — une
+  /// resynchronisation ne les efface donc jamais.
+  playmatUrl    String?
+  cardBackUrl   String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cards     DeckCard[]
+  snapshots DeckSnapshot[]
+
+  @@unique([userId, source, sourceDeckId], name: "user_source_deck")
+  @@index([userId, updatedAt])
+}
+
+model DeckCard {
+  id                      String   @id @default(uuid())
+  deckId                  String
+  scryfallId              String
+  quantity                Int
+  zone                    DeckZone @default(MAIN)
+  requestedSetCode        String?
+  requestedCollectorNumber String?
+  isFoil                  Boolean  @default(false)
+  sortIndex               Int      @default(0)
+
+  deck Deck @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  card Card @relation(fields: [scryfallId], references: [scryfallId])
+
+  @@index([deckId, zone, sortIndex])
+  @@index([scryfallId])
+}
+
+/// Alimentée par le bulk `default_cards` de Scryfall. Voir src/cards/ingest.ts.
+model Card {
+  scryfallId      String   @id
+  oracleId        String?
+  name            String
+  /// Nom en minuscules sans diacritiques ni ponctuation typographique : clé de résolution.
+  normalizedName  String
+  setCode         String
+  setName         String
+  /// Type d'édition Scryfall : départage les impressions par défaut (voir printingScore).
+  setType         String   @default("expansion")
+  collectorNumber String
+  typeLine        String
+  manaCost        String?
+  cmc             Float    @default(0)
+  colorIdentity   String[]
+  colors          String[]
+  layout          String
+  rarity          String
+  imageUris       Json?
+  /// Faces des cartes recto-verso : nom + imageUris par face, sans texte de règles.
+  faces           Json?
+  isToken         Boolean  @default(false)
+  isPromo         Boolean  @default(false)
+  isDigital       Boolean  @default(false)
+  isVariation     Boolean  @default(false)
+  isFullArt       Boolean  @default(false)
+  hasFoil         Boolean  @default(false)
+  hasNonFoil      Boolean  @default(true)
+  lang            String   @default("en")
+  borderColor     String   @default("black")
+  releasedAt      DateTime?
+  power           String?
+  toughness       String?
+  loyalty         String?
+  /// Indice de préférence pour le choix d'édition par défaut (calculé à l'ingestion).
+  printingScore   Int      @default(0)
+  updatedAt       DateTime @default(now())
+
+  deckCards DeckCard[]
+
+  @@index([normalizedName])
+  @@index([oracleId])
+  @@index([setCode, collectorNumber])
+  @@index([isToken])
+  @@index([releasedAt])
+}
+
+model Playmat {
+  id       String @id @default(uuid())
+  userId   String
+  name     String
+  imageUrl String
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prefs UserPrefs[]
+
+  @@index([userId])
+}
+
+model UserPrefs {
+  userId           String  @id
+  defaultPlaymatId String?
+  cardBackUrl      String?
+  autoUntapStep    Boolean @default(true)
+  uiScale          Float   @default(1)
+  /// Réglages d'interface libres (raccourcis personnalisés, panneaux repliés…).
+  extra            Json?
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultPlaymat  Playmat? @relation(fields: [defaultPlaymatId], references: [id], onDelete: SetNull)
+}
+
+model GameRoom {
+  id             String     @id @default(uuid())
+  code           String     @unique
+  hostUserId     String?
+  gameMode       GameMode   @default(COMMANDER)
+  status         RoomStatus @default(LOBBY)
+  isPrivate      Boolean    @default(false)
+  passwordHash   String?
+  createdAt      DateTime   @default(now())
+  lastActivityAt DateTime   @default(now())
+
+  host  User?      @relation("HostedRooms", fields: [hostUserId], references: [id], onDelete: SetNull)
+  seats GameSeat[]
+  logs  GameLog[]
+
+  @@index([lastActivityAt])
+  @@index([status])
+}
+
+model GameSeat {
+  id             String   @id @default(uuid())
+  roomId         String
+  userId         String?
+  guestName      String?
+  seatIndex      Int
+  deckSnapshotId String?
+  joinedAt       DateTime @default(now())
+
+  room         GameRoom      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  deckSnapshot DeckSnapshot? @relation(fields: [deckSnapshotId], references: [id], onDelete: SetNull)
+  logs         GameLog[]
+
+  @@unique([roomId, seatIndex])
+  @@index([userId])
+}
+
+/// Deck figé au lancement d'une partie : modifier le Deck source ne mute jamais
+/// une partie en cours, et le snapshot est la base des replays.
+model DeckSnapshot {
+  id        String   @id @default(uuid())
+  deckId    String?
+  payload   Json
+  createdAt DateTime @default(now())
+
+  deck  Deck?      @relation(fields: [deckId], references: [id], onDelete: SetNull)
+  seats GameSeat[]
+
+  @@index([deckId])
+}
+
+model GameLog {
+  id          String   @id @default(uuid())
+  roomId      String
+  seq         Int
+  actorSeatId String?
+  type        String
+  payload     Json
+  createdAt   DateTime @default(now())
+
+  room  GameRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  actor GameSeat? @relation(fields: [actorSeatId], references: [id], onDelete: SetNull)
+
+  @@unique([roomId, seq])
+  @@index([roomId, createdAt])
+}
+
+/// Cache des réponses Archidekt, pour tenir le rate limit et éviter de retaper
+/// leur API à chaque resync.
+model ExternalDeckCache {
+  id         String   @id @default(uuid())
+  source     DeckSource
+  externalId String
+  payload    Json
+  fetchedAt  DateTime @default(now())
+
+  @@unique([source, externalId])
+  @@index([fetchedAt])
+}
+
+/// Trace des ingestions de bulk Scryfall, pour ne pas retélécharger inutilement.
+model IngestRun {
+  id           String   @id @default(uuid())
+  bulkType     String
+  bulkUpdatedAt DateTime
+  startedAt    DateTime @default(now())
+  finishedAt   DateTime?
+  cardsUpserted Int     @default(0)
+  error        String?
+
+  @@index([bulkType, bulkUpdatedAt])
+}

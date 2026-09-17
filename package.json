@@ -1,0 +1,30 @@
+{
+  "name": "mtg-vtt",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @mtg/shared && npm run build -w @mtg/server && npm run build -w @mtg/web",
+    "dev": "npm run dev -w @mtg/server",
+    "typecheck": "tsc -b --pretty",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "db:migrate": "npm run db:migrate -w @mtg/server",
+    "ingest": "npm run ingest -w @mtg/server",
+    "dev:web": "npm run dev -w @mtg/web"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "@mtg/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "prisma generate && tsc -b",
+    "dev": "node --env-file=../../.env --watch --experimental-strip-types src/index.ts",
+    "start": "node dist/index.js",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "ingest": "node dist/cards/ingest-cli.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.1",
+    "@fastify/rate-limit": "^10.2.1",
+    "@fastify/static": "^8.0.3",
+    "@mtg/shared": "*",
+    "@node-rs/argon2": "^2.0.2",
+    "@prisma/client": "^6.1.0",
+    "fastify": "^5.2.0",
+    "nodemailer": "^6.9.16",
+    "ulid": "^2.3.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^6.4.17",
+    "@types/ws": "^8.5.13",
+    "prisma": "^6.1.0"
+  }
+}
