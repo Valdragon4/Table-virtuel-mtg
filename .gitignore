@@ -25,14 +25,11 @@ scripts/*.png
 # Environment and secrets
 .env
 .env.local
-*.tsbuildinfo
 .env.*.local
 *.local
 
 # Runtime data & Databases
 .data/
-playwright-report/
-test-results/
 *.sqlite
 *.sqlite-journal
 *.db
