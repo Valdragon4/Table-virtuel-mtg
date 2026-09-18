@@ -145,9 +145,19 @@ export interface TakeBack { type: 'TAKE_BACK'; cardId: ObjectId; to: 'HAND' | 'F
  *
  * Le seuil est **saisi par le joueur**, jamais lu sur la carte. Le catalogue ne
  * stocke aucun texte de règles — ni oracle ni texte imprimé, c'est un invariant
- * de droits — et il est donc impossible de savoir qu'une carte porte le
- * mot-clé, ni avec quel nombre. Le client propose ce qu'il sait calculer,
- * l'humain confirme ou corrige : c'est lui qui lit sa carte.
+ * de droits — et il ne connaît donc pas **le nombre** : Scryfall publie
+ * « Discover », jamais « Discover 4 ».
+ *
+ * Il connaît en revanche le **mot-clé** lui-même, depuis que `Card.keywords`
+ * existe : Scryfall le publie à côté du texte de règles, sous forme de noms de
+ * mécaniques, ce qui n'est pas du texte et ne touche donc pas l'invariant. Cela
+ * sert à **raccourcir** le chemin — l'action remonte dans le menu principal
+ * quand le mot-clé est là — et jamais à le fermer : l'entrée reste accessible
+ * sur n'importe quelle carte. Le mot-clé ne descend d'ailleurs pas jusqu'ici,
+ * il voyage par le catalogue de cartes, délibérément hors de portée du moteur.
+ *
+ * Le client propose ce qu'il sait calculer, l'humain confirme ou corrige :
+ * c'est lui qui lit sa carte.
  *
  * `compare` sépare les deux mots-clés, dont c'est toute la différence :
  *  - `BELOW` — cascade, « strictement inférieure » à la valeur de mana du sort ;
@@ -166,6 +176,29 @@ export interface Cascade {
   manaValue: number;
   compare: 'BELOW' | 'AT_MOST';
 }
+
+/**
+ * Proliférer : un marqueur de plus de chaque sorte **déjà posée**, sur les
+ * objets que le joueur désigne.
+ *
+ * **Un assistant, pas un arbitre**, comme `CASCADE`. Le geste existe déjà en
+ * entier avec `ADD_COUNTER` : proliférer à la main, c'est ouvrir le menu de
+ * chaque permanent et cliquer « + » sur chaque marqueur. Sur huit permanents et
+ * trois sortes, cela fait vingt-quatre clics et vingt-quatre lignes de journal
+ * pour un seul geste de jeu. L'intent n'ajoute aucun pouvoir au serveur ; il
+ * regroupe ce que le joueur aurait tapé.
+ *
+ * Ce que le serveur ne décide pas, et c'est tout ce qui compte :
+ *  - **les cibles** viennent de `targetIds`, jamais d'une recherche du serveur.
+ *    Il ne va pas chercher « tout ce qui porte un marqueur » ;
+ *  - **les sortes** sont celles qui sont déjà sur l'objet désigné. Il n'existe
+ *    aucune liste de marqueurs reconnus, et donc aucun jugement possible.
+ *
+ * `[libre]`, comme `ADD_COUNTER` : proliférer touche volontiers le poison d'un
+ * adversaire ou sa créature marquée, et une assistance plus étroite que le
+ * chemin manuel serait un refus déguisé.
+ */
+export interface Proliferate { type: 'PROLIFERATE'; targetIds: ObjectId[] }
 
 export interface Reveal { type: 'REVEAL'; cardIds: ObjectId[]; toSeats: SeatId[] | 'ALL'; durationMs?: number }
 /**
@@ -247,7 +280,7 @@ export type Intent =
   | AddLabel | MoveLabel | RemoveLabel | SetLabel
   | CreateToken | DestroyToken
   | Shuffle | Look | ResolveLook | ReorderTop | Draw | Mulligan
-  | Mill | ExileTop | RandomDiscard | Scoop | SetPrinting | TakeBack | Cascade
+  | Mill | ExileTop | RandomDiscard | Scoop | SetPrinting | TakeBack | Cascade | Proliferate
   | Reveal | RevealTop | RevealHand | UnrevealHand
   | SetLife | AdjustLife | SetCommanderDamage | SetPlayerCounter
   | RollDie | FlipCoin | EndTurn | SetPhase | Concede | ChatBubble | Cursor | UndoLast
@@ -266,6 +299,13 @@ export const FREE_INTENTS: ReadonlySet<IntentType> = new Set<IntentType>([
   'SET_COUNTER',
   'ADD_COUNTER',
   'REMOVE_COUNTER',
+  /*
+   * Proliférer suit `ADD_COUNTER`, dont il n'est qu'un regroupement : le rendre
+   * plus étroit que le geste qu'il abrège reviendrait à refuser par l'assistance
+   * ce que le menu accepte à la main — et le poison d'un adversaire est une
+   * cible de prolifération aussi ordinaire que ses créatures.
+   */
+  'PROLIFERATE',
   'ATTACH',
   'DETACH',
   'SET_LIFE',

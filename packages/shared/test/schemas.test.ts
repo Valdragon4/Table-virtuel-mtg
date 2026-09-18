@@ -75,3 +75,24 @@ describe('CREATE_TOKEN : un marqueur peut être un mot-clé', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('PROLIFERATE : le joueur designe, le serveur n a rien a deviner', () => {
+  it('accepte une liste de cibles', () => {
+    const result = intentSchema.safeParse({ type: 'PROLIFERATE', targetIds: [ID_A, ID_B] });
+    expect(result.success).toBe(true);
+  });
+
+  it('refuse une liste vide : proliferer sur rien n est pas un geste', () => {
+    const result = intentSchema.safeParse({ type: 'PROLIFERATE', targetIds: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('refuse une sorte de marqueur nommee : le serveur lit ce qui est pose', () => {
+    const result = intentSchema.safeParse({
+      type: 'PROLIFERATE',
+      targetIds: [ID_A],
+      kind: '+1/+1',
+    });
+    expect(result.success).toBe(false);
+  });
+});

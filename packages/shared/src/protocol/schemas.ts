@@ -171,6 +171,14 @@ const intentUnion = z.discriminatedUnion('type', [
     compare: z.enum(['BELOW', 'AT_MOST']),
   }).strict(),
 
+  /*
+   * Proliférer. Aucune sorte de marqueur n'est nommée ici, et c'est délibéré :
+   * le serveur lit ce qui est posé sur les objets désignés, il ne reçoit ni ne
+   * tient de liste de marqueurs reconnus. `cardIdList` borne la sélection comme
+   * pour `TAP` ou `MOVE_CARDS` — un lot, pas un balayage de la table.
+   */
+  z.object({ type: z.literal('PROLIFERATE'), targetIds: cardIdList }).strict(),
+
   z.object({ type: z.literal('REVEAL'), cardIds: cardIdList, toSeats: seatList, durationMs: z.number().int().min(0).max(600_000).optional() }).strict(),
   // `toSeats: []` arrête la révélation permanente : la liste vide est donc une
   // valeur légitime, et non une saisie incomplète.

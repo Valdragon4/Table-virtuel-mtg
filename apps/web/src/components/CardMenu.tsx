@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CardView, ZoneKind } from '@mtg/shared';
 import { useGame } from '../store/game.js';
+import { api } from '../lib/api.js';
 import { cardMeta, cardName } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
 import { useLanguage } from '../store/prefs.js';
@@ -110,6 +111,49 @@ export function assistedKeywords(meta: { keywords?: string[] | null } | undefine
   if (!Array.isArray(list)) return { cascade: false, discover: false, known: false };
   const has = (word: string): boolean => list.some((k) => k.toLowerCase() === word);
   return { cascade: has('cascade'), discover: has('discover'), known: true };
+}
+
+/**
+ * Les jetons que les raccourcis nommés savent créer, sous leur nom **anglais**.
+ *
+ * C'est une clé de recherche, pas un libellé : `/api/cards/search` n'interroge
+ * que les noms du catalogue anglais (voir `TokenSearch`), et traduire la clé
+ * rendrait « Trésor » introuvable. Ce que le joueur lit est traduit à part, par
+ * le catalogue d'interface.
+ *
+ * La liste est **fermée exprès**, et ce n'est pas une limite technique : ces
+ * cinq-là — plus l'Armée d'« Amasser » — sont les jetons génériques qu'on crée
+ * dix fois par partie sans avoir à choisir lesquels. Tout le reste passe par la
+ * recherche de jetons et l'étagère, qui ne bougent pas.
+ */
+const NAMED_TOKENS = ['Clue', 'Treasure', 'Food', 'Blood', 'Incubator'] as const;
+
+/** Le jeton d'« Amasser », cherché comme les autres. */
+const ARMY_TOKEN = 'Army';
+
+/**
+ * L'impression d'un jeton nommé, cherchée dans le catalogue local.
+ *
+ * **Choisir une impression n'est pas arbitrer** : le protocole tient déjà
+ * l'impression pour un habillage sans effet de jeu (`SET_PRINTING` « change
+ * l'impression sans changer l'identité »). Le classement de la recherche met la
+ * mieux notée en tête, et c'est elle qu'on prend — exactement ce que le joueur
+ * aurait cliqué au premier résultat.
+ *
+ * Le nom doit correspondre **exactement**. À défaut, on ne rend rien plutôt que
+ * de poser un jeton approchant : « Treasure Map » n'est pas un Trésor, et créer
+ * la mauvaise chose est bien pire que de dire qu'on n'a pas trouvé.
+ */
+async function namedTokenPrinting(name: string): Promise<string | null> {
+  try {
+    const found = await api.get<{ results: Array<{ scryfallId: string; name: string }> }>(
+      `/api/cards/search?q=${encodeURIComponent(name)}&type=token`,
+    );
+    const exact = found.results.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    return exact?.scryfallId ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export interface CardMenuProps {
@@ -1339,12 +1383,144 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
   }
 
   /*
+   * Où poser ce que l'on crée.
+   *
+   * Sur le champ de bataille, à côté de la carte qui l'a déclenché — c'est déjà
+   * ce que fait « Copier en jeton ». Ailleurs (une carte en main qui dit
+   * « créez un Trésor »), `x`/`y` ne veulent rien dire : on retombe sur la
+   * première place libre, comme pour jouer une carte.
+   */
+  const spawnAt = (): { x: number; y: number } =>
+    inZone === 'BATTLEFIELD' ? { x: card.x + 24, y: card.y + 24 } : landing();
+
+  /** Le catalogue n'a pas ce jeton : on le dit, on n'en pose pas un autre. */
+  const sayMissing = (name: string): void => {
+    void openDialog({
+      title: t('assist.tokenMissingTitle'),
+      description: t('assist.tokenMissing', { name }),
+      submitLabel: t('common.close'),
+    });
+  };
+
+  /*
+   * Jetons nommés — **aucun jugement**, le mot-clé ne fait que nommer.
+   *
+   * Rien n'est réimplémenté ici : la création passe par le `CREATE_TOKEN` que
+   * l'étagère et la recherche de jetons utilisent déjà, et l'impression vient
+   * de la même recherche de catalogue. Ce que ce raccourci ajoute, c'est
+   * d'éviter de retaper « Treasure » pour la dixième fois.
+   *
+   * « Incuber » a un champ de plus, et c'est le seul endroit où les cinq ne se
+   * ressemblent pas : le jeton Incubateur naît avec des marqueurs +1/+1, dont
+   * le nombre est dans le texte de la carte — que nous ne stockons pas. On le
+   * **demande** donc, comme le seuil de cascade.
+   */
+  const askNamedToken = (): void => {
+    onClose();
+    void openDialog({
+      title: t('assist.tokensTitle'),
+      description: t('assist.tokensDescription'),
+      submitLabel: t('assist.tokensSubmit'),
+      memory: 'assist-named-token',
+      fields: [
+        {
+          name: 'token',
+          label: t('assist.tokenLabel'),
+          initial: 'Treasure',
+          options: [
+            { value: 'Clue', label: t('assist.tokenClue') },
+            { value: 'Treasure', label: t('assist.tokenTreasure') },
+            { value: 'Food', label: t('assist.tokenFood') },
+            { value: 'Blood', label: t('assist.tokenBlood') },
+            { value: 'Incubator', label: t('assist.tokenIncubator') },
+          ],
+        },
+        {
+          name: 'count',
+          label: t('assist.tokenCountLabel'),
+          numeric: true,
+          initial: '1',
+          quick: [1, 2, 3, 5].map((n) => ({ label: String(n), value: String(n) })),
+        },
+        {
+          name: 'marks',
+          label: t('assist.tokenIncubateLabel'),
+          hint: t('assist.tokenIncubateHint'),
+          numeric: true,
+          initial: '1',
+          quick: [1, 2, 3, 4].map((n) => ({ label: String(n), value: String(n) })),
+          hidden: (values) => values['token'] !== 'Incubator',
+        },
+      ],
+    }).then(async (result) => {
+      if (!result) return;
+      const which = result.values['token'] ?? '';
+      if (!(NAMED_TOKENS as readonly string[]).includes(which)) return;
+      const count = Math.min(64, Math.max(1, Number.parseInt(result.values['count'] ?? '1', 10) || 1));
+      const printing = await namedTokenPrinting(which);
+      if (printing === null) return sayMissing(which);
+      const marks = which === 'Incubator' ? Number.parseInt(result.values['marks'] ?? '', 10) : Number.NaN;
+      send({
+        type: 'CREATE_TOKEN',
+        scryfallId: printing,
+        count,
+        ...spawnAt(),
+        ...(Number.isFinite(marks) && marks > 0 ? { counters: [{ kind: '+1/+1', value: marks }] } : {}),
+      });
+    });
+  };
+
+  /*
+   * Amasser N — **deux cas, donc on demande**, et c'est le clic qui répond.
+   *
+   * « Mettez N marqueurs +1/+1 sur une Armée que vous contrôlez ; si vous n'en
+   * contrôlez pas, créez d'abord un jeton Armée 0/0. » Savoir si ce permanent
+   * est une Armée, ou si le joueur en contrôle une, serait au serveur de lire
+   * une ligne de type et de trancher — exactement ce qu'on ne fait pas. Le
+   * joueur désigne à la place : il ouvre ce menu **sur son Armée** pour la
+   * grossir, ou prend l'autre entrée pour en créer une.
+   *
+   * Les deux chemins n'inventent aucun intent : `ADD_COUNTER` d'un côté,
+   * `CREATE_TOKEN` avec ses marqueurs de l'autre — le protocole porte déjà
+   * `counters` sur la création, précisément pour qu'un jeton naisse marqué.
+   */
+  const askAmass = (onto: 'NEW_ARMY' | 'THIS_CARD'): void => {
+    onClose();
+    void askNumber({
+      title: t('assist.amassTitle'),
+      label: t('assist.amassLabel'),
+      initial: 1,
+      quick: [1, 2, 3, 5],
+      memory: 'assist-amass',
+      submitLabel: t('assist.amassSubmit'),
+    }).then(async (n) => {
+      if (n === null) return;
+      if (onto === 'THIS_CARD') {
+        send({ type: 'ADD_COUNTER', targetId: card.id, kind: '+1/+1', delta: n });
+        return;
+      }
+      const printing = await namedTokenPrinting(ARMY_TOKEN);
+      if (printing === null) return sayMissing(ARMY_TOKEN);
+      send({
+        type: 'CREATE_TOKEN',
+        scryfallId: printing,
+        counters: [{ kind: '+1/+1', value: n }],
+        ...spawnAt(),
+      });
+    });
+  };
+
+  /*
    * Le tiroir, toujours présent.
    *
    * Il est conçu pour qu'on y ajoute une action **sans rien restructurer** :
-   * une entrée de plus dans ce tableau, et rien d'autre à toucher. On n'y met
-   * que ce qui existe — aucune ligne grisée, aucun « bientôt disponible » :
-   * une promesse d'interface non tenue vieillit mal.
+   * une entrée de plus dans ce tableau, et rien d'autre à toucher. Vérifié en
+   * y ajoutant quatre actions : aucune autre ligne de ce fichier n'a bougé, et
+   * `Submenu` rend ce tableau tel quel. On n'y met que ce qui existe — aucune
+   * ligne grisée, aucun « bientôt disponible » : une promesse d'interface non
+   * tenue vieillit mal. C'est aussi pourquoi les entrées qui n'ont pas de sens
+   * ici — « peupler » sans jeton sous le curseur — ne sont pas offertes plutôt
+   * que désactivées ; le chemin manuel, lui, reste ouvert dans tous les cas.
    */
   entries.push({
     label: t('card.assistedActions'),
@@ -1352,6 +1528,48 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
     submenu: [
       { label: t('card.cascadeEntry'), run: () => askCascade('BELOW') },
       { label: t('card.discoverEntry'), run: () => askCascade('AT_MOST') },
+      { label: t('assist.namedTokens'), separatorBefore: true, run: askNamedToken },
+      { label: t('assist.amassNew'), run: () => askAmass('NEW_ARMY') },
+      ...(inZone === 'BATTLEFIELD'
+        ? [{ label: t('assist.amassThis'), run: () => askAmass('THIS_CARD') }]
+        : []),
+      /*
+       * Peupler : « copiez un jeton de créature que vous contrôlez ». Le jeton
+       * copié est **celui sous le curseur** — le joueur l'a désigné en ouvrant
+       * ce menu dessus, et le serveur n'en choisit aucun. C'est le
+       * `CREATE_TOKEN{copyOf}` de « Copier en jeton », sous le nom du mot-clé ;
+       * l'entrée n'apparaît que sur un jeton visible du champ de bataille,
+       * parce que « peupler » ne veut rien dire ailleurs et que le chemin
+       * ordinaire couvre le reste.
+       */
+      ...(card.kind === 'TOKEN' && inZone === 'BATTLEFIELD' && card.faceDown === false
+        ? [
+            {
+              label: t('assist.populate'),
+              run: () => {
+                send({ type: 'CREATE_TOKEN', copyOf: card.id, x: card.x + 24, y: card.y + 24 });
+                onClose();
+              },
+            },
+          ]
+        : []),
+      /*
+       * Proliférer : un marqueur de plus de chaque sorte, sur ce que le joueur
+       * montre. La désignation est la **sélection** — le lasso, déjà là, sert
+       * de « choisissez n'importe quel nombre de permanents » — ou cette carte
+       * seule. Le serveur ne cherche jamais les cibles lui-même.
+       */
+      {
+        label:
+          targets.length > 1
+            ? t('assist.proliferateMany', { count: targets.length })
+            : t('assist.proliferateOne'),
+        separatorBefore: true,
+        run: () => {
+          send({ type: 'PROLIFERATE', targetIds: targets });
+          onClose();
+        },
+      },
     ],
   });
 

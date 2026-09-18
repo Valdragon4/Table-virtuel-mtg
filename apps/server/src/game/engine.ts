@@ -25,6 +25,7 @@ import {
   type ZoneRef,
 } from '@mtg/shared';
 import { resolveCascade } from './cascade.js';
+import { resolveProliferate } from './proliferate.js';
 import { applyIntentPart2 } from './engine-2.js';
 import { IntentError } from './errors.js';
 import { projectCard } from './projection.js';
@@ -1127,6 +1128,18 @@ function applyIntentCore(
     case 'CASCADE':
       return resolveCascade(state, seatId, who, intent, rng);
 
+    /*
+     * Proliférer. Même porte, même raison : la séquence vit dans
+     * `proliferate.ts`, et le moteur ne fait que l'appeler.
+     *
+     * Rien n'est jugé ici non plus. Le joueur désigne les objets, le module lit
+     * les marqueurs qui y sont déjà posés et en ajoute un de chaque — soit
+     * exactement la suite d'`ADD_COUNTER` qu'il aurait tapée, en un seul `seq`
+     * et une seule ligne de journal.
+     */
+    case 'PROLIFERATE':
+      return resolveProliferate(state, seatId, who, intent);
+
     case 'TAKE_BACK': {
       const obj = objectOf(state, intent.cardId);
       assertNotLocked(state, obj.id);
@@ -1516,6 +1529,11 @@ function undoRestore(state: GameState, id: ObjectId, before: ObjectSnapshot, rng
 export {
   ALL,
   assertLegalDestination,
+  // `assertMayTouch` et `setCounter` sortent pour `proliferate.ts`, et pour lui
+  // seul : c'est ainsi qu'un module d'assistance applique **la même** garde et
+  // **la même** sémantique de marqueur que le chemin manuel, au lieu d'en
+  // réécrire une variante qui divergerait au premier correctif.
+  assertMayTouch,
   assertNotLocked,
   assertZoneNotLocked,
   cardUpdate,
@@ -1526,6 +1544,7 @@ export {
   publicName,
   relocate,
   seatOf,
+  setCounter,
   snapshotObject,
   zoneCount,
   zoneLabel,

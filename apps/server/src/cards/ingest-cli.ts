@@ -1,5 +1,14 @@
 /**
- * Ingestion manuelle : `npm run ingest -- --force`.
+ * Ingestion manuelle : `npm run ingest -w @mtg/server -- --force`.
+ *
+ * **Le `-w @mtg/server` n'est pas décoratif.** Depuis la racine, `npm run
+ * ingest -- --force` fait avaler le drapeau par npm lui-même — il l'annonce
+ * d'ailleurs, « using --force, Recommended protections disabled » — et le
+ * script reçoit une ligne de commande vide, donc ne force rien et répond
+ * « Bulk déjà ingéré, rien à faire ». Le cas s'est produit en production : la
+ * commande semblait passer, et la ré-ingestion n'avait pas lieu. Dans un
+ * conteneur, `node apps/server/dist/cards/ingest-cli.js --force` évite la
+ * question.
  *
  * `--repair-tokens` est la reprise d'une base déjà peuplée : elle relit les
  * lignes présentes pour corriger leur drapeau « jeton », sans retélécharger le
