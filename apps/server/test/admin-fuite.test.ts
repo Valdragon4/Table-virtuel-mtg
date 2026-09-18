@@ -109,6 +109,19 @@ describe('liste blanche des champs publiés', () => {
     // les confondre ferait passer une ingestion bloquée pour une réussite.
     expect(publie.outcome).toBe('running');
   });
+
+  it('une ligne du fil se plie aux six mêmes champs, quelle que soit sa source', () => {
+    const ligne = publish.activityEntry(
+      'SESSION_OPENED',
+      new Date('2026-09-18T09:30:00.000Z'),
+      { who: 'Joueur' },
+      0,
+    );
+    expect(Object.keys(ligne).sort()).toEqual([...publish.PUBLISHED_ACTIVITY_KEYS].sort());
+    // La clé de rendu est synthétique : elle ne désigne aucune ligne en base, et
+    // surtout pas la session, dont l'identifiant est l'empreinte du jeton.
+    expect(ligne.id).toBe('SESSION_OPENED-2026-09-18T09:30:00.000Z-0');
+  });
 });
 
 /* — Filet 2 : balayage des réponses réelles ————————————————— */
@@ -135,6 +148,12 @@ const VALEURS_INTERDITES = [
   // L'identifiant du deck figé du faux jeu de données : la porte d'entrée vers
   // le contenu d'une bibliothèque.
   'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  // L'identifiant d'une session **est** l'empreinte du jeton de connexion : le
+  // publier, c'est publier de quoi se faire passer pour quelqu'un.
+  'empreinte-de-jeton-QUI-NE-DOIT-JAMAIS-SORTIR',
+  // Ce qu'on ne publie pas par sobriété plutôt que par secret : on dit combien
+  // de sessions un compte a, pas d'où elles viennent.
+  '203.0.113.7',
 ];
 
 const SURFACE = [
@@ -143,6 +162,7 @@ const SURFACE = [
   { method: 'GET' as const, url: `/api/admin/users/${PLAIN_ID}` },
   { method: 'GET' as const, url: '/api/admin/rooms' },
   { method: 'GET' as const, url: '/api/admin/audit' },
+  { method: 'GET' as const, url: '/api/admin/activity' },
 ];
 
 describe('aucune réponse ne laisse sortir un secret', () => {

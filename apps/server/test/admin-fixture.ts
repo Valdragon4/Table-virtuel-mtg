@@ -134,6 +134,7 @@ const SEATS = [
     joinedAt: NOW,
     userId: PLAIN_ID,
     guestName: null,
+    user: { displayName: 'Joueur' },
     // Troisième secret reconnaissable : la porte vers un deck figé.
     deckSnapshotId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     room: {
@@ -182,6 +183,26 @@ export const fakePrisma = {
     },
     async count() {
       return 7;
+    },
+    /**
+     * Le fil d'activité lit les sessions par date. La ligne rendue est
+     * **entière**, comme le reste de ce faux client : `id` — qui est l'empreinte
+     * du jeton de connexion —, `ip` et `userAgent` compris. C'est exactement le
+     * scénario que le test de fuite doit attraper si quelqu'un élargissait un
+     * jour le `select` de `activity.ts`.
+     */
+    async findMany() {
+      return [
+        {
+          id: 'empreinte-de-jeton-QUI-NE-DOIT-JAMAIS-SORTIR',
+          userId: PLAIN_ID,
+          expiresAt: new Date('2026-12-01T00:00:00.000Z'),
+          userAgent: 'Mozilla/5.0 (test)',
+          ip: '203.0.113.7',
+          createdAt: new Date('2026-09-18T09:30:00.000Z'),
+          user: { displayName: 'Joueur' },
+        },
+      ];
     },
   },
   gameRoom: {
@@ -240,6 +261,19 @@ export const fakePrisma = {
     },
     async count() {
       return 7;
+    },
+    async findMany() {
+      return [
+        {
+          id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          bulkType: 'default_cards',
+          bulkUpdatedAt: new Date('2026-09-17T04:00:00.000Z'),
+          startedAt: new Date('2026-09-17T04:05:00.000Z'),
+          finishedAt: new Date('2026-09-17T04:20:00.000Z'),
+          cardsUpserted: 98_000,
+          error: null,
+        },
+      ];
     },
   },
   adminAudit: {

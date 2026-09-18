@@ -41,6 +41,7 @@ import { prisma } from '../db.js';
 import { requireAdmin } from './guard.js';
 import { isAdminEmail } from './identity.js';
 import { overview } from './stats.js';
+import { activity, ACTIVITY_MAX } from './activity.js';
 import {
   publishAudit,
   publishRoom,
@@ -238,6 +239,27 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       skip,
     });
     return reply.send({ entries: rows.map(publishAudit) });
+  });
+
+  /* — Le fil des dernières actions ——————————————————————————— */
+
+  /**
+   * Toutes sources confondues, trié par date. Lire l'en-tête de `activity.ts`
+   * pour ce qui y entre, ce qui en est écarté et pourquoi.
+   *
+   * Pas de `skip` : ce fil répond à « que vient-il de se passer », pas à « donne
+   * l'histoire de la plateforme ». Une pagination ferait glisser une fusion de
+   * six sources sur des pages qui ne s'alignent pas — et coûterait de plus en
+   * plus cher à mesure qu'on s'enfonce. Le plafond, lui, est dur.
+   */
+  app.get('/api/admin/activity', { preHandler: requireAdmin }, async (request, reply) => {
+    const query = z
+      .object({ take: z.coerce.number().int().min(1).max(ACTIVITY_MAX).default(25) })
+      .strict()
+      .safeParse(request.query ?? {});
+    if (!query.success) return reply.code(400).send({ error: 'INVALID_INPUT' });
+
+    return reply.send({ entries: await activity(query.data.take) });
   });
 
   /* — La seule action ——————————————————————————————————————— */

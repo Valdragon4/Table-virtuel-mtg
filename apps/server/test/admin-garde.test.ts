@@ -91,6 +91,7 @@ describe('la garde est sur chaque route', () => {
     expect(paths).toContain('GET /api/admin/users/:id');
     expect(paths).toContain('GET /api/admin/rooms');
     expect(paths).toContain('GET /api/admin/audit');
+    expect(paths).toContain('GET /api/admin/activity');
     expect(paths).toContain('POST /api/admin/users/:id/revoke-sessions');
   });
 
@@ -172,6 +173,37 @@ describe('un administrateur vérifié', () => {
     const rooms = await app.inject({ method: 'GET', url: '/api/admin/rooms', cookies });
     expect(rooms.statusCode).toBe(200);
     expect((rooms.json() as { rooms: unknown[] }).rooms.length).toBeGreaterThan(0);
+  });
+
+  it('lit le fil des dernières actions, toutes sources mêlées et trié par date', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/admin/activity', cookies });
+    expect(res.statusCode).toBe(200);
+    const { entries } = res.json() as { entries: Array<{ at: string; kind: string }> };
+    expect(entries.length).toBeGreaterThan(0);
+
+    // Plusieurs sources, sinon ce n'est pas un fil : c'est une liste.
+    expect(new Set(entries.map((e) => e.kind)).size).toBeGreaterThan(1);
+
+    // Strictement décroissant au sens large : le tri est la seule chose qui
+    // donne un sens à la fusion de six requêtes indépendantes.
+    for (let i = 1; i < entries.length; i += 1) {
+      expect(entries[i - 1]!.at >= entries[i]!.at, `ligne ${i}`).toBe(true);
+    }
+  });
+
+  it('plafonne le fil : on ne rapatrie jamais la base par ce chemin', async () => {
+    const trop = await app.inject({
+      method: 'GET',
+      url: '/api/admin/activity?take=500',
+      cookies,
+    });
+    // Le plafond n'est pas un conseil : au-delà, la requête est refusée plutôt
+    // que silencieusement rabotée.
+    expect(trop.statusCode).toBe(400);
+
+    const un = await app.inject({ method: 'GET', url: '/api/admin/activity?take=1', cookies });
+    expect(un.statusCode).toBe(200);
+    expect((un.json() as { entries: unknown[] }).entries).toHaveLength(1);
   });
 
   it('voit qui est administrateur, calculé et non stocké', async () => {

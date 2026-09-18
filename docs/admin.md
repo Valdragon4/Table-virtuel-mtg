@@ -155,6 +155,17 @@ passe, jamais son empreinte), `createdAt`, `lastActivityAt`, `hostName`, `seats`
 
 `code`, `status`, `mode`, `seatIndex`, `joinedAt`, `lastActivityAt`.
 
+### Ligne du fil d'activité (`PUBLISHED_ACTIVITY_KEYS`)
+
+`id`, `at`, `kind`, `who`, `ref`, `note`. Six champs, **quelle que soit la
+source** : chaque source passe par le constructeur unique `activityEntry()`, ce
+qui interdit d'en laisser fuir un septième « parce qu'il était déjà dans la ligne
+Prisma ».
+
+`id` est **synthétique** — `kind`, date, rang. Le fil a besoin d'une clé de rendu
+stable, pas de publier l'identifiant d'une `Session` (qui **est** l'empreinte du
+jeton), d'un `GameSeat` ou d'une `GameRoom`.
+
 ### Ingestion (`PUBLISHED_INGEST_KEYS`)
 
 `bulkType`, `bulkUpdatedAt`, `startedAt`, `finishedAt`, `cardsUpserted`,
@@ -260,7 +271,81 @@ aucune carte, aucun secret : c'est la règle §3, qui vaut ici aussi.
 - **Catalogue** : cartes, jetons, traductions résolues, impressions traduites,
   decks et comptes possédant un deck.
 - **Listes** : comptes (recherche par adresse ou pseudo), tables (filtre par
-  statut), journal d'administration.
+  statut), fil des dernières actions, journal d'administration.
+
+### Les horodatages : deux lectures, jamais une
+
+Partout où une date compte — ouverture d'une table, dernière activité, prise d'un
+siège —, l'écran donne **la date absolue et le relatif** : « 18/09/26 14:01 · il y
+a 59 min ».
+
+Ce n'est pas de la redondance. On ouvre ce tableau de bord quand quelque chose ne
+va pas, et l'on y cherche « depuis quand ». Un relatif seul répond tout de suite
+mais ne se recoupe avec rien ; une date absolue seule se recoupe avec le journal
+du serveur mais oblige à calculer de tête. Les deux coûtent une demi-ligne.
+
+L'échelle du relatif et ses clés (`time.justNow`, `time.minutesAgo`…) sont celles
+de « Mes tables » : deux écrans du même produit ne comptent pas le temps de deux
+façons différentes.
+
+---
+
+## 6 bis. Le fil des dernières actions
+
+`GET /api/admin/activity?take=…`. Six sources, toutes déjà en base, toutes
+datées, fusionnées et triées par date décroissante.
+
+### Ce qui y entre
+
+| source | colonne de tri | ce que la ligne dit |
+| --- | --- | --- |
+| `AdminAudit` | `createdAt` | ce que l'administrateur a fait |
+| `User` | `createdAt` | un compte est né |
+| `Session` | `createdAt` | quelqu'un s'est connecté |
+| `GameRoom` | `createdAt` | une table a été ouverte |
+| `GameSeat` | `joinedAt` | quelqu'un s'est assis |
+| `IngestRun` | `startedAt` | le catalogue a été mis à jour, ou a échoué |
+
+De `Session`, on publie **quand**, jamais l'identifiant (qui est l'empreinte du
+jeton), ni l'IP, ni le navigateur — règle §4. De `GameSeat`, la table et le nom du
+joueur, jamais `deckSnapshotId`.
+
+### Ce qui n'y entre pas, et pourquoi
+
+**Les actions de jeu.** Elles ne sont pas persistées : le modèle `GameLog` existe
+au schéma mais **personne ne l'écrit** — aucun `prisma.gameLog.create` dans le
+serveur —, et le journal d'une partie vit en mémoire dans la room. Les montrer
+demanderait un chantier de persistance qui devrait de toute façon répondre
+d'abord à la règle §3 : un journal de partie contient des cartes et des zones,
+c'est-à-dire exactement ce qui n'a pas le droit de traverser cette console.
+
+**La clôture d'une table.** Aucune colonne ne la date. `POST
+/api/rooms/:code/close` écrit `status: 'ENDED'` et rien d'autre, le ménage
+automatique fait pareil, et ni l'un ni l'autre ne touche `lastActivityAt` — qui
+date donc la dernière action *de jeu*, pas le rangement. La placer dans un fil
+chronologique afficherait un événement à une heure qui n'est pas la sienne ; un
+tableau de bord qui ment est pire qu'un tableau de bord incomplet. Il faudrait
+une colonne `closedAt` écrite par `rooms/routes.ts` et `game/registry.ts` : une
+écriture dans un chemin de jeu, donc une décision, et sans valeur rétroactive.
+
+**Les départs de table et les suppressions de compte.** Ce sont des `delete` en
+base : la ligne partie, sa date part avec elle.
+
+### Le coût, et son plafond
+
+Six requêtes, une par source, toutes de la forme `ORDER BY <date> DESC LIMIT
+take`, toutes servies par un index sur la colonne de tri. Aucun `count`, aucun
+`skip`, aucune jointure au-delà du pseudo.
+
+Le fil rapatrie donc au pire `6 × take` lignes, fusionne en mémoire et n'en garde
+que `take`. Le plafond `take ≤ 50` est **dur** — au-delà la requête est refusée,
+pas rabotée en silence — donc **300 lignes lues au maximum, quelle que soit la
+taille de la base**, et ce nombre ne bouge plus jamais. L'écran demande 30.
+
+Pas de pagination : ce fil répond à « que vient-il de se passer », pas à « donne
+l'histoire de la plateforme ». Un `skip` ferait glisser une fusion de six sources
+sur des pages qui ne s'alignent pas, et coûterait de plus en plus cher à mesure
+qu'on s'enfonce.
 
 ### « Tables closes » : ce que ce mot recouvre
 
@@ -301,3 +386,19 @@ n'ose plus changer :
 le schéma par `prisma db push --accept-data-loss` : la table est créée sans
 toucher à quoi que ce soit d'existant. Aucune colonne n'est ajoutée, supprimée ni
 renommée ailleurs — le changement est intrinsèquement sûr.
+
+Le fil d'activité n'a ajouté **aucune colonne** non plus : il ne lit que des
+dates déjà là. Il a en revanche ajouté cinq **index**, sans lesquels un
+`ORDER BY <date> DESC LIMIT n` coûte un tri de toute la table :
+
+| table | index |
+| --- | --- |
+| `User` | `createdAt` |
+| `Session` | `createdAt` |
+| `GameRoom` | `createdAt` (distinct de `lastActivityAt`, déjà indexé) |
+| `GameSeat` | `joinedAt` |
+| `IngestRun` | `startedAt` (l'index composite `bulkType, bulkUpdatedAt` ne le sert pas) |
+
+Un index se crée sans rien détruire : `db push` les pose, et une base ancienne
+les acquiert au premier démarrage. Vérifié sur la pile locale : les cinq
+existent après redémarrage.

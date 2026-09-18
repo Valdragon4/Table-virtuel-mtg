@@ -67,6 +67,11 @@ model User {
   seats      GameSeat[]
 
   @@index([lastSeenAt])
+  // Le fil d'activité de la console lit les comptes les plus récents par
+  // `ORDER BY createdAt DESC LIMIT n`. Sans index, ce « n » coûte un tri de
+  // toute la table — et une console d'administration ne doit surtout pas
+  // s'effondrer le jour où l'on en a besoin.
+  @@index([createdAt])
 }
 
 model Session {
@@ -81,6 +86,8 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+  // Même raison : « les dernières connexions » se lit par date décroissante.
+  @@index([createdAt])
 }
 
 /// Jetons à usage unique, stockés hachés : vérification d'email, réinitialisation.
@@ -503,13 +510,28 @@ model GameRoom {
   passwordHash   String?
   createdAt      DateTime   @default(now())
   lastActivityAt DateTime   @default(now())
+  /// Date de passage à `ENDED`, nulle tant que la table vit.
+  ///
+  /// `status` disait qu'une partie est finie, jamais **quand**. Un replay a
+  /// besoin de le dire à son lecteur, et le fil d'activité de la console aussi.
+  /// Nulle pour toutes les tables closes avant l'ajout de la colonne : elle n'a
+  /// aucune valeur rétroactive, et rien ne doit s'y fier comme à une garantie.
+  ///
+  /// **Elle ne porte pas le verrou du replay.** Celui-ci est `GameReplay.closedAt`,
+  /// qui date la fin d'**une partie** et non celle de la table — une table peut
+  /// enchaîner trois manches sans jamais passer à `ENDED`.
+  endedAt        DateTime?
 
-  host  User?      @relation("HostedRooms", fields: [hostUserId], references: [id], onDelete: SetNull)
-  seats GameSeat[]
-  logs  GameLog[]
+  host    User?        @relation("HostedRooms", fields: [hostUserId], references: [id], onDelete: SetNull)
+  seats   GameSeat[]
+  logs    GameLog[]
+  replays GameReplay[]
 
   @@index([lastActivityAt])
   @@index([status])
+  // `lastActivityAt` est déjà indexé, mais ce n'est pas la même question :
+  // « quelles tables ont été ouvertes récemment » se trie sur `createdAt`.
+  @@index([createdAt])
 }
 
 model GameSeat {
@@ -528,6 +550,8 @@ model GameSeat {
 
   @@unique([roomId, seatIndex])
   @@index([userId])
+  // « qui s'est assis récemment » : le fil d'activité trie là-dessus.
+  @@index([joinedAt])
 }
 
 /// Deck figé au lancement d'une partie : modifier le Deck source ne mute jamais
@@ -558,6 +582,64 @@ model GameLog {
 
   @@unique([roomId, seq])
   @@index([roomId, createdAt])
+}
+
+/// Enregistrement omniscient d'**une** partie, du lancement à sa fin.
+///
+/// Une table peut en produire plusieurs : chaque `START_GAME` ouvre un nouvel
+/// enregistrement, chaque `GAME_ENDED` le referme. C'est `closedAt` — et lui
+/// seul — qui rend le replay lisible : tant qu'il est nul, la partie court, et
+/// aucune route ne sert quoi que ce soit. Voir docs/replay.md.
+model GameReplay {
+  id       String @id @default(uuid())
+  roomId   String
+  /// `seq` de l'état de départ : le dump ci-dessous décrit la table à ce moment.
+  startSeq Int
+
+  /// Dump omniscient de l'état au lancement. C'est le point zéro du rejeu.
+  origin Json
+  /// Sièges de la partie, figés : de quoi proposer les points de vue au lecteur.
+  seats  Json
+
+  eventCount Int     @default(0)
+  bytes      Int     @default(0)
+  /// L'enregistrement a heurté sa borne et s'est arrêté avant la fin réelle.
+  /// Le lecteur le dit : un replay tronqué en silence serait un replay menteur.
+  truncated  Boolean @default(false)
+  lastSeq    Int     @default(0)
+
+  startedAt DateTime  @default(now())
+  /// Non nul = la partie est terminée. **C'est le verrou de lecture.**
+  closedAt  DateTime?
+  closedFor String?
+
+  /// Jeton de partage, absent par défaut : rien n'est partagé sans un acte
+  /// délibéré. Le révoquer le remet à null et le lien meurt sur-le-champ.
+  shareToken String?   @unique
+  sharedAt   DateTime?
+  sharedById String?
+
+  room   GameRoom      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  chunks ReplayChunk[]
+
+  @@unique([roomId, startSeq])
+  @@index([roomId])
+}
+
+/// Tranche du flux d'events omniscient. Le flux est découpé pour qu'une partie
+/// longue ne devienne jamais une seule ligne de plusieurs mégaoctets.
+model ReplayChunk {
+  id       String @id @default(uuid())
+  replayId String
+  index    Int
+  firstSeq Int
+  lastSeq  Int
+  frames   Json
+
+  replay GameReplay @relation(fields: [replayId], references: [id], onDelete: Cascade)
+
+  @@unique([replayId, index])
+  @@index([replayId, index])
 }
 
 /// Cache des réponses Archidekt, pour tenir le rate limit et éviter de retaper
@@ -626,4 +708,7 @@ model IngestRun {
   error        String?
 
   @@index([bulkType, bulkUpdatedAt])
+  // La vue d'ensemble et le fil lisent tous deux les derniers passages par
+  // `startedAt` décroissant ; l'index composite ci-dessus ne les sert pas.
+  @@index([startedAt])
 }

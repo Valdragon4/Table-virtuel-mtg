@@ -118,6 +118,36 @@ interface AuditRow {
   detail: unknown;
 }
 
+/**
+ * Une ligne du fil. Six champs, quelle que soit sa source : le serveur les
+ * ramène toutes à cette forme (`admin/activity.ts`), donc cet écran n'a qu'un
+ * seul gabarit à rendre au lieu de six.
+ */
+interface ActivityRow {
+  id: string;
+  at: string;
+  kind:
+    | 'ACCOUNT_CREATED'
+    | 'SESSION_OPENED'
+    | 'TABLE_OPENED'
+    | 'SEAT_JOINED'
+    | 'INGEST_RUN'
+    | 'ADMIN_ACTION';
+  who: string | null;
+  ref: string | null;
+  note: string | null;
+}
+
+/** Le nom de chaque sorte d'événement. Table au niveau du module : `useT` est un hook. */
+const ACTIVITY_KEYS = {
+  ACCOUNT_CREATED: 'admin.actAccountCreated',
+  SESSION_OPENED: 'admin.actSessionOpened',
+  TABLE_OPENED: 'admin.actTableOpened',
+  SEAT_JOINED: 'admin.actSeatJoined',
+  INGEST_RUN: 'admin.actIngest',
+  ADMIN_ACTION: 'admin.actAdmin',
+} as const satisfies Record<ActivityRow['kind'], string>;
+
 const STATUS_KEYS: Record<string, 'table.statusLobby' | 'table.statusPlaying' | 'table.statusEnded'> =
   {
     LOBBY: 'table.statusLobby',
@@ -140,6 +170,34 @@ function shortDate(iso: string): string {
 
 function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * « il y a 3 h ». La même échelle et les mêmes clés que « Mes tables »
+ * (`Tables.tsx`) : deux écrans du même produit ne doivent pas compter le temps
+ * de deux façons différentes.
+ */
+function ago(iso: string, t: BoundT): string {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
+  if (minutes < 1) return t('time.justNow');
+  if (minutes < 60) return t('time.minutesAgo', { value: minutes });
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return t('time.hoursAgo', { value: hours });
+  const days = Math.round(hours / 24);
+  return t('time.daysAgo', { value: days });
+}
+
+/**
+ * Les **deux** lectures d'un instant : « 18/09/26 13:42 · il y a 3 h ».
+ *
+ * Ce n'est pas de la redondance décorative. On ouvre cet écran quand quelque
+ * chose ne va pas, et l'on y cherche « depuis quand » : un relatif seul répond
+ * tout de suite mais ne se recoupe avec rien, une date absolue seule se recoupe
+ * avec le journal du serveur mais oblige à calculer de tête. Les deux ensemble
+ * coûtent une demi-ligne et évitent l'aller-retour.
+ */
+function stamp(iso: string, t: BoundT): string {
+  return `${shortDate(iso)} ${clock(iso)} · ${ago(iso, t)}`;
 }
 
 /* ——— Les tuiles ————————————————————————————————————————————— */
@@ -236,6 +294,7 @@ export function Admin(): React.ReactElement {
   const [rooms, setRooms] = useState<RoomRow[]>([]);
   const [roomFilter, setRoomFilter] = useState<'' | 'LOBBY' | 'PLAYING' | 'ENDED'>('');
   const [audit, setAudit] = useState<AuditRow[]>([]);
+  const [activity, setActivity] = useState<ActivityRow[]>([]);
 
   const [open, setOpen] = useState<string | null>(null);
   const [detail, setDetail] = useState<{
@@ -297,10 +356,26 @@ export function Admin(): React.ReactElement {
     }
   }, [guard]);
 
+  /**
+   * `take=30` et pas davantage : le serveur plafonne à 50, et au-delà d'une
+   * trentaine de lignes on ne lit plus un fil, on fait défiler. Ce chiffre est
+   * aussi ce qui borne le coût côté base — six requêtes limitées à 30 lignes.
+   */
+  const loadActivity = useCallback(async (): Promise<void> => {
+    try {
+      setActivity(
+        (await api.get<{ entries: ActivityRow[] }>('/api/admin/activity?take=30')).entries,
+      );
+    } catch (err) {
+      guard(err);
+    }
+  }, [guard]);
+
   useEffect(() => {
     void loadOverview();
     void loadAudit();
-  }, [loadOverview, loadAudit]);
+    void loadActivity();
+  }, [loadOverview, loadAudit, loadActivity]);
 
   // La recherche est débattue de 250 ms : on ne tape pas une requête par touche.
   useEffect(() => {
@@ -344,7 +419,7 @@ export function Admin(): React.ReactElement {
           ? t('admin.revokeDone', { count: res.revoked })
           : t('admin.revokeUnlogged'),
       );
-      await Promise.all([loadUsers(query), loadAudit(), loadOverview()]);
+      await Promise.all([loadUsers(query), loadAudit(), loadActivity(), loadOverview()]);
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : t('admin.revokeFailed'));
     } finally {
@@ -383,7 +458,13 @@ export function Admin(): React.ReactElement {
           )}
           <button
             className="floor-button ml-auto px-4 py-2 text-[0.72rem]"
-            onClick={() => void loadOverview()}
+            // « Rafraîchir » qui laisserait le fil d'hier à l'écran serait un
+            // mensonge : ce bouton remet à jour tout ce qui est daté.
+            onClick={() => {
+              void loadOverview();
+              void loadAudit();
+              void loadActivity();
+            }}
             type="button"
           >
             {t('admin.refresh')}
@@ -521,7 +602,12 @@ export function Admin(): React.ReactElement {
                                       {seat.code}
                                     </span>{' '}
                                     · {t(STATUS_KEYS[seat.status] ?? 'table.statusEnded')} ·{' '}
-                                    {t('admin.seatLine', { index: seat.seatIndex + 1 })}
+                                    {t('admin.seatLine', { index: seat.seatIndex + 1 })} ·{' '}
+                                    {/* `joinedAt` était publié depuis le début et
+                                        ne s'affichait nulle part : « depuis quand
+                                        ce compte est-il assis là » est pourtant la
+                                        question qu'on se pose avant d'agir. */}
+                                    {t('admin.colJoined')} {stamp(seat.joinedAt, t)}
                                   </li>
                                 ))}
                               </ul>
@@ -596,7 +682,64 @@ export function Admin(): React.ReactElement {
                   <span>
                     {t('admin.colHost')} {room.hostName ?? '—'}
                   </span>
-                  <span className="ml-auto">{shortDate(room.lastActivityAt)}</span>
+                  {/* Les deux dates, et non la seule activité : « depuis quand
+                      cette table traîne-t-elle ? » se répond en comparant son
+                      ouverture à sa dernière activité, pas en lisant l'une des
+                      deux. Chacune porte sa date absolue et son relatif. */}
+                  <span className="ml-auto whitespace-nowrap">
+                    {t('admin.colOpened')} {stamp(room.createdAt, t)}
+                  </span>
+                  <span className="whitespace-nowrap">
+                    {t('admin.colActivity')} {stamp(room.lastActivityAt, t)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+
+        {/* — Le fil ————————————————————————————————————————— */}
+        {/* Placé **avant** le journal d'administration, qui n'en est qu'une des
+            six sources : on veut d'abord « que vient-il de se passer », et
+            seulement ensuite « qu'ai-je fait, moi ». */}
+        <Section note={t('admin.activityNote')} title={t('admin.sectionActivity')}>
+          {activity.length === 0 ? (
+            <p className="text-[0.85rem] text-[color:var(--site-floor-dim)]">
+              {t('admin.activityEmpty')}
+            </p>
+          ) : (
+            <ul className="grid gap-1.5 text-[0.8rem]" data-test="admin-activity">
+              {activity.map((row) => (
+                <li
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-[color:var(--site-floor-rule)] pt-1.5 text-[color:var(--site-floor-dim)]"
+                  key={row.id}
+                >
+                  {/* La date en tête et en chasse fixe : une colonne de dates qui
+                      s'aligne se balaie du regard, une date noyée dans la phrase
+                      oblige à la chercher ligne par ligne. */}
+                  <span className="typed whitespace-nowrap text-[color:var(--site-floor-text)]">
+                    {shortDate(row.at)} {clock(row.at)}
+                  </span>
+                  <span className="whitespace-nowrap">{ago(row.at, t)}</span>
+                  <span className="text-[color:var(--site-floor-text)]">
+                    {t(ACTIVITY_KEYS[row.kind])}
+                  </span>
+                  {row.who && <span>{row.who}</span>}
+                  {row.ref && <span className="typed">{row.ref}</span>}
+                  {row.note && (
+                    // Une ingestion échouée est la seule chose de ce fil qui soit
+                    // une panne ; elle porte donc le rouge d'alarme du reste de
+                    // l'écran. Tout le reste est un fait, pas un signal.
+                    <span
+                      style={
+                        row.kind === 'INGEST_RUN' && row.note === 'failed'
+                          ? { color: 'var(--site-alarm)' }
+                          : undefined
+                      }
+                    >
+                      {row.note}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

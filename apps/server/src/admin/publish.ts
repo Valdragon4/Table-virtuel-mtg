@@ -296,6 +296,71 @@ export const PUBLISHED_AUDIT_KEYS: readonly string[] = [
   'detail',
 ];
 
+/* ——— Le fil des dernières actions ————————————————————————— */
+
+/**
+ * Ce qu'une ligne du fil a le droit de dire.
+ *
+ * Le fil agrège plusieurs tables, et c'est précisément pour ça qu'il lui faut
+ * **une seule** forme de sortie, étroite et écrite ici : chaque source doit se
+ * plier à ces six champs, ce qui rend impossible de laisser passer une colonne
+ * « parce qu'elle était déjà là dans la ligne Prisma ».
+ *
+ * `id` est **synthétique** — un `kind`, une date et un rang. Ce n'est
+ * volontairement la clé de rien : le fil a besoin d'une clé de rendu stable,
+ * pas de publier l'identifiant d'une session (qui est l'empreinte d'un jeton),
+ * d'un siège ou d'une table.
+ */
+export type ActivityKind =
+  | 'ACCOUNT_CREATED'
+  | 'SESSION_OPENED'
+  | 'TABLE_OPENED'
+  | 'SEAT_JOINED'
+  | 'INGEST_RUN'
+  | 'ADMIN_ACTION';
+
+export interface PublishedActivity {
+  /** Clé de rendu synthétique. Ne désigne aucune ligne en base. */
+  id: string;
+  at: string;
+  kind: ActivityKind;
+  /** Qui : un pseudo, un nom d'invité, ou l'adresse d'un administrateur. */
+  who: string | null;
+  /** Sur quoi : un code de table, une cible de journal. Jamais un identifiant interne. */
+  ref: string | null;
+  /** Une précision courte et neutre : un mode de jeu, une issue, un nom d'action. */
+  note: string | null;
+}
+
+/**
+ * Le seul constructeur d'une ligne de fil. Chaque source passe par lui, donc
+ * aucune ne peut ajouter un champ sans venir modifier ce fichier.
+ */
+export function activityEntry(
+  kind: ActivityKind,
+  at: Date,
+  parts: { who?: string | null; ref?: string | null; note?: string | null },
+  rank: number,
+): PublishedActivity {
+  return {
+    id: `${kind}-${at.toISOString()}-${rank}`,
+    at: at.toISOString(),
+    kind,
+    who: parts.who ?? null,
+    ref: parts.ref ?? null,
+    note: parts.note ?? null,
+  };
+}
+
+export const PUBLISHED_ACTIVITY_KEYS: readonly string[] = [
+  'id',
+  'at',
+  'kind',
+  'who',
+  'ref',
+  'note',
+];
+
 /**
  * Les noms de champs qui ne doivent jamais apparaître dans une réponse
  * d'administration, quelle qu'elle soit.
