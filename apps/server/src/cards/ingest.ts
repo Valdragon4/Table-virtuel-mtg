@@ -101,6 +101,33 @@ function jsonOrNull(value: unknown): string | null {
   return value === null || value === undefined ? null : JSON.stringify(value);
 }
 
+/**
+ * L'œuvre du **recto**.
+ *
+ * Scryfall pose `illustration_id` au premier niveau d'une carte ordinaire, et
+ * **par face** sur une carte recto-verso. On retient celui du recto : c'est
+ * l'illustration que le joueur voit dans le sélecteur d'impression et celle
+ * qu'il choisit. La comparaison, elle, accepte n'importe quelle face du
+ * candidat (`illustrationIdsOf`), donc on ne perd rien à ne stocker qu'un
+ * identifiant.
+ */
+function illustrationIdOf(card: ScryfallCard): string | null {
+  return card.illustration_id ?? card.card_faces?.[0]?.illustration_id ?? null;
+}
+
+/**
+ * Les effets de cadre, tableau vide compris.
+ *
+ * Scryfall **omet** la clé quand il n'y en a aucun : c'est un fait, pas une
+ * ignorance, et on l'écrit donc `[]`. Écrire `null` — le cas de la grande
+ * majorité des cartes — ferait taire le critère de ressemblance pile là où il
+ * sert le plus, puisque `null` y veut dire « on ne sait pas » et ne départage
+ * personne. La valeur `null` reste réservée aux lignes jamais ré-ingérées.
+ */
+function frameEffectsOf(card: ScryfallCard): string {
+  return JSON.stringify(card.frame_effects ?? []);
+}
+
 function toRow(card: ScryfallCard): Prisma.Sql {
   const isToken = isTokenCard(card);
   const finishes = card.finishes ?? [];
@@ -132,6 +159,10 @@ function toRow(card: ScryfallCard): Prisma.Sql {
     ${finishes.includes('nonfoil')},
     ${card.lang},
     ${card.border_color ?? 'black'},
+    ${illustrationIdOf(card)},
+    ${card.frame ?? null},
+    ${frameEffectsOf(card)}::jsonb,
+    ${card.textless ?? null},
     ${card.released_at ? new Date(card.released_at) : null},
     ${card.power ?? null},
     ${card.toughness ?? null},
@@ -151,6 +182,7 @@ async function upsertBatch(cards: ScryfallCard[]): Promise<number> {
       "setType", "collectorNumber", "typeLine", "manaCost", "cmc", "colorIdentity", "colors",
       "layout", "rarity", "imageUris", "faces", "isToken", "isPromo", "isDigital",
       "isVariation", "isFullArt", "hasFoil", "hasNonFoil", "lang", "borderColor",
+      "illustrationId", "frame", "frameEffects", "isTextless",
       "releasedAt", "power", "toughness", "loyalty", "printingScore", "updatedAt"
     )
     VALUES ${values}
@@ -180,6 +212,10 @@ async function upsertBatch(cards: ScryfallCard[]): Promise<number> {
       "hasNonFoil" = EXCLUDED."hasNonFoil",
       "lang" = EXCLUDED."lang",
       "borderColor" = EXCLUDED."borderColor",
+      "illustrationId" = EXCLUDED."illustrationId",
+      "frame" = EXCLUDED."frame",
+      "frameEffects" = EXCLUDED."frameEffects",
+      "isTextless" = EXCLUDED."isTextless",
       "releasedAt" = EXCLUDED."releasedAt",
       "power" = EXCLUDED."power",
       "toughness" = EXCLUDED."toughness",

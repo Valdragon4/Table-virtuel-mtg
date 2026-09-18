@@ -172,6 +172,37 @@ model Card {
   hasNonFoil      Boolean  @default(true)
   lang            String   @default("en")
   borderColor     String   @default("black")
+  /// L'identifiant de l'**œuvre** chez Scryfall (`illustration_id`), et non de
+  /// l'impression : deux impressions qui le partagent portent exactement la même
+  /// illustration.
+  ///
+  /// C'est le signal décisif pour choisir une impression **ressemblante** quand
+  /// il faut en substituer une dans la langue du joueur : une édition française
+  /// de *son* illustration vaut mieux qu'une édition de meilleure qualité d'une
+  /// autre œuvre. Voir `chooseSubstitute` dans `src/cards/localization.ts`.
+  ///
+  /// **Cartes recto-verso :** Scryfall ne publie pas ce champ au premier niveau,
+  /// il en pose un **par face**. On retient ici celui du **recto** — l'œuvre que
+  /// le joueur voit et choisit — et la comparaison accepte n'importe quelle face
+  /// du candidat (`illustrationIdsOf`). Aucun faux positif n'en découle : deux
+  /// impressions qui partagent un identifiant partagent bien l'œuvre.
+  ///
+  /// **Nullable, et il faut que ça reste propre.** Les lignes ingérées avant
+  /// l'ajout de la colonne valent `null` : on ne peut alors rien comparer, et le
+  /// classement retombe exactement sur la règle d'avant (qualité, puis score
+  /// d'impression, puis date, puis identifiant). Une prochaine ingestion du bulk
+  /// les remplit toutes ; `prisma db push` ajoute la colonne sans rien détruire.
+  illustrationId  String?
+  /// `frame` de Scryfall : `1993`, `1997`, `2003`, `2015`, `future`. À œuvre
+  /// égale — ou à défaut d'œuvre commune — une carte du même cadre ressemble
+  /// davantage à celle que le joueur a choisie. `null` = pas encore ingéré.
+  frame           String?
+  /// `frame_effects` de Scryfall (`showcase`, `extendedart`, `legendary`…).
+  /// Json plutôt que `String[]` pour distinguer « aucun effet » de « pas encore
+  /// ingéré » : une liste vide ne sait pas dire qu'elle est vide par ignorance.
+  frameEffects    Json?
+  /// `textless` de Scryfall. Nullable pour la même raison que `frameEffects`.
+  isTextless      Boolean?
   releasedAt      DateTime?
   power           String?
   toughness       String?
@@ -180,13 +211,132 @@ model Card {
   printingScore   Int      @default(0)
   updatedAt       DateTime @default(now())
 
-  deckCards DeckCard[]
+  deckCards     DeckCard[]
+  localizations CardLocalization[]
 
   @@index([normalizedName])
   @@index([oracleId])
   @@index([setCode, collectorNumber])
   @@index([isToken])
   @@index([releasedAt])
+}
+
+/// Impression localisée d'une carte du catalogue.
+///
+/// Scryfall ne publie pas « la même carte avec une autre image » : chaque
+/// traduction est un **objet carte distinct**, de même édition et même numéro de
+/// collection mais d'identifiant différent, avec son `printed_name` et ses
+/// propres `image_uris`. Résoudre la langue, c'est donc retrouver cette autre
+/// carte — ce que cette table mémorise, une fois, par (carte d'origine, langue).
+///
+/// Même invariant de droits que `Card` : on stocke des **URL** et des
+/// métadonnées d'identification. Aucune image n'est téléchargée, mise en cache
+/// ni servie par nous ; le navigateur du joueur va la chercher chez Scryfall.
+model CardLocalization {
+  /// L'identifiant que transporte le protocole de jeu : la carte telle qu'elle a
+  /// été choisie, en anglais dans notre catalogue.
+  scryfallId          String
+  language            String
+  /// L'impression traduite chez Scryfall. `null` quand il n'y en a pas.
+  localizedScryfallId String?
+  /// `printed_name` : le nom tel qu'il est imprimé sur la carte traduite.
+  ///
+  /// Renseigné **même quand `missing` est vrai** : cette impression-là n'existe
+  /// pas dans la langue demandée, mais la carte y a souvent un nom, repris d'une
+  /// autre impression. On affiche alors le nom traduit sous l'illustration que le
+  /// joueur a choisie, sans changer l'illustration.
+  printedName         String?
+  imageUris           Json?
+  /// Même forme que `Card.faces` : une image par face, sans texte de règles.
+  faces               Json?
+  /// `image_status` de Scryfall : `missing`, `placeholder`, `lowres` ou
+  /// `highres_scan`. Les impressions non anglaises sont très souvent `lowres` :
+  /// l'URL `large` existe et fait bien 672 × 936, mais elle est agrandie depuis un
+  /// scan de basse définition. Sans ce champ, le client ne peut pas savoir qu'il
+  /// remplace une image nette par un ersatz.
+  imageStatus         String?
+  /// `highres_image` de Scryfall, le même fait sous forme de booléen.
+  highresImage        Boolean  @default(false)
+  /// Vrai quand le nom traduit a été cherché — trouvé ou non.
+  ///
+  /// Sans ce drapeau, une carte sans nom traduit serait recherchée à chaque
+  /// passage, puisqu'on ne saurait pas distinguer « pas encore cherché » de
+  /// « cherché, rien trouvé ».
+  ///
+  /// **Il ne décide plus de rien à lui seul.** Il répond à une question — le
+  /// nom — et une seule ; c'est `substituteSearchVersion` qui répond à l'autre.
+  /// Les avoir confondus est précisément ce qui a verrouillé la substitution
+  /// sur les lignes écrites avant elle. On le garde renseigné parce qu'il dit
+  /// quelque chose de vrai, mais la décision de rechercher se lit désormais sur
+  /// le compteur.
+  nameChecked         Boolean  @default(false)
+  /// Vrai quand Scryfall a répondu 404, c'est-à-dire « jamais imprimée dans
+  /// cette langue ». Ce n'est pas une erreur, c'est le repli anglais — et il est
+  /// mémorisé, sinon chaque affichage rejouerait l'appel pour rien.
+  missing             Boolean  @default(false)
+
+  /// ——— L'impression de substitution ———————————————————————————————————
+  ///
+  /// Une **autre** impression de la même carte, celle-là traduite. Elle est
+  /// retenue en même temps que `printedName`, par la même recherche `oracleid`,
+  /// et pour la même raison : sur un deck réel, 27 des 29 impressions qui
+  /// rendent 404 ont une soeur française ailleurs.
+  ///
+  /// **Elle ne remplace rien par défaut.** L'illustration est un choix du
+  /// joueur (`requestedSetCode` / `requestedCollectorNumber`) ; la changer
+  /// d'office ferait voir deux images différentes à deux joueurs de la même
+  /// table. Ces colonnes ne sont lues que si le joueur a coché l'option
+  /// `UserPrefs.forceLocalizedPrinting`, et le choix reste **purement local** :
+  /// le `scryfallId` du protocole n'en dépend jamais.
+  ///
+  /// Colonnes nullables sans valeur imposée : `prisma db push` les ajoute sans
+  /// rien détruire, et une ligne écrite avant leur existence reste valide —
+  /// elle n'a simplement pas de substitution, ce qui est le comportement d'hier.
+  substituteScryfallId       String?
+  /// L'édition de la substitution, pour que l'interface puisse **dire** laquelle.
+  substituteSetCode          String?
+  substituteCollectorNumber  String?
+  /// Des URL, comme partout : aucun octet d'image n'est stocké ici.
+  substituteImageUris        Json?
+  /// Même forme que `Card.faces` : une image par face, sans texte de règles.
+  substituteFaces            Json?
+  substituteImageStatus      String?
+  substituteHighresImage     Boolean  @default(false)
+  /// La version de la recherche de substitution qui a **réellement** été menée
+  /// sur cette ligne.
+  ///
+  /// **Pourquoi un compteur et pas un booléen de plus.** `nameChecked` répond à
+  /// « a-t-on cherché un nom ailleurs ? ». Il a été écrit `true` sur des
+  /// centaines de lignes à une époque où la recherche ne rapportait **que** le
+  /// nom : ces lignes n'ont aucune substitution, et le drapeau — conçu comme un
+  /// garde-fou anti-boucle — les avait transformées en verrou définitif.
+  /// Mesuré : 669 lignes « déjà cherchées » pour 10 substitutions.
+  ///
+  /// Un entier dit ce qu'un booléen ne peut pas dire : **quelle** recherche a
+  /// été faite. `0` — la valeur des lignes d'avant — signifie « jamais cherché
+  /// de substitution », et ces lignes repassent une fois. Une ligne portant la
+  /// version courante a été cherchée : si elle n'a pas de substitution, c'est
+  /// qu'il n'y en a pas, et on ne la rouvre plus — le garde-fou tient. Le jour
+  /// où la règle de choix changera, monter la constante suffira à rejouer le
+  /// rattrapage sans toucher une seule ligne à la main.
+  ///
+  /// Une **panne** n'incrémente jamais ce compteur : seule une réponse de
+  /// Scryfall — trouvée ou 404 — écrit la ligne. Un 503 laisse le `0` en place
+  /// et la carte repasse plus tard.
+  ///
+  /// Colonne entière à valeur par défaut : `prisma db push` l'ajoute sans rien
+  /// détruire, et toute ligne existante hérite de `0`, c'est-à-dire « à faire ».
+  substituteSearchVersion    Int      @default(0)
+
+  fetchedAt           DateTime @default(now())
+
+  card Card @relation(fields: [scryfallId], references: [scryfallId], onDelete: Cascade)
+
+  @@id([scryfallId, language])
+  @@index([language, missing])
+  /// Le rattrapage lit exactement ces trois colonnes pour trouver ce qui reste
+  /// à faire : sans cet index il balaierait toute la table à chaque tranche.
+  @@index([language, missing, substituteSearchVersion])
 }
 
 model Playmat {
@@ -207,6 +357,27 @@ model UserPrefs {
   cardBackUrl      String?
   autoUntapStep    Boolean @default(true)
   uiScale          Float   @default(1)
+  /// Langue de l'interface et des cartes, code ISO 639-1 pris dans `LANGUAGES`
+  /// (packages/shared/src/i18n/language.ts, source unique partagée avec le client).
+  /// Colonne à valeur par défaut plutôt que type énuméré Postgres : ajouter une
+  /// langue reste alors une ligne de code, sans ALTER TYPE sur la base de prod.
+  /// Les lignes déjà présentes héritent du français, ce qu'elles voyaient déjà.
+  language         String  @default("fr")
+  /// Afficher l'illustration d'une **autre** impression quand celle que le joueur
+  /// a choisie n'existe pas dans sa langue.
+  ///
+  /// Refusé par défaut, et ce défaut est un choix : l'illustration est une
+  /// décision du joueur (`requestedSetCode` / `requestedCollectorNumber`), et la
+  /// changer d'office ferait voir deux images différentes à deux joueurs de la
+  /// même table tout en rendant le sélecteur d'impression menteur. L'option lève
+  /// la règle **pour celui qui la coche**, et pour lui seul : c'est un réglage
+  /// d'affichage, rien de ce qui part au serveur ni de ce que voient les autres
+  /// n'en dépend.
+  ///
+  /// Booléen à valeur par défaut, comme `autoUntapStep` : `prisma db push`
+  /// l'ajoute sans rien détruire, et les lignes déjà présentes héritent de
+  /// `false`, c'est-à-dire du comportement que leurs propriétaires avaient déjà.
+  forceLocalizedPrinting Boolean @default(false)
   /// Réglages d'interface libres (raccourcis personnalisés, panneaux repliés…).
   extra            Json?
 

@@ -11,14 +11,33 @@ import { prisma } from '../db.js';
 import { requireUser } from '../auth/guard.js';
 import { clearSessionCookie, destroyAllSessions } from '../auth/session.js';
 import { verifyPassword } from '../auth/password.js';
+import { DEFAULT_LANGUAGE, languageSchema } from '@mtg/shared';
 
-const prefsSchema = z
+/**
+ * Préférences du compte.
+ *
+ * `language` suit exactement le même chemin que `uiScale` : une seule route
+ * PATCH, pas de canal séparé. C'est ce qui fait qu'un changement de langue
+ * **pendant une partie** modifie durablement le compte — le client tape la même
+ * route depuis la table que depuis l'écran de paramètres, sans rien faire
+ * passer par le protocole de jeu.
+ */
+export const prefsSchema = z
   .object({
     displayName: z.string().min(2).max(32).regex(/^[\p{L}\p{N}_ -]+$/u).optional(),
     cardBackUrl: z.string().url().max(2048).nullable().optional(),
     defaultPlaymatId: z.string().uuid().nullable().optional(),
     autoUntapStep: z.boolean().optional(),
     uiScale: z.number().min(0.5).max(2).optional(),
+    // Le schéma partagé, et non une liste recopiée : ce que l'interface
+    // propose et ce que cette route accepte ne peuvent plus se désaccorder.
+    language: languageSchema.optional(),
+    // Même nature que `language` : un réglage d'**affichage** du compte, donc
+    // le même unique point d'écriture. Elle ne touche ni le protocole, ni ce
+    // qu'un deck enregistre, ni ce que voient les autres joueurs — seulement
+    // l'illustration que ce joueur-ci voit quand l'impression qu'il a choisie
+    // n'existe pas dans sa langue.
+    forceLocalizedPrinting: z.boolean().optional(),
     extra: z.record(z.unknown()).optional(),
   })
   .strict();
@@ -43,6 +62,15 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       emailVerified: user.emailVerifiedAt !== null,
       createdAt: user.createdAt,
       prefs: user.prefs ?? null,
+      // Répété hors de `prefs` à dessein : un compte qui n'a jamais rien réglé
+      // n'a pas de ligne de préférences, et le client ne doit pas avoir à
+      // connaître notre défaut pour savoir dans quelle langue s'afficher.
+      language: user.prefs?.language ?? DEFAULT_LANGUAGE,
+      // À la racine pour exactement la même raison que `language` : un compte
+      // sans ligne de préférences n'a pas de `prefs`, et le client ne doit pas
+      // avoir à connaître notre défaut. Lire `prefs.forceLocalizedPrinting`
+      // marcherait les neuf premières fois et raterait celle du compte neuf.
+      forceLocalizedPrinting: user.prefs?.forceLocalizedPrinting ?? false,
       playmats: user.playmats,
     });
   });

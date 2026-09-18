@@ -1,7 +1,60 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { languageSchema } from '@mtg/shared';
 import { prisma } from '../db.js';
 import { MAX_SEARCH_LIMIT, searchCards } from './search.js';
+import { loadPendingSubstitutes, prismaLocalizationStore } from './localization-store.js';
+import {
+  fetchLocalizedElsewhere,
+  fetchLocalizedPrinting,
+  resolveLocalizedCards,
+  scheduleBackgroundLocalization,
+  scheduleSubstituteBackfill,
+  type CatalogCard,
+} from './localization.js';
+
+/**
+ * La langue passe par l'API des cartes, jamais par le protocole de jeu.
+ *
+ * C'est délibéré : le protocole continue de ne transporter qu'un `scryfallId`,
+ * et chaque client résout lui-même l'image dans sa langue. Sans cela, il aurait
+ * fallu monter PROTOCOL_VERSION et faire dépendre ce que voit un joueur d'une
+ * simple préférence d'affichage — deux joueurs d'une même table peuvent lire la
+ * table dans deux langues différentes sans que rien de l'état ne change.
+ *
+ * Le schéma vient de `@mtg/shared` : c'est le même que celui de la préférence
+ * de compte, et c'est voulu — une langue acceptée par le sélecteur doit être
+ * acceptée par cette route, sans qu'aucune liste n'ait à être tenue deux fois.
+ */
+
+/**
+ * Ce dont la résolution a besoin : le numéro de collection est la clé chez
+ * Scryfall, `oracleId` sert au rattrapage par le nom quand cette impression-là
+ * n'existe pas dans la langue demandée, `typeLine` porte l'exception des
+ * terrains de base, et les derniers champs sont les **traits de ressemblance** —
+ * l'œuvre, le cadre, la bordure — sur lesquels `chooseSubstitute` choisit
+ * l'impression traduite la plus proche de celle que le joueur a choisie.
+ *
+ * Les traits sont nullables : une carte ingérée avant l'ajout des colonnes les
+ * rend `null`, et le classement retombe alors sur la règle d'avant.
+ */
+const CATALOG_SELECT = {
+  scryfallId: true,
+  name: true,
+  setCode: true,
+  collectorNumber: true,
+  oracleId: true,
+  typeLine: true,
+  imageUris: true,
+  faces: true,
+  illustrationId: true,
+  frame: true,
+  frameEffects: true,
+  isTextless: true,
+  borderColor: true,
+  isFullArt: true,
+  setType: true,
+} as const;
 
 const searchSchema = z.object({
   q: z.string().min(1).max(100),
@@ -56,6 +109,73 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
       },
     });
     return reply.send({ cards });
+  });
+
+  /**
+   * Les mêmes cartes, dans la langue demandée.
+   *
+   * Une carte jamais imprimée dans cette langue revient en anglais avec
+   * `fallback: true` : ce n'est pas une erreur, c'est le cas courant. Une carte
+   * que la requête n'a pas eu le temps de résoudre revient `pending: true` —
+   * redemander plus tard rendra la traduction.
+   *
+   * Comme partout, on ne renvoie que des URL : le navigateur va chercher les
+   * illustrations chez Scryfall, elles ne transitent jamais par nous.
+   */
+  app.post('/api/cards/localized', async (request, reply) => {
+    const body = z
+      .object({
+        ids: z.array(z.string().uuid()).min(1).max(500),
+        language: languageSchema,
+      })
+      .strict()
+      .safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: 'INVALID_INPUT', issues: body.error.issues });
+
+    /*
+     * Le rattrapage des lignes anciennes, lancé une seule fois par langue et par
+     * processus, et **jamais attendu** : la réponse du joueur ne dépend pas de
+     * lui.
+     *
+     * Il est ici, et pas au démarrage, pour deux raisons. Un serveur que
+     * personne n'utilise en français n'a rien à rattraper. Et au démarrage,
+     * l'ingestion Scryfall tient déjà le robinet partagé : y ajouter cinq cents
+     * recherches ne ferait que rallonger les deux.
+     */
+    scheduleSubstituteBackfill(body.data.language, {
+      store: prismaLocalizationStore,
+      fetch: fetchLocalizedPrinting,
+      fetchElsewhere: fetchLocalizedElsewhere,
+      loadPending: loadPendingSubstitutes,
+    });
+
+    const cards = (await prisma.card.findMany({
+      where: { scryfallId: { in: body.data.ids } },
+      select: CATALOG_SELECT,
+    })) as CatalogCard[];
+
+    const resolved = await resolveLocalizedCards({
+      cards,
+      language: body.data.language,
+      store: prismaLocalizationStore,
+      fetch: fetchLocalizedPrinting,
+      fetchElsewhere: fetchLocalizedElsewhere,
+    });
+
+    /*
+     * Ce que le plafond a laissé de côté continue en tâche de fond, après la
+     * réponse. Le plafond est là pour que la connexion ne reste pas ouverte
+     * pendant que Scryfall répond, pas pour renoncer aux cartes qui dépassent :
+     * sans cette reprise, un deck de cent cartes plafonnait mécaniquement à
+     * quarante traductions par chargement de page.
+     */
+    scheduleBackgroundLocalization(resolved.unresolved, body.data.language, {
+      store: prismaLocalizationStore,
+      fetch: fetchLocalizedPrinting,
+      fetchElsewhere: fetchLocalizedElsewhere,
+    });
+
+    return reply.send({ language: resolved.language, cards: resolved.cards });
   });
 
   app.get('/api/cards/:scryfallId', async (request, reply) => {
