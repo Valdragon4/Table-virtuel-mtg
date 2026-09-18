@@ -14,7 +14,12 @@ import {
   subscribeCards,
 } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
-import { cardLanguageMark, resolveCardImage, type CardLanguageMark } from '../lib/i18n/index.js';
+import {
+  cardLanguageMark,
+  resolveCardImage,
+  tokenName,
+  type CardLanguageMark,
+} from '../lib/i18n/index.js';
 import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
 
 /**
@@ -1407,8 +1412,20 @@ export function CardSprite({
     resolved,
     language,
   });
-  // Le nom imprimé français quand il existe ; le nom du catalogue sinon.
-  const shownName = localizedCardName(localized, meta?.name, faceIndex) ?? 'Carte';
+  /*
+   * Le nom imprimé français quand il existe ; le nom du catalogue sinon.
+   *
+   * **Un jeton passe en plus par le glossaire.** Scryfall n'en publie aucune
+   * impression traduite : il n'existe donc pas de `printed_name` à servir, et
+   * `localizedCardName` rend l'anglais quoi qu'il arrive. Le nom français est le
+   * nôtre (`lib/i18n/tokenNames.ts`), et il ne s'applique qu'ici, à l'affichage
+   * — `meta.name` reste la clé partout ailleurs. `card.kind` est le signal qui
+   * fait foi : c'est le protocole qui dit qu'un objet est un jeton, pas nous.
+   */
+  const shownName =
+    (card.kind === 'TOKEN'
+      ? tokenName(localizedCardName(localized, meta?.name, faceIndex), language)
+      : localizedCardName(localized, meta?.name, faceIndex)) ?? 'Carte';
   const width = CARD_WIDTH * scale;
   const height = CARD_HEIGHT * scale;
 

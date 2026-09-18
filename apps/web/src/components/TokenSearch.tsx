@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { api, type CardMeta } from '../lib/api.js';
 import { scryfallImage } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
-import { resolveCardImage } from '../lib/i18n/index.js';
+import { isTokenTypeLine, resolveCardImage, tokenName, tokenQueryAliases } from '../lib/i18n/index.js';
+import { foldForSearch } from './Dialog.js';
 import { useGame } from '../store/game.js';
 import { useLanguage } from '../store/prefs.js';
 import { useCloseOnEscape } from '../lib/overlay.js';
@@ -14,6 +15,12 @@ import { useCloseOnEscape } from '../lib/overlay.js';
  * connaît que les noms du bulk que nous ingérons : la saisie part telle quelle,
  * sans être traduite ni repliée. Seul l'**affichage** du résultat passe au nom
  * imprimé — traduire la clé de recherche rendrait « Spirit » introuvable.
+ *
+ * **Ce qui a été ajouté, et qui ne contredit pas la phrase ci-dessus.** Quand la
+ * saisie est un terme français du glossaire des jetons, une ou deux recherches
+ * **supplémentaires** partent avec l'équivalent anglais, et leurs résultats sont
+ * fusionnés derrière ceux de la saisie brute. « Soldat » trouve alors son jeton,
+ * « Soldier » aussi, et la clé de recherche reste le nom du catalogue.
  */
 /** Les couleurs d'un jeton, dites en français comme à une table. */
 const COLOR_NAMES: Record<string, string> = {
@@ -56,15 +63,57 @@ export function TokenSearch({
       setResults([]);
       return;
     }
+    let annule = false;
     const timer = window.setTimeout(() => {
-      void api
-        .get<{ results: CardMeta[] }>(
-          `/api/cards/search?q=${encodeURIComponent(query)}&type=${tokensOnly ? 'token' : 'card'}`,
-        )
-        .then((r) => setResults(r.results))
-        .catch(() => setResults([]));
+      const chercher = (url: string): Promise<CardMeta[]> =>
+        api
+          .get<{ results: CardMeta[] }>(url)
+          .then((r) => r.results)
+          .catch(() => []);
+
+      /*
+       * **La saisie brute part la première, et telle quelle.** C'est le chemin
+       * historique et il ne bouge pas : `/api/cards/search` ne connaît que les
+       * noms du catalogue anglais, donc traduire la requête rendrait « Spirit »
+       * introuvable — or les listes de deck et les cartes physiques sont en
+       * anglais.
+       *
+       * Les requêtes qui suivent viennent **en plus**, et seulement quand la
+       * saisie ressemble à un terme français du glossaire : « Soldat » doit
+       * trouver son jeton comme « Soldier ». Elles sont peu nombreuses par
+       * construction (`tokenQueryAliases` en borne le nombre), et ne partent
+       * que pour les jetons — le glossaire ne dit rien des cartes.
+       */
+      const brute = chercher(
+        `/api/cards/search?q=${encodeURIComponent(query)}&type=${tokensOnly ? 'token' : 'card'}`,
+      );
+      const alias = tokensOnly ? tokenQueryAliases(query, foldForSearch) : [];
+      const supplements = alias.map((nom) =>
+        chercher(`/api/cards/search?q=${encodeURIComponent(nom)}&type=token`),
+      );
+      void Promise.all([brute, ...supplements]).then((lots) => {
+        if (annule) return;
+        /*
+         * Fusion par identifiant, dans l'ordre d'arrivée des lots : ce que la
+         * saisie brute a trouvé reste en tête. Un jeton peut répondre aux deux
+         * recherches — « Elf » et « Elfe » — et ne doit apparaître qu'une fois.
+         */
+        const vus = new Set<string>();
+        const fusion: CardMeta[] = [];
+        for (const lot of lots) {
+          for (const card of lot) {
+            if (vus.has(card.scryfallId)) continue;
+            vus.add(card.scryfallId);
+            fusion.push(card);
+          }
+        }
+        setResults(fusion);
+      });
     }, 180);
-    return () => window.clearTimeout(timer);
+    return () => {
+      annule = true;
+      window.clearTimeout(timer);
+    };
   }, [query, tokensOnly]);
 
   /*
@@ -112,7 +161,16 @@ export function TokenSearch({
             const src =
               resolveCardImage({ card, localized, language, version: 'small' }).url ??
               scryfallImage(card.scryfallId, 'small');
-            const shownName = localizedCardName(localized, card.name) ?? card.name;
+            /*
+             * Le glossaire ne s'applique qu'à ce qui est **certainement** un
+             * jeton : la case décochée rend des cartes ordinaires, dont le nom
+             * vient de la résolution localisée et ne nous appartient pas. Dans
+             * le doute — ligne de type pas encore lue —, l'anglais.
+             */
+            const estJeton = tokensOnly || isTokenTypeLine(card.typeLine);
+            const localise = localizedCardName(localized, card.name);
+            const shownName =
+              (estJeton ? tokenName(localise, language) : localise) ?? card.name;
             return (
             <button
               key={card.scryfallId}

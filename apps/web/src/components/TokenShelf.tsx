@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 import { useGame } from '../store/game.js';
 import { scryfallImage } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
-import { resolveCardImage } from '../lib/i18n/index.js';
+import { resolveCardImage, tokenName } from '../lib/i18n/index.js';
 import { useLanguage } from '../store/prefs.js';
 import { findDropTarget } from '../lib/drag.js';
 import { loadShelf, saveShelf, type ShelfToken } from '../lib/shelf.js';
@@ -43,6 +43,11 @@ export function TokenShelf({ onSearch }: { onSearch: () => void }): React.ReactE
    * L'étagère ne garde qu'un identifiant et le nom du catalogue — c'est lui qui
    * distingue deux impressions dans le stockage, et il n'a pas à bouger avec la
    * langue. Seuls la vignette et l'infobulle passent au français.
+   *
+   * C'est exactement pourquoi le glossaire des jetons ne s'applique qu'au
+   * **rendu** : `token.name`, tel que `saveShelf` l'écrit, reste anglais. Y
+   * figer « Soldat » rendrait l'étagère illisible au premier passage en anglais,
+   * et un doublon invisible au suivant.
    */
   useLocalizationTick();
   const language = useLanguage();
@@ -159,7 +164,8 @@ export function TokenShelf({ onSearch }: { onSearch: () => void }): React.ReactE
                 language,
                 version: 'normal',
               }).url ?? scryfallImage(token.scryfallId, 'normal');
-            const shownName = localizedCardName(localized, token.name) ?? token.name;
+            const shownName =
+              tokenName(localizedCardName(localized, token.name), language) ?? token.name;
             return (
             <div key={token.scryfallId} className="group relative">
               <button

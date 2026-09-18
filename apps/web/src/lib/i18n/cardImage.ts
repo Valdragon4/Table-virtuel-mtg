@@ -20,6 +20,7 @@
  */
 import { SCRYFALL_LANG, type Language } from '@mtg/shared';
 import { scryfallImage } from '../cards.js';
+import { isTokenTypeLine } from './tokenNames.js';
 
 export type ImageVersion = 'small' | 'normal' | 'large';
 
@@ -233,6 +234,15 @@ export interface ResolvedCardImage {
    * *est* bien l'anglaise, on a seulement décidé que ça n'intéressait personne.
    */
   basicLand: boolean;
+  /**
+   * Cette carte est un **jeton** : il n'en existe aucune impression traduite,
+   * dans aucune langue, et il n'en existera pas.
+   *
+   * Le drapeau sert exactement comme `basicLand` : `fallback` et
+   * `fallbackReason` continuent de dire la vérité — l'illustration servie *est*
+   * l'anglaise —, mais le repère de langue s'abstient. Voir `cardLanguageMark`.
+   */
+  token: boolean;
 }
 
 /**
@@ -318,6 +328,13 @@ export function resolveCardImage(request: CardImageRequest): ResolvedCardImage {
   // L'exception des terrains de base, décidée ici et pas ailleurs : c'est
   // l'affichage qui la porte, et elle ne vaut que pour celui qui regarde.
   const basicLand = isBasicLand(card);
+  /*
+   * Le jeton, seconde exception, et de même nature : Scryfall n'en publie aucun
+   * hors anglais, donc il n'y a ni impression traduite à servir ni substitution
+   * à chercher. Seul le **nom** se traduit, et cela se passe ailleurs
+   * (`tokenNames.ts`) — ici on se contente de le dire à qui dessine le repère.
+   */
+  const token = isTokenTypeLine(card.typeLine);
 
   const usable =
     localized?.imageStatus == null || USABLE_IMAGE_STATUS.has(localized.imageStatus);
@@ -368,6 +385,7 @@ export function resolveCardImage(request: CardImageRequest): ResolvedCardImage {
       substituteSetCode: null,
       fallbackReason: null,
       basicLand,
+      token,
     };
   };
 
@@ -408,6 +426,7 @@ export function resolveCardImage(request: CardImageRequest): ResolvedCardImage {
         substituteSetCode: substitute.setCode ?? null,
         fallbackReason: null,
         basicLand,
+        token,
       };
     }
   }
@@ -446,6 +465,7 @@ export function resolveCardImage(request: CardImageRequest): ResolvedCardImage {
         ? 'unusableImage'
         : 'untranslated',
     basicLand,
+    token,
   };
 }
 
@@ -507,6 +527,22 @@ export function cardLanguageMark(input: {
    * `isBasicLand`.
    */
   if (resolved.basicLand) return null;
+  /*
+   * **Un jeton n'en porte jamais non plus, et la raison est plus forte encore.**
+   *
+   * Le repère `untranslated` dit « cette impression-ci n'existe pas dans votre
+   * langue », ce qui invite à en changer — c'est même à cela qu'il sert sur une
+   * carte ordinaire. Sur un jeton il mentirait : Scryfall ne publie **aucun**
+   * jeton hors anglais, il n'y a donc pas d'édition à aller chercher, et le
+   * joueur passerait le sélecteur d'impression en revue pour rien. Le nom, lui,
+   * est bien français (`tokenNames.ts`) : une pastille « non traduite » à côté
+   * d'un jeton qui s'annonce « Soldat » serait doublement fausse.
+   *
+   * Même arbitrage que pour les terrains de base (`docs/i18n.md` §3.9) et pour
+   * une raison voisine : on ne signale pas un repli sur lequel personne ne peut
+   * rien.
+   */
+  if (resolved.token) return null;
 
   if (resolved.substituted) {
     return { kind: 'substituted', language, setCode: resolved.substituteSetCode };
