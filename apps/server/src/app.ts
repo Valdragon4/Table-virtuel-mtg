@@ -13,6 +13,7 @@ import { userRoutes } from './users/routes.js';
 import { deckRoutes } from './decks/routes.js';
 import { cardRoutes } from './cards/routes.js';
 import { roomRoutes } from './rooms/routes.js';
+import { adminRoutes } from './admin/routes.js';
 import { cardCount } from './cards/ingest.js';
 import { registerWebSocket } from './ws/server.js';
 import { liveRoomCount } from './game/registry.js';
@@ -54,6 +55,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(deckRoutes);
   await app.register(cardRoutes);
   await app.register(roomRoutes);
+  // Toutes ses routes sont gardées par `requireAdmin`, qui refuse en 404 — la
+  // même que celle rendue plus bas pour tout `/api` inconnu. Voir docs/admin.md.
+  await app.register(adminRoutes);
 
   // Le serveur WebSocket se greffe sur le serveur HTTP de Fastify, une fois prêt.
   app.addHook('onReady', async () => {

@@ -19,6 +19,19 @@ const schema = z.object({
   SMTP_URL: z.string().optional(),
   MAIL_FROM: z.string().default('no-reply@localhost'),
 
+  /**
+   * Les adresses qui ouvrent la console d'administration, séparées par des
+   * virgules. Vide par défaut : **aucun** administrateur, donc aucune surface
+   * exposée tant qu'un opérateur n'a rien décidé.
+   *
+   * C'est volontairement une variable d'environnement et non une colonne de la
+   * base : le `.env` vit sur le serveur, n'est jamais transféré par le
+   * déploiement, et porte déjà le secret de session et l'accès à la base. Aucune
+   * écriture applicative ne peut donc promouvoir qui que ce soit — l'escalade de
+   * privilège est fermée par construction, pas par vigilance. Voir docs/admin.md.
+   */
+  ADMIN_EMAILS: z.string().default(''),
+
   SCRYFALL_USER_AGENT: z.string().min(5),
   INGEST_ON_BOOT: bool.default('true'),
   INGEST_CRON_HOUR: z.coerce.number().int().min(0).max(23).default(4),

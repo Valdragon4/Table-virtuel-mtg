@@ -761,4 +761,103 @@ export const en = defineTranslation({
   'mana.tap': 'tap',
   'mana.untap': 'untap',
   'mana.energy': 'energy',
+
+  // — Console d'administration ———————————————————————————————
+  'admin.title': 'Platform status',
+  'admin.intro':
+    'What the database can say about the platform, and nothing of what it can say about a game: accounts, counters and dates. No table content goes through here.',
+  'admin.deniedTitle': 'There is nothing here',
+  'admin.deniedDetail':
+    'This address does not answer. If you administer this instance, check that you are signed in with an address listed in ADMIN_EMAILS and that its email is verified.',
+  'admin.refresh': 'Refresh',
+  'admin.updatedAt': 'Read at {time}',
+
+  'admin.sectionPlatform': 'Health',
+  'admin.sectionAccounts': 'Accounts',
+  'admin.sectionTables': 'Tables',
+  'admin.sectionCatalog': 'Catalogue',
+  'admin.sectionUsers': 'Browse accounts',
+  'admin.sectionRooms': 'Browse tables',
+  'admin.sectionAudit': 'Admin log',
+
+  'admin.statLiveRooms': 'Tables in memory',
+  'admin.statProtocol': 'Protocol',
+  'admin.statSessionsActive': 'Valid sessions',
+  'admin.statSessionsStale': 'Expired sessions not yet purged',
+
+  'admin.statAccounts': 'Accounts',
+  'admin.statVerified': 'Verified emails',
+  'admin.statUnverified': 'Unverified emails',
+  'admin.statActiveDay': 'Seen within 24 h',
+  'admin.statActiveWeek': 'Seen within 7 d',
+  'admin.statActiveMonth': 'Seen within 30 d',
+  'admin.statNewWeek': 'Created within 7 d',
+  'admin.statNewMonth': 'Created within 30 d',
+  'admin.statAdmins': 'Admin addresses',
+
+  'admin.statTables': 'Tables in total',
+  'admin.statLobby': 'In lobby',
+  'admin.statPlaying': 'Playing',
+  'admin.statEnded': 'Put away',
+  'admin.statTablesActiveDay': 'Active within 24 h',
+  'admin.statTablesNewWeek': 'Opened within 7 d',
+  'admin.statSeats': 'Occupied seats',
+  'admin.endedNote':
+    'A table that is “put away” carries the ENDED status. Two paths lead there and the database does not tell them apart: the host closing the table, and the sweep that frees an empty table idle for six hours.',
+
+  'admin.statDecks': 'Decks',
+  'admin.statDeckOwners': 'Accounts with a deck',
+  'admin.statCards': 'Cards',
+  'admin.statTokens': 'Tokens',
+  'admin.statLocalizations': 'Resolved translations',
+  'admin.statPrintings': 'Translated printings',
+
+  'admin.ingestTitle': 'Last ingest',
+  'admin.ingestNever': 'No ingest has ever run on this instance.',
+  'admin.ingestOk': 'Succeeded',
+  'admin.ingestFailed': 'Failed',
+  'admin.ingestRunning': 'Running',
+  'admin.ingestAge': 'Bulk dated {hours} h ago',
+  'admin.ingestUpserted': '{count} cards written',
+  'admin.ingestFailedWeek': '{failed} failure(s) over {runs} run(s) in 7 days',
+
+  'admin.searchLabel': 'Search an account',
+  'admin.searchPlaceholder': 'Address or display name',
+  'admin.noResults': 'No account matches.',
+  'admin.showingOf': '{shown} shown of {total}',
+  'admin.colAccount': 'Account',
+  'admin.colCreated': 'Created',
+  'admin.colLastSeen': 'Seen',
+  'admin.colDecks': 'Decks',
+  'admin.colSeats': 'Seats',
+  'admin.colSessions': 'Sessions',
+  'admin.badgeAdmin': 'Admin',
+  'admin.badgeUnverified': 'Unverified',
+
+  'admin.openRecord': 'Open record',
+  'admin.detailSeats': 'Tables where this account has a seat',
+  'admin.detailNoSeats': 'This account has no seat at any table.',
+  'admin.seatedWarning':
+    'This account is seated at a table that is not put away. Warn them before acting on their access.',
+  'admin.seatLine': 'seat {index}',
+
+  'admin.revoke': 'Revoke their sessions',
+  'admin.revokeConfirm':
+    'Sign {name} out of every device? They can sign back in with their password. A game already open is not interrupted.',
+  'admin.revokeDone': '{count} session(s) revoked.',
+  'admin.revokeFailed': 'Revocation failed.',
+  'admin.revokeUnlogged': 'Sessions revoked, but the log could not be written. Worth reporting.',
+  'admin.noDeleteNote':
+    'Deleting an account is not offered here: it cascades to their decks and sessions, and leaves an orphan seat if the account is sitting at a live table. An account can delete itself from its own settings.',
+
+  'admin.roomsAll': 'All',
+  'admin.colTable': 'Table',
+  'admin.colHost': 'Host',
+  'admin.colActivity': 'Activity',
+  'admin.roomPrivate': 'Private',
+  'admin.roomPassword': 'Password',
+  'admin.noRooms': 'No table matches.',
+
+  'admin.auditEmpty': 'No admin action has been logged yet.',
+  'admin.auditLine': '{actor} — {action} on {target}',
 } as const);

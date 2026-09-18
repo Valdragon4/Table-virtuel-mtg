@@ -10,6 +10,7 @@ import { AuthPage } from './pages/Auth.js';
 import { DecksPage } from './pages/Decks.js';
 import { Tables } from './pages/Tables.js';
 import { RoomPage } from './pages/Room.js';
+import { Admin } from './pages/Admin.js';
 import { ForgotPasswordPage, ResetPasswordPage, VerifyEmailPage } from './pages/Tokens.js';
 import { LegalFooter } from './components/LegalFooter.js';
 import { registerServiceWorker, watchInstallPrompt } from './lib/pwa.js';
@@ -30,6 +31,11 @@ function App(): React.ReactElement {
         <Route path="/decks" element={<DecksPage />} />
         <Route path="/tables" element={<Tables />} />
         <Route path="/rooms/:code" element={<RoomPage />} />
+        {/* La console d'administration. Cette déclaration n'ouvre **rien** :
+            la route est publique comme toutes les routes du client, et c'est le
+            serveur qui refuse en 404 sur chaque appel d'API (docs/admin.md).
+            L'écran affiche alors la même chose qu'une adresse inexistante. */}
+        <Route path="/admin" element={<Admin />} />
         <Route
           path="*"
           element={

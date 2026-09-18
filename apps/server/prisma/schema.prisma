@@ -573,6 +573,48 @@ model ExternalDeckCache {
   @@index([fetchedAt])
 }
 
+/// Journal des actions d'administration : qui, quoi, quand.
+///
+/// ——— Pourquoi aucune clé étrangère vers User
+///
+/// `actorUserId` et `targetRef` sont des chaînes libres, sans relation Prisma, et
+/// c'est délibéré. Une action d'administration porte souvent sur un compte ; si
+/// ce compte disparaît un jour, la cascade emporterait précisément la ligne de
+/// journal qui dit ce qu'on lui a fait. Un journal qui s'efface avec son sujet ne
+/// sert à rien. On garde donc des identifiants **morts**, plus l'adresse de
+/// l'acteur recopiée au moment des faits — ce qui la fige même si le `.env`
+/// change ensuite.
+///
+/// ——— Ce qui n'y entre jamais
+///
+/// `detail` ne contient que des métadonnées de l'action (combien de sessions
+/// révoquées, par exemple). Aucun état de partie, aucune carte, aucun secret :
+/// c'est le même invariant que le reste de la console (docs/admin.md §3).
+///
+/// ——— Sûreté du `db push`
+///
+/// Table entièrement neuve : `prisma db push --accept-data-loss` la crée sans
+/// toucher à quoi que ce soit d'existant. Aucune colonne n'est supprimée ni
+/// renommée ailleurs.
+model AdminAudit {
+  id          String   @id @default(uuid())
+  /// L'identifiant du compte administrateur au moment des faits. Sans relation :
+  /// voir l'en-tête.
+  actorUserId String?
+  /// Recopiée, pas jointe : elle doit rester lisible quoi qu'il arrive ensuite.
+  actorEmail  String
+  /// Verbe stable, en majuscules : `REVOKE_SESSIONS`, etc.
+  action      String
+  /// Sur quoi : `USER`, `ROOM`… et sa référence lisible (identifiant, code).
+  targetKind  String
+  targetRef   String
+  detail      Json?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([targetKind, targetRef])
+}
+
 /// Trace des ingestions de bulk Scryfall, pour ne pas retélécharger inutilement.
 model IngestRun {
   id           String   @id @default(uuid())

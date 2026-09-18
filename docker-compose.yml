@@ -41,6 +41,10 @@ services:
       MOXFIELD_API_ENABLED: ${MOXFIELD_API_ENABLED:-false}
       MOXFIELD_USER_AGENT: ${MOXFIELD_USER_AGENT:-}
       MOXFIELD_API_TOKEN: ${MOXFIELD_API_TOKEN:-}
+      # Vide par défaut : aucun administrateur, donc aucune console accessible.
+      # La liste reste dans le .env du serveur, qui n'est jamais transféré par le
+      # déploiement — c'est tout l'objet du modèle (docs/admin.md §2).
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
     ports:
       - '${PORT:-3000}:3000'
     healthcheck:

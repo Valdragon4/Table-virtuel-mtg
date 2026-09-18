@@ -819,6 +819,108 @@ export const fr = {
   'mana.tap': 'engager',
   'mana.untap': 'dégager',
   'mana.energy': 'énergie',
+
+  // — Console d'administration ———————————————————————————————
+  // Ce n'est pas un écran de persuasion : c'est ce qu'on ouvre quand quelque
+  // chose ne va pas. Les libellés nomment des faits, pas des intentions.
+  'admin.title': 'État de la plateforme',
+  'admin.intro':
+    'Ce que la base sait dire de la plateforme, et rien de ce qu’elle sait dire d’une partie : des comptes, des compteurs et des dates. Aucun contenu de table ne passe par ici.',
+  'admin.deniedTitle': 'Il n’y a rien ici',
+  'admin.deniedDetail':
+    'Cette adresse ne répond pas. Si vous administrez cette instance, vérifiez que vous êtes connecté avec une adresse inscrite dans ADMIN_EMAILS et que son email est vérifié.',
+  'admin.refresh': 'Rafraîchir',
+  'admin.updatedAt': 'Relevé {time}',
+
+  'admin.sectionPlatform': 'Santé',
+  'admin.sectionAccounts': 'Comptes',
+  'admin.sectionTables': 'Tables',
+  'admin.sectionCatalog': 'Catalogue',
+  'admin.sectionUsers': 'Consulter les comptes',
+  'admin.sectionRooms': 'Consulter les tables',
+  'admin.sectionAudit': 'Journal d’administration',
+
+  'admin.statLiveRooms': 'Tables en mémoire',
+  'admin.statProtocol': 'Protocole',
+  'admin.statSessionsActive': 'Sessions valides',
+  'admin.statSessionsStale': 'Sessions expirées non purgées',
+
+  'admin.statAccounts': 'Comptes',
+  'admin.statVerified': 'Emails vérifiés',
+  'admin.statUnverified': 'Emails non vérifiés',
+  'admin.statActiveDay': 'Vus sous 24 h',
+  'admin.statActiveWeek': 'Vus sous 7 j',
+  'admin.statActiveMonth': 'Vus sous 30 j',
+  'admin.statNewWeek': 'Créés sous 7 j',
+  'admin.statNewMonth': 'Créés sous 30 j',
+  'admin.statAdmins': 'Adresses administratrices',
+
+  'admin.statTables': 'Tables au total',
+  'admin.statLobby': 'En salon',
+  'admin.statPlaying': 'En cours',
+  'admin.statEnded': 'Rangées',
+  'admin.statTablesActiveDay': 'Actives sous 24 h',
+  'admin.statTablesNewWeek': 'Ouvertes sous 7 j',
+  'admin.statSeats': 'Sièges occupés',
+  'admin.endedNote':
+    'Une table « rangée » porte le statut ENDED. Deux chemins y mènent et la base ne les distingue pas : l’hôte qui clôt sa table, et le ménage automatique qui libère une table vide inactive depuis six heures.',
+
+  'admin.statDecks': 'Decks',
+  'admin.statDeckOwners': 'Comptes avec un deck',
+  'admin.statCards': 'Cartes',
+  'admin.statTokens': 'Jetons',
+  'admin.statLocalizations': 'Traductions résolues',
+  'admin.statPrintings': 'Impressions traduites',
+
+  'admin.ingestTitle': 'Dernière ingestion',
+  'admin.ingestNever': 'Aucune ingestion n’a jamais tourné sur cette instance.',
+  'admin.ingestOk': 'Réussie',
+  'admin.ingestFailed': 'Échouée',
+  'admin.ingestRunning': 'En cours',
+  'admin.ingestAge': 'Matière datée de {hours} h',
+  'admin.ingestUpserted': '{count} cartes écrites',
+  'admin.ingestFailedWeek': '{failed} échec(s) sur {runs} passage(s) en 7 jours',
+
+  'admin.searchLabel': 'Chercher un compte',
+  'admin.searchPlaceholder': 'Adresse ou pseudo',
+  'admin.noResults': 'Aucun compte ne correspond.',
+  'admin.showingOf': '{shown} affichés sur {total}',
+  'admin.colAccount': 'Compte',
+  'admin.colCreated': 'Créé',
+  'admin.colLastSeen': 'Vu',
+  'admin.colDecks': 'Decks',
+  'admin.colSeats': 'Sièges',
+  'admin.colSessions': 'Sessions',
+  'admin.badgeAdmin': 'Admin',
+  'admin.badgeUnverified': 'Non vérifié',
+
+  'admin.openRecord': 'Ouvrir la fiche',
+  'admin.detailSeats': 'Tables où ce compte a une place',
+  'admin.detailNoSeats': 'Ce compte n’a de place à aucune table.',
+  'admin.seatedWarning':
+    'Ce compte est assis à une table qui n’est pas rangée. Prévenez-le avant d’agir sur son accès.',
+  'admin.seatLine': 'siège {index}',
+
+  'admin.revoke': 'Révoquer ses sessions',
+  'admin.revokeConfirm':
+    'Déconnecter {name} de tous ses appareils ? Il pourra se reconnecter avec son mot de passe. Une partie déjà ouverte n’est pas interrompue.',
+  'admin.revokeDone': '{count} session(s) révoquée(s).',
+  'admin.revokeFailed': 'La révocation a échoué.',
+  'admin.revokeUnlogged':
+    'Sessions révoquées, mais le journal n’a pas pu être écrit. À signaler.',
+  'admin.noDeleteNote':
+    'La suppression d’un compte n’est pas offerte ici : elle emporte en cascade ses decks et ses sessions, et laisse un siège orphelin si le compte est assis à une table en cours. Un compte peut se supprimer lui-même depuis ses paramètres.',
+
+  'admin.roomsAll': 'Toutes',
+  'admin.colTable': 'Table',
+  'admin.colHost': 'Hôte',
+  'admin.colActivity': 'Activité',
+  'admin.roomPrivate': 'Privée',
+  'admin.roomPassword': 'Mot de passe',
+  'admin.noRooms': 'Aucune table ne correspond.',
+
+  'admin.auditEmpty': 'Aucune action d’administration n’a encore été journalisée.',
+  'admin.auditLine': '{actor} — {action} sur {target}',
 } as const;
 
 /** La forme du catalogue : c'est le français qui la définit, toujours. */
