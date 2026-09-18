@@ -682,7 +682,7 @@ try {
     'menu contextuel : bibliothèque',
     async () => {
       (await seatZone('LIBRARY')).click({ button: 'right' });
-      await page.getByText('Fouiller la bibliothèque').waitFor({ timeout: 5000 });
+      await page.getByText('Chercher dans la bibliothèque').waitFor({ timeout: 5000 });
     },
     // Relais voulu : « Échap referme le menu de pile » éprouve sa fermeture.
     { menuOuvert: true },
@@ -691,7 +691,7 @@ try {
 
   await step('Échap referme le menu de pile', async () => {
     await page.keyboard.press('Escape');
-    await page.getByText('Fouiller la bibliothèque').waitFor({ state: 'detached', timeout: 4000 });
+    await page.getByText('Chercher dans la bibliothèque').waitFor({ state: 'detached', timeout: 4000 });
   });
 
   await step('menu contextuel : cimetière', async () => {
@@ -1121,7 +1121,7 @@ async function findDoubleFaced() {
     const preview = page.locator('[data-test="card-preview"]');
     await preview.waitFor({ timeout: 5000 });
 
-    const src = await preview.locator('img').getAttribute('src');
+    const src = await preview.locator('[data-test="card-preview-image"]').getAttribute('src');
     if (!src?.includes('/large/')) throw new Error(`l'aperçu n'utilise pas la grande image : ${src}`);
 
     // Il ne doit jamais intercepter le pointeur, sinon il tue le survol.
@@ -1210,7 +1210,7 @@ async function findDoubleFaced() {
     if ((await preview.getAttribute('data-preview-source')) !== 'printing') {
       throw new Error('un résultat de recherche devrait être prévisualisé comme une impression');
     }
-    const src = await preview.locator('img').getAttribute('src');
+    const src = await preview.locator('[data-test="card-preview-image"]').getAttribute('src');
     if (!src?.startsWith('https://cards.scryfall.io/')) {
       throw new Error(`l’aperçu ne charge pas l’image chez Scryfall : ${src}`);
     }
@@ -2246,7 +2246,7 @@ async function findDoubleFaced() {
 
     // Et sur une pile, celui de la pile.
     (await seatZone('LIBRARY')).click({ button: 'right' });
-    await page.getByText('Fouiller la bibliothèque').waitFor({ timeout: 5000 });
+    await page.getByText('Chercher dans la bibliothèque').waitFor({ timeout: 5000 });
     if ((await page.locator('[data-test="table-menu"]').count()) !== 0) {
       throw new Error('le menu du fond s’est ouvert par-dessus celui de la pile');
     }

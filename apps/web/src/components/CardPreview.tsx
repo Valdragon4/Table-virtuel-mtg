@@ -247,6 +247,13 @@ export function CardPreview(): React.ReactElement | null {
         <img
           alt={shownName}
           className="w-full object-cover rounded-[14px]"
+          /*
+           * Ancre explicite : le panneau contient aussi les symboles de mana,
+           * qui sont des `<img>`. Un sélecteur « l'image de l'aperçu » en
+           * attrapait donc deux dès que la fiche arrivait à temps — et une
+           * seule quand elle tardait, ce qui rendait la recette intermittente.
+           */
+          data-test="card-preview-image"
           draggable={false}
           /* CDN Scryfall, directement : rien n'est hébergé ni proxifié chez nous. */
           src={imageSrc}
