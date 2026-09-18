@@ -4,8 +4,10 @@ Liste tenue à jour des demandes reçues et non encore livrées. Elle existe pou
 qu'une interruption ne fasse rien perdre : ce qui est fait sort d'ici, ce qui
 arrive y entre.
 
-Dernière revue : 18 septembre 2026, après la session de corrections d'interface et
-la pose du socle d'internationalisation.
+Dernière revue : 18 septembre 2026, après la session de corrections d'interface, la
+pose du socle d'internationalisation, puis la livraison de « cascade et découvrir » —
+qui a demandé d'**amender l'invariant fondateur** du projet (§1.1 de
+`docs/protocol.md`) et dont les suites sont consignées ci-dessous.
 
 ## Demandé, pas encore livré
 
@@ -51,6 +53,8 @@ exercé par une étape de `scripts/verify-ui.mjs`, contre la pile locale
 | U6 | `Détacher` sans effet et `M` à répétition : corrigés côté client ; il reste que `DETACH` n'écrit **aucune ligne de journal** côté serveur | **serveur** |
 | U7 | `Ctrl+Z` annonce « plus rien à annuler » là où l'action n'était pas annulable, et aucun bouton « Annuler » n'existe | **serveur** + barre d'actions |
 | A1 | Une erreur `t:'error'` non fatale est maintenant montrée ; le socket, lui, n'attend toujours aucun `pong` et ne détecte pas une coupure silencieuse | **`net/socket.ts`** |
+| U8 | Le **sélecteur d'impression n'a pas d'aperçu au survol à la table**. `PrintingPicker.tsx` monte une grille de vignettes, et il faut cliquer pour voir grand ; l'aperçu fixe en bas à gauche (`CardPreview`) ne s'allume pas au survol d'une vignette. Choisir une édition, c'est précisément regarder une illustration : c'est là que le manque coûte | **client** |
+| U9 | Les **menus contextuels sont morts dans le lecteur de replay**. `Replay.tsx` monte `<Table />` et `<Hand />`, qui appellent bien `openMenu` sur un clic droit, mais aucun `CardMenu` / `ZoneMenu` / `TableMenu` n'y est monté — ils ne vivent que dans `Room.tsx`. Résultat : le clic droit est **avalé** (la surface fait `preventDefault`), le menu natif du navigateur ne s'ouvre pas, et rien n'apparaît à la place. Deux sorties possibles, et le choix n'est pas fait : monter des menus **en lecture seule** (aperçu, zoom, « où est cette carte »), ou ne pas capter le geste du tout dans le replay | **client** |
 
 ## Décisions en attente et chantiers ouverts
 
@@ -82,6 +86,13 @@ ferait apparaître la même carte sous deux noms à deux lignes d'écart : « d�
 Sol Ring, … et 4 autres cartes » au-dessus d'une pastille « Anneau solaire ». Ce
 n'est pas un repli invisible, c'est une contradiction visible. Tant que le serveur
 cuit les noms dans sa phrase, mieux vaut tout en anglais que la moitié.
+
+**Toujours en attente au 18 septembre 2026**, et la cascade vient d'en augmenter le
+prix sans le dire : `resolveCascade` compose une phrase française de plus, à parties
+variables (« cascade » ou « découvre », deux formulations de critère, trois issues
+possibles, la liste des cartes exilées). Chaque fonctionnalité livrée en français
+allonge la reprise que cette décision reporte. Ce n'est pas un argument pour trancher
+maintenant, c'est l'intérêt de la dette, et il faut qu'il soit visible.
 
 ### 2. Les migrations Prisma n'existent pas
 
@@ -171,7 +182,107 @@ fuit. Mais l'invariant « un objet est dans une zone et une seule » ne doit pas
 dépendre d'une validation de frontière : c'est le genre de garde qui manque le jour
 où l'on ajoute une huitième destination, comme `toSideboard` l'a déjà montré.
 
+### 9. `deploy.sh` sort en erreur alors qu'il a réussi
+
+Le script se termine par une vérification de la **montée en WebSocket** à travers le
+reverse proxy — un `curl --http1.1` avec les en-têtes `Upgrade`, qui doit répondre 101.
+C'est une bonne vérification : tout le jeu en dépend. Mais **quand elle réussit**, le
+serveur bascule en WebSocket et garde la connexion ouverte ; `curl` n'a plus de réponse
+à terminer et tient jusqu'à son `-m 10`, puis sort en **28 (timeout)**. Le `set -euo
+pipefail` de l'en-tête fait le reste : la commande `ssh` remonte l'échec, le script
+s'arrête, et `✓ Déployé` n'est jamais écrit — alors que le déploiement est bon.
+
+**Pourquoi ce n'est pas cosmétique.** Un déploiement qui crie au loup à chaque passage
+apprend à son opérateur à ignorer sa sortie. Le jour où il échouera vraiment — l'image
+qui ne se construit pas, le proxy qui ne suit plus, le 101 qui ne vient pas —, l'erreur
+aura exactement la même allure que d'habitude, et personne ne la lira. Un garde-fou
+qu'on a pris l'habitude d'ignorer ne garde plus rien.
+
+La correction demande de **distinguer les deux cas**, pas de retirer la vérification :
+lire le code HTTP et n'échouer que s'il n'est pas 101 (un `|| true` autour du `curl`
+suivi d'un test sur `%{http_code}`), le timeout devenant alors le cas **nominal** au
+lieu d'une panne.
+
+### 10. `npm run ingest -- --force` ne marche pas depuis la racine
+
+Le script racine est `npm run ingest -w @mtg/server` ; les arguments ajoutés après `--`
+s'y accolent, ce qui donne `npm run ingest -w @mtg/server --force`. **npm avale
+`--force` comme un drapeau à lui** — il n'y a pas de second `--` pour le passer au
+script —, et `ingest-cli.ts` ne le voit jamais : `process.argv.includes('--force')`
+rend faux, l'ingestion trouve le bulk déjà ingéré et **ne fait rien**, en affichant
+« Bulk déjà ingéré, rien à faire. Relancer avec `--force` pour forcer. » — le message
+le plus déroutant possible pour quelqu'un qui vient justement de passer `--force`.
+
+La forme qui marche est celle du `README.md` : `npm run ingest -w @mtg/server -- --force`,
+qui contourne l'alias racine. **Le commentaire en tête de `ingest-cli.ts` documente la
+forme fausse** et devrait être corrigé en même temps que l'alias racine — c'est du code,
+donc hors du périmètre de ce document.
+
+C'est un détail jusqu'au jour où une colonne neuve exige une ré-ingestion (voir
+« Déploiement » ci-dessous) : là, la commande qui ne fait rien en silence coûte une
+demi-heure de recherche d'un défaut qui n'existe pas.
+
 ## Fait récemment
+
+- **Cascade et Découvrir** (18 septembre 2026), et **l'amendement de l'invariant
+  fondateur** qui va avec. Exiler du dessus jusqu'à une carte qui convient, remettre
+  le reste dessous au hasard : la séquence est fastidieuse à la main, elle est
+  désormais offerte en un clic.
+
+  Elle fait **évaluer deux règles de Magic au serveur** — « est-ce un terrain ? », « la
+  valeur de mana est-elle sous le seuil ? » —, ce que le projet affirmait partout ne
+  jamais faire. Le choix a été d'**assumer et d'écrire la frontière** plutôt que de la
+  cacher : le principe 5 de la §1 de `docs/protocol.md` est conservé mot pour mot, et
+  la nouvelle **§1.1** dit où passe la ligne. *L'invariant interdit de refuser, pas
+  d'assister.* Une assistance est acceptable si elle **n'interdit rien** (aucun code
+  d'erreur nouveau), **n'impose rien** (le chemin manuel reste ouvert, rien ne se
+  déclenche parce qu'une carte est jouée) et **ne conclut pas** (la carte trouvée reste
+  à l'exil, le joueur en dispose). Ces trois propriétés sont le **critère de toute
+  demande future** : une fonctionnalité qui en manque une arbitre, et n'est pas à
+  discuter.
+
+  Le prix est consigné sans être adouci : le **saut automatique des terrains** est le
+  seul endroit où une erreur du serveur a une conséquence de règles — une ligne de type
+  mal lue et la trouvaille passe à la trappe, en silence. Le garde-fou est que le
+  journal nomme **toutes** les cartes exilées : la table voit et peut protester.
+  Deux endroits où l'on a **refusé de décider** : une carte dont plusieurs faces portent
+  un coût arrête la résolution au lieu d'être jugée, et « jouer sans payer son coût »
+  n'existe pas sur une table sans pile — la carte reste à l'exil.
+
+  Le catalogue stocke maintenant `Card.keywords`, et l'invariant de droits est
+  **intact** : ce sont des noms de mécaniques publiés à côté d'`oracle_text`, pas
+  dedans (le raisonnement complet est au §5 de `docs/i18n.md`). Le mot-clé **ne descend
+  pas au moteur** — il voyage par le catalogue de cartes et ne sert qu'à remonter
+  l'action dans un menu. **Une ré-ingestion forcée est obligatoire au déploiement** :
+  voir « Déploiement » plus bas.
+
+- **Report d'impression vers le deck du compte** (18 septembre 2026). Un changement
+  d'impression fait en partie (`SET_PRINTING`) ne meurt plus avec la table : il
+  redescend sur le deck (`apps/server/src/decks/printing-sync.ts`).
+
+  Deux décisions à ne pas défaire par inadvertance. **On déplace une copie, pas
+  toutes** : une ligne `DeckCard` porte une `quantity`, et c'est justement pour les
+  cartes en plusieurs exemplaires — les terrains de base avant tout — qu'on change une
+  impression, pour que les copies ne soient pas identiques. La ligne d'origine perd une
+  unité, une ligne de la nouvelle impression en gagne une ; le total par carte est
+  conservé, et comme on **fusionne** dans une ligne existante quand elle existe,
+  changer puis se raviser ne fragmente pas le deck. **On retrouve la ligne par l'ancien
+  `scryfallId`, jamais par l'oracle** : un deck peut légitimement contenir deux
+  impressions de la même carte — c'est même ce que ce module fabrique —, et l'oracle ne
+  les départage pas. Il ne sert que de garde-fou : si les deux impressions n'ont pas le
+  même, on n'écrit rien, parce qu'on est alors en train de remplacer une carte par une
+  autre.
+
+  **Contrepartie assumée, et elle contredit une règle permanente** (voir plus bas) : un
+  deck asservi à Archidekt ou Moxfield est **écrit sans être détaché** de sa source.
+  `printing-sync.ts` touche la `DeckCard` sans passer par le chemin d'édition
+  (`decks/edit.ts`, `detachFromSource`), donc sans remettre `source` à `MANUAL` ni vider
+  `sourceUrl`. Une resynchronisation efface le choix, en silence. Le détachement
+  automatique a été écarté : changer une illustration en partie est un geste léger, et
+  couper un deck de sa source à cette occasion serait une conséquence lourde qu'on
+  imposerait sans la demander — exactement le genre de décision que cette table ne
+  prend pas à la place du joueur. Le manque **réel** est ailleurs : le joueur devrait
+  l'apprendre sur le moment, ce qui demande un event adressé à son seul siège.
 
 - **Session de corrections d'interface** (18 septembre 2026). Cadrage de la table
   (« Voir toute la table » ne cadre plus le décor, « Recentrer sur moi » cadre le
@@ -649,6 +760,27 @@ le reverse proxy et la montée en WebSocket.
 Ne jamais déployer pendant qu'un chantier est en cours dans l'arbre de travail :
 l'archive transférée emporterait des fichiers à moitié modifiés.
 
+**Une étape de plus tant que `Card.keywords` n'est pas peuplé en production.** La
+colonne est **neuve** : `prisma db push` l'ajoute sans rien détruire, mais elle reste
+`null` sur toutes les lignes écrites avant elle — et `null` veut dire « on ne sait
+pas », jamais « aucun mot-clé » (c'est pourquoi elle est `Json?` et non `String[]`).
+Sans ré-ingestion, **aucune carte n'est détectée** comme portant cascade ou découvrir :
+le raccourci ne remonte dans aucun menu, et la fonctionnalité a l'air de ne pas avoir
+été livrée du tout. Après le déploiement, sur le serveur :
+
+```sh
+npm run ingest -w @mtg/server -- --force
+```
+
+Compter une **quarantaine de secondes**. Écrire la commande exactement ainsi :
+`npm run ingest -- --force` depuis la racine ne fait rien et le dit mal (point 10
+ci-dessus). Rien n'est cassé entre-temps — le tiroir « actions assistées » reste offert
+sur toutes les cartes, parce que ne pas savoir n'est pas une raison de dire non.
+
+**Le `✓ Déployé` peut manquer alors que tout va bien** : `deploy.sh` sort en erreur sur
+sa dernière vérification quand celle-ci **réussit** (point 9 ci-dessus). Vérifier le
+code HTTP `101` affiché juste avant, pas le code de sortie du script.
+
 ## Décisions de périmètre
 
 - **Quatre joueurs au maximum.** Le mode à huit est retiré (15 septembre 2026).
@@ -676,5 +808,12 @@ l'archive transférée emporterait des fichiers à moitié modifiés.
 - Éditer le contenu d'un deck le détache de sa source externe. Aucune édition
   manuelle ne survit sous un `sourceUrl` : ce serait du travail promis à
   l'écrasement.
+  **Une exception existe depuis le 18 septembre 2026, et elle est consignée plutôt que
+  tue** : le report d'impression fait en partie (`decks/printing-sync.ts`) écrit dans le
+  deck **sans** le détacher. C'est un choix — couper un deck de sa source parce qu'on a
+  changé une illustration serait une conséquence lourde pour un geste léger —, mais il
+  laisse intacte la conséquence que cette règle annonce : **une resynchronisation efface
+  le choix d'impression**, en silence. Toute autre écriture dans un `Deck` reste tenue
+  par la règle, et cette exception ne s'étend à rien d'autre.
 - La disposition des sièges est une fonction pure du `seatIndex`, identique sur
   tous les clients : c'est ce qui rend les curseurs interprétables.

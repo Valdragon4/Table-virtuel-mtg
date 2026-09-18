@@ -14,9 +14,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DeckZone, ImportReport } from '@mtg/shared';
 import { api, ApiError, type CardMeta } from '../lib/api.js';
-import { scryfallImage } from '../lib/cards.js';
+import { cardMeta, scryfallImage } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
-import { resolveCardImage, useT } from '../lib/i18n/index.js';
+import { keywordSearchTerms, resolveCardImage, useT } from '../lib/i18n/index.js';
+import { useCardMetaTick } from './CardSprite.js';
+import { matchesCardQuery } from './ZonePanel.js';
 import { useLanguage } from '../store/prefs.js';
 import { useCloseOnEscape } from '../lib/overlay.js';
 import { ImportReportView } from './ImportReportView.js';
@@ -85,6 +87,11 @@ export function DeckEditor({
   const [detachAsked, setDetachAsked] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
   const [dirty, setDirty] = useState(false);
+  /** Filtre d'affichage seulement : il ne touche ni `rows` ni ce qu'on enregistre. */
+  const [filter, setFilter] = useState('');
+  const language = useLanguage();
+  useCardMetaTick();
+  useLocalizationTick();
 
   /*
    * L'éditeur se ferme souvent sous le curseur — Échap, ou un clic sur le
@@ -196,6 +203,25 @@ export function DeckEditor({
     return byZone;
   }, [rows]);
 
+  /**
+   * Une ligne passe-t-elle le filtre ?
+   *
+   * Les mécaniques ne sont **pas** dans `EditorEntry` : le deck vient de
+   * `/api/decks/:id/editor`, qui ne porte que ce qu'il faut pour réenregistrer
+   * la liste. On les lit donc dans le cache de catalogue, que `cardMeta`
+   * remplit tout seul par lots — d'où `useCardMetaTick`, sans quoi la liste
+   * resterait sourde aux mots-clés jusqu'au prochain rendu venu d'ailleurs.
+   * Une fiche pas encore arrivée ne fait que répondre moins, jamais vider.
+   */
+  const keep = (row: Row): boolean =>
+    matchesCardQuery(
+      filter,
+      row.name,
+      localizedCardName(localizedCard(row.scryfallId, language), row.name),
+      row.typeLine,
+      ...keywordSearchTerms(cardMeta(row.scryfallId)?.keywords, language),
+    );
+
   return (
     <div className="site fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-3 sm:p-8" onClick={onClose}>
       {/*
@@ -277,17 +303,46 @@ export function DeckEditor({
 
           {view !== null && !rawMode && (
             <div className="space-y-5">
+              {/*
+                Le filtre du deck. Un deck de Commander fait cent lignes, et l'on
+                y cherche « toutes mes créatures avec Vol » aussi souvent qu'une
+                carte par son nom. C'est le **même** moteur que la fouille de
+                bibliothèque et les panneaux de zone — `matchesCardQuery` et le
+                repli d'accents unique du projet —, pas une seconde recherche.
+              */}
+              <input
+                aria-label={t('deck.filterLabel')}
+                className="dark-field w-full rounded px-3 py-2 text-[0.85rem]"
+                data-testid="deck-editor-filter"
+                placeholder={t('deck.filterPlaceholder')}
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+              />
+
               {ZONES.map((zone) => {
-                const inZone = rows.filter((r) => r.zone === zone);
-                if (inZone.length === 0 && zone !== 'MAIN') return null;
+                const dansZone = rows.filter((r) => r.zone === zone);
+                const inZone = dansZone.filter(keep);
+                /* La zone disparaît quand elle est vide **en soi**, pas quand le
+                   filtre la vide : sinon le commander s'évanouirait à la première
+                   frappe et l'on croirait l'avoir perdu. */
+                if (dansZone.length === 0 && zone !== 'MAIN') return null;
                 return (
                   <section key={zone}>
                     <h3 className="sign-sm mb-2.5 text-[0.68rem] text-[color:var(--site-stamp-pale)]">
                       {ZONE_LABEL[zone]} <span className="font-normal">({counts[zone]})</span>
+                      {/* Le compte reste celui du deck ; le filtre dit à part ce
+                          qu'il montre, pour qu'on ne lise jamais un deck plus
+                          petit qu'il n'est. */}
+                      {filter.trim() !== '' && (
+                        <span className="font-normal">
+                          {' · '}
+                          {t('deck.filterShown', { count: inZone.length })}
+                        </span>
+                      )}
                     </h3>
                     {inZone.length === 0 && (
                       <p className="text-[0.78rem] text-[color:var(--site-floor-dim)]">
-                        {t('deck.emptyZone')}
+                        {dansZone.length === 0 ? t('deck.emptyZone') : t('deck.filterNoMatch')}
                       </p>
                     )}
                     <ul className="space-y-1">

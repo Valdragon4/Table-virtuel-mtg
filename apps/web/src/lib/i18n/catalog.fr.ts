@@ -299,6 +299,17 @@ export const fr = {
   'deck.syncedWarning':
     'Ce deck est synchronisé depuis {source}. L\'enregistrer le détachera de sa source : vos corrections seront conservées, mais la resynchronisation ne sera plus proposée.',
   'deck.emptyZone': 'Vide.',
+  /*
+   * Le filtre du deck. Le placeholder nomme les deux langues exprès : le nom
+   * anglais reste la clé partout, et « flying » doit répondre autant que
+   * « vol » — l'annoncer évite d'avoir à le découvrir.
+   */
+  'deck.filterLabel': 'Filtrer le deck',
+  'deck.filterPlaceholder': 'Filtrer : nom, type, mot-clé (vol, flying…)',
+  'deck.filterNoMatch': 'Aucune carte ne correspond.',
+  /* Le compte du deck reste affiché à côté : celui-ci ne dit que ce que le
+     filtre montre, pour qu'on ne lise jamais un deck plus petit qu'il n'est. */
+  'deck.filterShown': { one: '{count} affichée', other: '{count} affichées' },
   'deck.unsavedChanges': 'Modifications non enregistrées',
   'deck.detachAndSave': 'Détacher de la source et enregistrer',
   'deck.addCard': 'Ajouter une carte',
@@ -1000,6 +1011,39 @@ export const fr = {
   'replay.shareNone': 'Ce replay n’est pas partagé.',
   'replay.open': 'Voir le replay',
   'replay.home': 'Retour à l’accueil',
+
+  // — Actions assistées : jetons nommés, amasser, peupler, proliférer ————
+  /*
+   * Ajouté en fin de fichier exprès : un autre chantier y ajoute des clés au
+   * même moment, et réordonner ce catalogue ferait perdre le seul contrôle
+   * humain qui vaille — relire le français et l'anglais côte à côte.
+   */
+  'assist.namedTokens': 'Créer un jeton nommé…',
+  'assist.tokensTitle': 'Jeton nommé',
+  'assist.tokensDescription':
+    'Le mot-clé ne fait que nommer ce qu’on crée : le jeton est posé tel quel, sans rien de plus. Les autres jetons se trouvent par la recherche et se rangent sur l’étagère.',
+  'assist.tokensSubmit': 'Créer',
+  'assist.tokenLabel': 'Jeton',
+  'assist.tokenClue': 'Indice (Enquêter)',
+  'assist.tokenTreasure': 'Trésor',
+  'assist.tokenFood': 'Nourriture',
+  'assist.tokenBlood': 'Sang',
+  'assist.tokenIncubator': 'Incubateur (Incuber)',
+  'assist.tokenCountLabel': 'Combien',
+  'assist.tokenIncubateLabel': 'Marqueurs +1/+1 sur l’Incubateur',
+  'assist.tokenIncubateHint':
+    'Le nombre est dans le texte de votre carte, que nous ne stockons pas : c’est à vous de le dire.',
+  'assist.tokenMissingTitle': 'Jeton introuvable',
+  'assist.tokenMissing':
+    'Le catalogue local ne contient aucun jeton nommé exactement « {name} ». Rien n’a été créé : passez par la recherche de jetons pour choisir vous-même.',
+  'assist.amassNew': 'Amasser N — nouveau jeton Armée…',
+  'assist.amassThis': 'Amasser N — sur cette carte…',
+  'assist.amassTitle': 'Amasser',
+  'assist.amassLabel': 'Marqueurs +1/+1',
+  'assist.amassSubmit': 'Amasser',
+  'assist.populate': 'Peupler (copier ce jeton)',
+  'assist.proliferateOne': 'Proliférer sur cette carte',
+  'assist.proliferateMany': 'Proliférer sur {count} cartes',
 } as const;
 
 /** La forme du catalogue : c'est le français qui la définit, toujours. */

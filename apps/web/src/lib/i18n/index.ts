@@ -28,6 +28,17 @@ export {
   type ResolvedCardImage,
 } from './cardImage.js';
 export {
+  canonKeyword,
+  foldKeyword,
+  isKnownKeyword,
+  keywordLabel,
+  keywordName,
+  keywordSearchTerms,
+  COMMON_KEYWORDS,
+  KEYWORD_NAMES_FR,
+  MOTS_CLES_EN_ANGLAIS,
+} from './keywordNames.js';
+export {
   isTokenTypeLine,
   tokenName,
   tokenQueryAliases,

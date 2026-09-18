@@ -264,6 +264,10 @@ export const en = defineTranslation({
   'deck.syncedWarning':
     'This deck is synced from {source}. Saving it will detach it from its source: your corrections will be kept, but resyncing will no longer be offered.',
   'deck.emptyZone': 'Empty.',
+  'deck.filterLabel': 'Filter the deck',
+  'deck.filterPlaceholder': 'Filter: name, type, keyword (flying, trample…)',
+  'deck.filterNoMatch': 'No card matches.',
+  'deck.filterShown': { one: '{count} shown', other: '{count} shown' },
   'deck.unsavedChanges': 'Unsaved changes',
   'deck.detachAndSave': 'Detach from the source and save',
   'deck.addCard': 'Add a card',
@@ -927,4 +931,32 @@ export const en = defineTranslation({
   'replay.shareNone': 'This replay is not shared.',
   'replay.open': 'Watch the replay',
   'replay.home': 'Back to home',
+
+  // — Actions assistées : jetons nommés, amasser, peupler, proliférer ————
+  'assist.namedTokens': 'Create a named token…',
+  'assist.tokensTitle': 'Named token',
+  'assist.tokensDescription':
+    'The keyword only names what gets created: the token is put down as is, nothing more. Other tokens are found through search and kept on the shelf.',
+  'assist.tokensSubmit': 'Create',
+  'assist.tokenLabel': 'Token',
+  'assist.tokenClue': 'Clue (Investigate)',
+  'assist.tokenTreasure': 'Treasure',
+  'assist.tokenFood': 'Food',
+  'assist.tokenBlood': 'Blood',
+  'assist.tokenIncubator': 'Incubator (Incubate)',
+  'assist.tokenCountLabel': 'How many',
+  'assist.tokenIncubateLabel': '+1/+1 counters on the Incubator',
+  'assist.tokenIncubateHint':
+    'The number lives in your card’s rules text, which we do not store: it is yours to tell us.',
+  'assist.tokenMissingTitle': 'Token not found',
+  'assist.tokenMissing':
+    'The local catalog holds no token named exactly “{name}”. Nothing was created: use the token search to pick one yourself.',
+  'assist.amassNew': 'Amass N — new Army token…',
+  'assist.amassThis': 'Amass N — on this card…',
+  'assist.amassTitle': 'Amass',
+  'assist.amassLabel': '+1/+1 counters',
+  'assist.amassSubmit': 'Amass',
+  'assist.populate': 'Populate (copy this token)',
+  'assist.proliferateOne': 'Proliferate on this card',
+  'assist.proliferateMany': 'Proliferate on {count} cards',
 } as const);

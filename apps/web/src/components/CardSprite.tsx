@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { HIDDEN_ZONES, type CardView, type Counter, type ObjectId, type SeatId } from '@mtg/shared';
+import {
+  HIDDEN_ZONES,
+  type CardView,
+  type Counter,
+  type Language,
+  type ObjectId,
+  type SeatId,
+} from '@mtg/shared';
 import { useGame, zoneKey } from '../store/game.js';
 import { CardBack } from './CardBack.js';
 import { openDialog } from './Dialog.js';
@@ -15,9 +22,14 @@ import {
 } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
 import {
+  canonKeyword,
   cardLanguageMark,
+  isKnownKeyword,
+  keywordLabel,
+  keywordName,
   resolveCardImage,
   tokenName,
+  COMMON_KEYWORDS,
   type CardLanguageMark,
 } from '../lib/i18n/index.js';
 import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
@@ -436,15 +448,24 @@ export function canonSubtype(raw: string): string {
 }
 
 /**
- * Le lexique connaît-il ce mot comme un sous-type ?
+ * Le lexique connaît-il ce mot comme un sous-type — ou, désormais, comme un
+ * **mot-clé** ?
  *
  * Sert au dialogue à trancher un cas de collision : « chat » est un sous-type,
  * et pourrait un jour être un morceau du libellé d'une entrée du catalogue. On
- * propose alors quand même le sous-type, au lieu de le rendre inatteignable.
+ * propose alors quand même le terme, au lieu de le rendre inatteignable.
+ *
+ * Les mots-clés y entrent parce que le dialogue de `CardMenu` interroge cette
+ * fonction pour décider s'il vaut la peine d'appeler `subtypeOptions`, laquelle
+ * propose maintenant les deux familles. « vol » et « flying » ne correspondent à
+ * aucun libellé du catalogue : sans cette porte, ils ne mèneraient nulle part.
+ * Le nom de la fonction ment donc un peu ; le renommer coûterait une
+ * modification de `CardMenu`, que l'on ne touche pas ici.
  */
 export function isKnownSubtype(raw: string): boolean {
   const folded = foldSubtype(raw);
-  return folded in SUBTYPE_ALIASES || SUBTYPE_FRENCH.has(folded);
+  if (folded in SUBTYPE_ALIASES || SUBTYPE_FRENCH.has(folded)) return true;
+  return isKnownKeyword(raw);
 }
 
 /** Comment l'écrire à l'écran : en français quand on le connaît, tel quel sinon. */
@@ -510,6 +531,8 @@ export interface CountSource {
   distinctTypes?: boolean;
   /** Le code est un **préfixe** : un sous-type le complète (`bat:` + `humain`). */
   subtype?: boolean;
+  /** Le code est un **préfixe** : un mot-clé le complète (`kw:` + `flying`). */
+  keyword?: boolean;
 }
 
 const G_JOUEUR = 'Joueur';
@@ -558,6 +581,31 @@ export const SUBTYPE_SOURCES: readonly CountSource[] = [
 ];
 
 /**
+ * Compter des **mots-clés** : « +1/+1 pour chaque créature avec le vol ».
+ *
+ * C'est le même décompte que celui des sous-types, avec une autre source : au
+ * lieu de lire la ligne de type, on lit `CardMeta.keywords`, le tableau de
+ * mécaniques que Scryfall publie pour chaque carte. Rien de neuf ne traverse le
+ * socket — les mots-clés arrivent par le catalogue de cartes, comme les lignes
+ * de type, et le serveur ne les voit pas passer.
+ *
+ * **Le champ de bataille, et lui seul.** Les sous-types se comptent dans trois
+ * zones publiques ; les mots-clés se comptent là où ils s'appliquent. « Pour
+ * chaque créature avec le vol au cimetière » n'est pas un effet du jeu, et
+ * ouvrir les trois zones coûterait des caractères de `kind` (voir
+ * `MAX_SOURCE_LENGTH`) pour un décompte que personne ne demanderait. Les zones
+ * cachées restent refusées pour la raison habituelle, et elle n'a pas bougé :
+ * le *nombre* de cartes d'une main est public, son *contenu* ne l'est pas.
+ *
+ * Le préfixe est court exprès. `kw:` laisse 17 caractères au mot-clé replié, ce
+ * qui tient `cumulative-upkeep`, le plus long du jeu ; un préfixe en `bat.kw:`
+ * aurait fait tomber `indestructible` hors du budget.
+ */
+export const KEYWORD_SOURCES: readonly CountSource[] = [
+  { code: 'kw:', label: 'sur le champ de bataille', group: G_BAT, zone: 'BATTLEFIELD', keyword: true },
+];
+
+/**
  * Les sous-types offerts d'emblée, sans rien taper.
  *
  * Critère : les tribus qui ont réellement des seigneurs qu'on joue — celles
@@ -585,21 +633,56 @@ export function subtypeOptions(
 ): Array<{ value: string; label: string; group: string; keywords: string }> {
   const brut = query.trim();
   if (brut === '') {
-    return COMMON_SUBTYPES.map((canon) => ({
-      value: `bat:${canon}`,
-      label: `${subtypeLabel(canon)}s sur le champ de bataille`,
-      group: 'Sous-types courants',
-      keywords: `${canon} sous-type tribu`,
-    }));
+    return [
+      ...COMMON_SUBTYPES.map((canon) => ({
+        value: `bat:${canon}`,
+        label: `${subtypeLabel(canon)}s sur le champ de bataille`,
+        group: 'Sous-types courants',
+        keywords: `${canon} sous-type tribu`,
+      })),
+      ...COMMON_KEYWORDS.map((canon) => ({
+        value: `kw:${canon}`,
+        label: `créatures avec ${keywordLabel(canon, 'fr')} sur le champ de bataille`,
+        group: 'Mots-clés courants',
+        keywords: `${canon} ${keywordLabel(canon, 'fr')} mot-cle mecanique`,
+      })).filter((option) => option.value.length <= MAX_SOURCE_LENGTH),
+    ];
   }
   const canon = canonSubtype(brut);
   if (canon === '') return [];
-  return SUBTYPE_SOURCES.map((source) => ({
+  const options = SUBTYPE_SOURCES.map((source) => ({
     value: `${source.code}${canon}`,
     label: `${subtypeLabel(canon)}s ${source.label}`,
     group: `Sous-type « ${subtypeLabel(canon)} »`,
     keywords: `${canon} ${brut}`,
-  })).filter((option) => option.value.length <= MAX_SOURCE_LENGTH);
+  }));
+  /*
+   * Le mot tapé est-il **aussi** un mot-clé ? « ombre » est les deux — le type
+   * de créature *Shade* et la capacité *Shadow* —, et l'arbitrage appartient au
+   * joueur : on propose les deux familles, le libellé dit laquelle est laquelle.
+   *
+   * **L'ordre, lui, n'est pas neutre.** Toute saisie produit une entrée de
+   * sous-type, connue ou non : c'est voulu, c'est ce qui rend atteignable un
+   * sous-type qu'aucune liste ne porte. Mais « vol » n'est le sous-type de rien,
+   * et l'on se retrouvait avec trois « Vols au cimetière » avant le seul choix
+   * qui voulait dire quelque chose. Un mot-clé **certain** passe donc devant un
+   * sous-type **supposé** ; quand le mot est les deux, le sous-type reprend sa
+   * place d'abord, parce qu'il est alors tout aussi sûr et bien plus fréquent.
+   */
+  const kw = canonKeyword(brut);
+  const motsCles = isKnownKeyword(brut)
+    ? KEYWORD_SOURCES.map((source) => ({
+        value: `${source.code}${kw}`,
+        label: `créatures avec ${keywordLabel(kw, 'fr')} ${source.label}`,
+        group: `Mot-clé « ${keywordLabel(kw, 'fr')} »`,
+        keywords: `${kw} ${brut} mot-cle mecanique`,
+      }))
+    : [];
+  // `canonSubtype` a déjà ramené le français sur l'anglais : la seule question
+  // qui reste est de savoir si le lexique connaît ce canon-là.
+  const sousTypeSur = SUBTYPE_FRENCH.has(canon);
+  const tous = motsCles.length > 0 && !sousTypeSur ? [...motsCles, ...options] : [...options, ...motsCles];
+  return tous.filter((option) => option.value.length <= MAX_SOURCE_LENGTH);
 }
 
 /**
@@ -677,16 +760,22 @@ export function getCardStat(c: CardView, stat: 'power' | 'toughness' | 'counters
  * exil, ou fiche Scryfall pas encore arrivée. Le nombre est alors un plancher,
  * et la pastille le signale au lieu de le faire passer pour exact.
  */
-export function resolveSource(code: string): { source: CountSource; subtype: string | null } | null {
+export function resolveSource(
+  code: string,
+): { source: CountSource; subtype: string | null; keyword: string | null } | null {
   if (code.startsWith('self:') || code.startsWith('card:')) return null;
   const cut = code.indexOf(':');
   if (cut < 0) {
     const source = COUNT_SOURCES.find((s) => s.code === code);
-    return source ? { source, subtype: null } : null;
+    return source ? { source, subtype: null, keyword: null } : null;
   }
-  const source = SUBTYPE_SOURCES.find((s) => s.code === code.slice(0, cut + 1));
-  const subtype = code.slice(cut + 1);
-  return source && subtype !== '' ? { source, subtype } : null;
+  const prefix = code.slice(0, cut + 1);
+  const reste = code.slice(cut + 1);
+  if (reste === '') return null;
+  const parMot = KEYWORD_SOURCES.find((s) => s.code === prefix);
+  if (parMot) return { source: parMot, subtype: null, keyword: reste };
+  const source = SUBTYPE_SOURCES.find((s) => s.code === prefix);
+  return source ? { source, subtype: reste, keyword: null } : null;
 }
 
 export function measureCount(
@@ -710,7 +799,7 @@ export function measureCount(
 
   const resolved = resolveSource(spec.source);
   if (!resolved) return null;
-  const { source, subtype } = resolved;
+  const { source, subtype, keyword } = resolved;
   const seats = scopeSeats(state, card, spec.scope);
 
   if (source.zone === 'LIFE') {
@@ -747,7 +836,7 @@ export function measureCount(
        la zone qui désigne son propriétaire. */
     const holder = source.zone === 'BATTLEFIELD' ? other.controller : other.zone.seat;
     if (!seats.has(holder)) continue;
-    if (source.family === undefined && !source.distinctTypes && subtype === null) {
+    if (source.family === undefined && !source.distinctTypes && subtype === null && keyword === null) {
       n += 1;
       continue;
     }
@@ -755,7 +844,24 @@ export function measureCount(
       approx = true;
       continue;
     }
-    const line = cardMeta(other.scryfallId)?.typeLine;
+    const otherMeta = cardMeta(other.scryfallId);
+    if (keyword !== null) {
+      /*
+       * Trois états, et les distinguer est tout l'intérêt (`CardMeta.keywords`) :
+       * un tableau qui porte le mot-clé, un tableau **vide** qui dit « aucun »,
+       * et `null`/absent qui dit « on ne sait pas » — ligne de catalogue jamais
+       * ré-ingérée. Le troisième rend le décompte **approché** plutôt que de
+       * compter zéro : un plancher annoncé vaut mieux qu'un nombre faux.
+       */
+      const mots = otherMeta?.keywords;
+      if (mots === undefined || mots === null) {
+        approx = true;
+        continue;
+      }
+      if (mots.some((mot) => canonKeyword(mot) === keyword)) n += 1;
+      continue;
+    }
+    const line = otherMeta?.typeLine;
     if (line === undefined) {
       approx = true;
       continue;
@@ -848,9 +954,15 @@ export function frozenCount(
          n'avait jamais été comptée, et la soustraire ferait perdre un ange. */
       const res = resolveSource(spec.source);
       if (res && card.zone.kind === res.source.zone) {
-        const line = (card.faceDown === false ? cardMeta(card.scryfallId)?.typeLine : undefined) ?? '';
+        const porteuse = card.faceDown === false ? cardMeta(card.scryfallId) : undefined;
+        const line = porteuse?.typeLine ?? '';
         const compte =
-          res.subtype !== null
+          res.keyword !== null
+            ? // Mots-clés inconnus (`null`) : la porteuse n'a pas été comptée,
+              // donc il n'y a rien à retirer. C'est le même refus de deviner que
+              // dans `measureCount`.
+              (porteuse?.keywords ?? []).some((mot) => canonKeyword(mot) === res.keyword)
+            : res.subtype !== null
             ? subtypesOf(line).has(res.subtype)
             : res.source.distinctTypes
               ? false
@@ -906,10 +1018,19 @@ export function describeComputed(spec: ComputedSpec): string {
   const resolved = resolveSource(spec.source);
   let what = spec.source;
   if (resolved !== null) {
+    /*
+     * Le libellé est en français dur, comme tous ceux de `COUNT_SOURCES` : ces
+     * phrases décrivent un marqueur, pas une chaîne d'interface, et
+     * `describeComputed` est appelée depuis `CardMenu`, qui ne lui passe pas de
+     * langue. Le jour où ce catalogue passera au `t()`, c'est tout le fichier
+     * qui bougera d'un coup.
+     */
     what =
-      resolved.subtype === null
-        ? resolved.source.label
-        : `${subtypeLabel(resolved.subtype)}s ${resolved.source.label}`;
+      resolved.keyword !== null
+        ? `cartes avec ${keywordLabel(resolved.keyword, 'fr')} ${resolved.source.label}`
+        : resolved.subtype === null
+          ? resolved.source.label
+          : `${subtypeLabel(resolved.subtype)}s ${resolved.source.label}`;
   } else if (spec.source.startsWith('self:')) {
     const stat = spec.source.slice(5);
     what =
@@ -1143,8 +1264,11 @@ function CounterBadge({ card, counter }: { card: CardView; counter: Counter }): 
         /* Un sous-type à zéro est ambigu : soit il n'y a réellement aucune de
            ces cartes, soit le mot est mal orthographié et ne correspond à rien.
            Le dire vaut mieux que de laisser chercher la faute. */
-        (n === 0 && !approx && (resolveSource(computed.source)?.subtype ?? null) !== null
-          ? ' Aucune carte ne porte ce sous-type en ce moment — vérifiez l’orthographe si vous en attendiez.'
+        (n === 0 &&
+        !approx &&
+        ((resolveSource(computed.source)?.subtype ?? null) !== null ||
+          (resolveSource(computed.source)?.keyword ?? null) !== null)
+          ? ' Aucune carte ne porte ce terme en ce moment — vérifiez l’orthographe si vous en attendiez.'
           : '') +
         (editable ? ' Cliquer pour le retirer ou le remplacer.' : '');
     const body = (
@@ -1348,6 +1472,93 @@ export function CardLanguageBadge({
   );
 }
 
+/* ------------------------------------------------------------------------- *
+ * Les pastilles de mots-clés.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Les quatre hauteurs du **coin haut-gauche**, où les repères se rangent les uns
+ * sous les autres au lieu de se recouvrir.
+ *
+ * Elles existaient déjà, écrites à la main dans le calcul du repère de langue ;
+ * les sortir ici est ce qui permet à un quatrième repère de s'ajouter sans
+ * recopier la cascade — et sans risquer de la recopier de travers.
+ */
+const COIN_HAUT_GAUCHE = ['top-1', 'top-6', 'top-11', 'top-16'] as const;
+
+/**
+ * Les mots-clés d'une carte, **comptés** — jamais appliqués, jamais écrits.
+ *
+ * **Ce que cette pastille ne fait pas** : elle n'applique aucune règle, ne
+ * change rien à la partie, et ne descend nulle part. `keywords` vient du
+ * catalogue de cartes, il ne traverse pas le protocole de jeu, et le serveur ne
+ * l'a jamais vu. C'est de l'affichage, au même titre que le nom imprimé.
+ *
+ * ## Pourquoi un **nombre**, et non les noms
+ *
+ * L'intention de départ était d'écrire « Vol », « Piétinement », « Contact
+ * mortel » à même la carte. La table a tranché autrement, et la sonde l'a montré
+ * en une capture.
+ *
+ * Une carte au champ de bataille fait `CARD_WIDTH * BATTLEFIELD_SCALE`, soit
+ * 83 px, une vignette de pile 70 px : « Double initiative » y couvrirait
+ * l'illustration entière, et il peut y avoir quarante permanents à l'écran, dont
+ * certains portent **six** mécaniques (Akroma, ange de la Colère, à titre
+ * d'étalon). Restait le rail de main, à 166 px — mais les cartes d'une main y
+ * sont **empilées de gauche à droite, la suivante couvrant la précédente** :
+ * seule la partie gauche de chacune reste visible, c'est la raison même pour
+ * laquelle l'œil de révélation vit en haut à gauche. Les noms écrits à droite
+ * s'y faisaient couper au milieu d'un mot ; écrits à gauche, ils auraient été
+ * tronqués par la bande visible, qui fait à peine soixante pixels. Un mot
+ * français coupé est pire qu'un chiffre : il a l'air d'un autre mot.
+ *
+ * Donc **une pastille de compte sur la carte, et les noms traduits en entier
+ * dans l'infobulle**, que `CardSprite` compose. On lit « cette carte a six
+ * mécaniques » d'un coup d'œil, et « Vol · Vigilance · Initiative · Protection ·
+ * Célérité · Piétinement » en s'arrêtant dessus. Le filtre textuel des panneaux
+ * de zone, de la fouille et de l'éditeur de deck couvre l'autre besoin, celui de
+ * retrouver toutes les cartes qui portent une mécanique donnée.
+ *
+ * ## Où elle se pose
+ *
+ * En haut à **gauche**, sous les repères qui y sont déjà — « face cachée », l'œil
+ * de révélation, le repère de langue —, parce que c'est la seule bande visible
+ * quelles que soient la zone et la taille de la main. Le haut-droit porte la
+ * marque de jeton, et tout le bas appartient aux marqueurs, qui débordent vers le
+ * bas et s'étalent sur la largeur.
+ *
+ * Elle est inerte au pointeur, comme tous les repères de ce fichier : une
+ * pastille qui capterait le clic amorcerait le glisser-déposer du permanent, ou
+ * pire, l'avalerait. C'est aussi pourquoi le détail est sur l'infobulle de la
+ * **carte** et non sur la pastille, où aucun `title` ne s'afficherait jamais.
+ */
+function KeywordBadges({
+  keywords,
+  language,
+  className,
+}: {
+  keywords: readonly string[];
+  language: Language;
+  className: string;
+}): React.ReactElement | null {
+  if (keywords.length === 0) return null;
+  return (
+    <span
+      className={`pointer-events-none absolute left-1 inline-flex items-center gap-px rounded bg-slate-950/85 px-1 py-0.5 text-[8px] font-bold leading-none text-teal-200 ring-1 ring-teal-400/50 ${className}`}
+      data-test="card-keywords"
+      data-keyword-count={String(keywords.length)}
+      data-keywords={keywords.map((kw) => keywordName(kw, language) ?? kw).join(' · ')}
+    >
+      {/* Le losange dit « mécanique » et tient à la taille où la pastille est
+          encore lisible — un mot n'y tiendrait pas. */}
+      <svg aria-hidden fill="none" height="6" viewBox="0 0 8 8" width="6">
+        <path d="M4 .8 7.2 4 4 7.2.8 4Z" stroke="currentColor" strokeWidth="1.3" />
+      </svg>
+      <span className="tabular-nums">{keywords.length}</span>
+    </span>
+  );
+}
+
 export function CardSprite({
   card,
   cardBackUrl,
@@ -1429,6 +1640,37 @@ export function CardSprite({
   const width = CARD_WIDTH * scale;
   const height = CARD_HEIGHT * scale;
 
+  /**
+   * Combien de repères occupent déjà le coin haut-gauche avant le repère de
+   * langue : le bandeau « face cachée » d'un permanent posé face cachée dont on
+   * connaît l'identité, et l'œil de révélation. Le compte remplace la cascade de
+   * ternaires qui vivait ici, et c'est ce qui permet au repère de langue **et**
+   * aux mécaniques de se ranger dessous sans se marcher dessus.
+   */
+  const coinsOccupes =
+    (card.faceDown === false && card.facedownOnTable ? 1 : 0) + (revealed !== null ? 1 : 0);
+
+  /*
+   * Les mécaniques de la carte, pour la pastille et pour l'infobulle.
+   *
+   * Une carte dont l'identité nous est cachée n'en a aucune **pour nous** : on
+   * ne connaît pas son identifiant, donc rien ne peut fuiter par ce chemin. Un
+   * `keywords` absent ou `null` — ligne de catalogue jamais ré-ingérée — se lit
+   * « on ne sait pas », et se traite comme « aucun » à l'affichage : on ne
+   * montre pas une pastille pour dire qu'on ignore quelque chose.
+   */
+  const keywords = known ? (meta?.keywords ?? []) : [];
+  /*
+   * Le détail au survol, sur **l'infobulle de la carte** plutôt que sur la
+   * pastille : les repères de ce fichier sont inertes au pointeur, et un `title`
+   * posé dessus ne s'afficherait donc jamais. Le rendre ici le fait marcher
+   * partout, y compris là où la pastille n'est qu'un chiffre.
+   */
+  const keywordsTitle =
+    keywords.length > 0
+      ? ` — ${keywords.map((kw) => keywordName(kw, language) ?? kw).join(' · ')}`
+      : '';
+
   return (
     <div
       className={`card-shadow relative select-none rounded-[6px] ${
@@ -1451,7 +1693,7 @@ export function CardSprite({
       }
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      title={known ? shownName : 'Carte face cachée'}
+      title={known ? `${shownName}${keywordsTitle}` : 'Carte face cachée'}
     >
       {card.faceDown === false && imageSrc ? (
         <img
@@ -1571,16 +1813,24 @@ export function CardSprite({
       */}
       {languageMark && (
         <CardLanguageBadge
-          className={`absolute left-1 ${
-            card.faceDown === false && card.facedownOnTable && revealed !== null
-              ? 'top-11'
-              : (card.faceDown === false && card.facedownOnTable) || revealed !== null
-                ? 'top-6'
-                : 'top-1'
-          }`}
+          className={`absolute left-1 ${COIN_HAUT_GAUCHE[coinsOccupes] ?? 'top-16'}`}
           mark={languageMark}
         />
       )}
+
+      {/*
+        Les mécaniques, comptées, sous tout ce qui occupe déjà le coin — et jamais
+        sur un dos de carte : `keywords` est vide dès que l'identité nous est
+        cachée, donc rien ne peut apprendre à personne ce que notre client sait.
+      */}
+      <KeywordBadges
+        className={
+          COIN_HAUT_GAUCHE[coinsOccupes + (languageMark ? 1 : 0)] ??
+          COIN_HAUT_GAUCHE[COIN_HAUT_GAUCHE.length - 1]!
+        }
+        keywords={keywords}
+        language={language}
+      />
 
       {card.counters.length > 0 && (
         <div className="absolute -bottom-1 left-1 right-1 flex flex-wrap gap-1">

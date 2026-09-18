@@ -136,7 +136,16 @@ describe('le nom anglais reste la clé partout ailleurs', () => {
     // Le tri lit `meta?.name`, anglais : trier sur le nom imprimé ferait sauter
     // les lignes à mesure que les lots de résolution rentrent.
     expect(code).toContain("if (sort === 'nom') return meta?.name ?? '';");
-    expect(code).toContain('matchesCardQuery(filter, meta?.name, printed');
+    /*
+     * L'appel a pris les mots-clés en plus et ne tient plus sur une ligne : on
+     * vérifie ses **morceaux**, qui sont ce que l'assertion voulait dire. Les
+     * deux noms restent interrogés, et les mécaniques les rejoignent dans le
+     * même filtre — pas dans un second moteur de recherche.
+     */
+    expect(code).toContain('matchesCardQuery(');
+    expect(code).toContain('meta?.name,');
+    expect(code).toContain('printed,');
+    expect(code).toContain('...keywordSearchTerms(meta?.keywords, language),');
   });
 
   it('les trois vues passent par le même filtre, et n’en réécrivent pas un', () => {

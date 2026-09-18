@@ -25,7 +25,7 @@ import { CardSprite } from './CardSprite.js';
 import { ManaCost } from './ManaCost.js';
 import { cardMeta, cardName, scryfallImage } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
-import { resolveCardImage, useT, type BoundT } from '../lib/i18n/index.js';
+import { keywordSearchTerms, resolveCardImage, useT, type BoundT } from '../lib/i18n/index.js';
 import { useLanguage } from '../store/prefs.js';
 import { TYPE_FAMILIES, matchesCardQuery, typeFamilyKey } from './ZonePanel.js';
 
@@ -258,7 +258,19 @@ export function LookModal(): React.ReactElement | null {
       kept = kept.filter((card) => {
         const meta = cardMeta(card.scryfallId);
         const printed = localizedCardName(localizedCard(card.scryfallId, language), meta?.name);
-        return matchesCardQuery(filter, meta?.name, printed, meta?.typeLine, meta?.manaCost);
+        /* Les mécaniques rejoignent les morceaux déjà interrogés, chacune comme
+           un terme à part : fouiller sa bibliothèque est justement le moment où
+           l'on cherche « toutes mes créatures avec Vol », et le champ qui sert à
+           cela est celui qui est déjà là. Anglais **et** français, comme les
+           noms. */
+        return matchesCardQuery(
+          filter,
+          meta?.name,
+          printed,
+          meta?.typeLine,
+          meta?.manaCost,
+          ...keywordSearchTerms(meta?.keywords, language),
+        );
       });
     }
 

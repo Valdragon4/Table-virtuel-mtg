@@ -41,7 +41,7 @@ import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/ca
 import { useLanguage } from '../store/prefs.js';
 import { startCardDrag } from './DragLayer.js';
 import { askNumber, foldForSearch } from './Dialog.js';
-import { useT, type BoundT, type CatalogKey } from '../lib/i18n/index.js';
+import { keywordSearchTerms, useT, type BoundT, type CatalogKey } from '../lib/i18n/index.js';
 
 const TABS = [
   { kind: 'GRAVEYARD', labelKey: 'zone.graveyard', mineOnly: false },
@@ -444,10 +444,22 @@ export function ZonePanel({
     // parce que c'est celui des listes de deck et de la carte physique, le nom
     // imprimé parce que c'est celui que le panneau affiche juste dessous.
     const catalogue = cardName(card.scryfallId);
+    /*
+     * Les mots-clés entrent dans le **même** filtre, comme des noms de plus, et
+     * non dans un second moteur de recherche : « toutes mes créatures avec Vol »
+     * se tape dans le champ qui est déjà là, à côté des pastilles de type. Les
+     * termes restent séparés — chacun comparé pour lui-même — pour qu'une saisie
+     * ne puisse pas courir de la fin d'un mot-clé au début du suivant.
+     *
+     * Le nom **anglais** est rendu en plus du français par `keywordSearchTerms` :
+     * « Flying » doit répondre autant que « Vol », comme pour les cartes et les
+     * jetons.
+     */
     return matchesCardQuery(
       query,
       catalogue,
       localizedCardName(localizedCard(card.scryfallId, language), catalogue),
+      ...keywordSearchTerms(cardMeta(card.scryfallId)?.keywords, language),
     );
   });
 

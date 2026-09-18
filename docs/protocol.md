@@ -34,7 +34,89 @@ carte périmée sur la pile — c'est exactement le cas que la §11 appelle cass
    siège n'a pas le droit de voir ne traverse pas le socket (§5).
 5. **Aucune règle de jeu.** Le serveur valide la légalité *structurelle* (l'objet
    existe, la zone cible est valide, l'auteur a le droit d'agir), jamais la légalité au
-   sens des règles de Magic.
+   sens des règles de Magic. Ce principe n'a pas bougé d'un mot ; il a désormais une
+   **frontière écrite**, parce qu'une fonctionnalité l'a approchée d'assez près pour
+   qu'on doive dire de quel côté elle tombe (§1.1).
+
+---
+
+### 1.1 La frontière : assister n'est pas arbitrer
+
+**Ce paragraphe est un amendement, pas une exception.** Le principe 5 est le point
+de départ du projet — la page d'accueil en fait un argument, « le logiciel ne dit
+jamais non » —, et on ne le retire pas. Mais la cascade (§6.4) fait évaluer au
+serveur deux questions qui sont, sans détour possible, des questions de règles de
+Magic : *est-ce un terrain ?* et *la valeur de mana est-elle sous le seuil ?* Le
+nier serait pire que l'écrire.
+
+La ligne passe ici :
+
+> **L'invariant interdit de refuser, pas d'assister.**
+>
+> - **Assister** — exécuter, à la demande, une séquence que le joueur ferait à la
+>   main. Il déclenche, il peut faire autrement, rien ne se produit tout seul.
+> - **Arbitrer** — décider si une action est permise, refuser un geste, imposer une
+>   conséquence. **Toujours interdit.**
+
+Elle tient parce que le principe 5 n'a jamais parlé de savoir : il parle de
+**pouvoir dire non**. Un serveur qui compte des symboles de mana n'ôte rien au
+joueur ; un serveur qui refuse un geste au motif qu'il serait illégal lui ôte la
+table.
+
+**Les trois propriétés qui rendent la cascade acceptable, et qui sont le critère de
+toute demande future.** Une fonctionnalité qui en manque une n'est pas à discuter :
+elle est du mauvais côté.
+
+1. **Elle n'interdit rien.** Aucun code d'erreur nouveau (§11), aucun refus au motif
+   d'illégalité. Les seules erreurs que `CASCADE` peut lever sont exactement celles
+   que `MILL` et `EXILE_TOP` lèvent déjà — zone en consultation, bibliothèque vide —,
+   et elles sont structurelles.
+2. **Elle n'impose rien.** Le chemin manuel reste ouvert et entier : exiler du dessus
+   une par une, lire, remettre dessous. Rien ne se déclenche parce qu'une carte est
+   jouée ; l'intent part d'un clic, et de rien d'autre.
+3. **Elle ne conclut pas.** La carte trouvée s'arrête à l'exil, face visible, et le
+   joueur en dispose avec le menu ordinaire. Décider à sa place où elle atterrit —
+   champ de bataille pour la cascade, main pour la découverte — serait précisément
+   arbitrer.
+
+**Ce que la frontière continue d'interdire**, pour que la liste ne se lise pas comme
+une permission générale : refuser un `MOVE_CARDS` parce que le terrain a déjà été
+posé ; refuser une pioche hors de son tour ; faire mourir une créature dont
+l'endurance tombe à zéro ; faire payer une taxe de commandant ; vider une main de
+huit cartes en fin de tour. Aucune de ces choses n'a de bouton, et aucune n'en aura :
+elles arbitrent toutes.
+
+#### Le prix à payer, dit sans l'adoucir
+
+**Le saut automatique des terrains est le seul endroit du serveur où une erreur a une
+conséquence de règles.** `isLandCard` (`apps/server/src/game/cascade.ts`) lit le mot
+`land` en mot entier sur la ligne de type **du recto**. Si cette ligne se lit mal —
+une ligne de type absente, une face que l'on n'a pas su choisir, une carte dont le
+catalogue n'a pas la forme attendue —, le serveur passe **silencieusement** à côté
+d'une carte qui aurait dû être la trouvaille, et il continue de creuser. Personne ne
+reçoit d'erreur. Rien ne clignote.
+
+Le garde-fou n'est pas dans le code de décision, il est dans le **journal** : la ligne
+nomme **toutes** les cartes exilées, pas seulement celle sur laquelle la séquence
+s'arrête (§5.4, `namedBatch`). La table voit donc exactement ce que le serveur a vu et
+peut protester — c'est-à-dire refaire à la main ce que la séquence a mal fait. C'est
+une réparation sociale, la même que pour tout le reste de cette table, et c'est
+assumé comme telle.
+
+#### Refuser de décider est une réponse, et on l'a écrite deux fois
+
+- **Valeur de mana ambiguë.** Quand **plusieurs faces portent un coût** — une carte
+  partagée, une aventure, une recto-verso modale —, les règles tranchent, mais elles
+  tranchent différemment selon la carte et selon la zone. `manaValueOf` rend alors
+  `ambiguous: true`, et la séquence **s'arrête** sur cette carte au lieu de la juger.
+  L'aveu passe **avant** la comparaison : si la valeur n'est pas sûre, le résultat de
+  la comparaison ne l'est pas davantage, de quelque côté du seuil qu'il tombe.
+  S'arrêter tôt ne dévoile jamais plus de cartes que nécessaire. Le journal le dit
+  publiquement, et la table tranche.
+- **« Jouer sans payer son coût » n'existe pas.** Sur une table sans pile ni coûts, il
+  n'y a pas de lancement, seulement des déplacements. La carte trouvée reste donc à
+  l'exil : ce n'est pas un travail inachevé, c'est le refus de choisir à la place du
+  joueur.
 
 ---
 
@@ -642,6 +724,7 @@ et le journaliser noierait les vraies actions.
 interface SetCounter    { type: 'SET_COUNTER'; targetId: ObjectId; kind: string; value?: number | null; } // [libre]
 interface AddCounter    { type: 'ADD_COUNTER'; targetId: ObjectId; kind: string; delta: number; }   // [libre]
 interface RemoveCounter { type: 'REMOVE_COUNTER'; targetId: ObjectId; kind: string; }               // [libre]
+interface Proliferate   { type: 'PROLIFERATE'; targetIds: ObjectId[]; }                             // [libre]
 
 interface Attach { type: 'ATTACH'; sourceId: ObjectId; targetId: ObjectId; }  // [libre]
 interface Detach { type: 'DETACH'; sourceId: ObjectId; }                      // [libre]
@@ -653,6 +736,21 @@ interface SetLabel    { type: 'SET_LABEL'; labelId: ObjectId; text?: string; val
                         color?: string; attachedTo?: ObjectId | null; }                             // [libre]
 interface RemoveLabel { type: 'REMOVE_LABEL'; labelId: ObjectId; }                                  // [libre]
 ```
+
+**`PROLIFERATE` ajoute un marqueur de chaque sorte déjà présente**, sur les seuls objets que le
+client désigne — le serveur ne cherche jamais « qui porte déjà un marqueur ». C'est une
+**assistance** au sens du §1.1 : le geste tient en vingt-quatre clics à la main sur huit
+permanents, et rien ne se déclenche tout seul. Il émet des `CARD_UPDATED`, comme `ADD_COUNTER`
+dont il n'est qu'une répétition, et n'invente aucun event.
+
+Il est **`[libre]`** comme `ADD_COUNTER`, et c'est délibéré : le réserver au contrôleur aurait
+refusé par l'assistance ce que le menu accepte déjà à la main — un refus déguisé. Le poison d'un
+adversaire est une cible de prolifération ordinaire.
+
+**Les marqueurs sans valeur ne bougent pas.** Un marqueur peut n'être qu'un mot — « vol »,
+« monarque » (§3). « Un de plus » n'y a pas de sens, et lui inventer la valeur 1 écrirait
+« vol 2 », ce que la v2 a précisément cessé de faire. On incrémente des nombres, on ne juge pas
+des mots.
 
 `text` est borné à 200 caractères, échappé, jamais interprété comme du HTML.
 
@@ -732,6 +830,13 @@ interface Mill          { type: 'MILL'; count: number; }                        
 interface ExileTop      { type: 'EXILE_TOP'; count: number; faceDown?: boolean; }   // dessus → son exil
 interface RandomDiscard { type: 'RANDOM_DISCARD'; count: number; }                  // tirage serveur
 interface Scoop         { type: 'SCOOP'; }                                          // tout ranger et mélanger
+
+interface Cascade {
+  type: 'CASCADE';
+  sourceId?: ObjectId;          // carte déclenchante, pour le journal seulement : elle n'est pas touchée
+  manaValue: number;            // le seuil, **saisi par le joueur** (0 à 99)
+  compare: 'BELOW' | 'AT_MOST'; // cascade (« strictement inférieure ») / découvrir N (« N ou moins »)
+}
 ```
 
 Le cycle « regard » est **stateful** : `LOOK` ouvre une session (`lookId`), verrouille
@@ -774,6 +879,54 @@ Le brassage s'applique aussi au **contenu** des vues envoyées : dans un
 rang *montré*, jamais le rang réel dans la zone. Publier le rang réel rendrait le
 brassage décoratif : il suffirait de trier par `sortIndex` pour retrouver l'ordre
 de sa propre bibliothèque.
+
+#### `CASCADE` — la seule séquence où le serveur lit une carte
+
+**C'est l'intent qui a demandé l'amendement du §1.1 : lisez-le d'abord.** Tout ce qui
+suit décrit une **séquence assistée**, jamais un arbitrage, et le §1.1 dit pourquoi la
+distinction tient.
+
+La séquence, telle que `resolveCascade` (`apps/server/src/game/cascade.ts`) l'exécute
+sur la bibliothèque de l'auteur :
+
+1. **Exiler du dessus, carte par carte, face visible.** Chacune passe par le chemin
+   d'émission ordinaire (`relocate` puis `moveEmission`) : la révélation est publique
+   parce que la carte arrive dans une zone publique face visible, et non parce qu'un
+   raccourci l'aurait décidé. La monotonie de la connaissance (§5.2) s'applique donc
+   d'elle-même.
+2. **S'arrêter à la première carte qui n'est pas « continuer ».** Un terrain, ou une
+   valeur de mana du mauvais côté du seuil : on creuse. Une valeur du bon côté : c'est
+   la trouvaille. Une valeur ambiguë : on s'arrête et on le dit (§1.1).
+3. **Renvoyer le reste sous la bibliothèque, au hasard et sous un identifiant neuf.**
+   Les deux vont ensemble, et c'est le point de confidentialité : ces cartes ont été
+   publiées, chaque client en tient la vue indexée par son `ObjectId`. Purger `knownTo`
+   sans changer l'identifiant laisserait cette vue en place, et le secret du fond de
+   bibliothèque serait un mensonge poli — il suffirait de lire la position des
+   identifiants connus. `reassignId` coupe le lien comme `SHUFFLE` le fait depuis
+   toujours (§2.1), un `CARD_HIDDEN` fait tomber l'ancienne vue chez **tout le monde,
+   propriétaire compris**, et le nouvel identifiant ne sort jamais du serveur.
+
+**Le seuil est saisi, jamais deviné.** `manaValue` et `compare` arrivent du client
+parce que c'est le joueur qui lit sa carte. Le catalogue ne stocke aucun texte de
+règles : le serveur ne peut pas savoir qu'une carte porte « Discover 4 », et il n'a
+donc rien à interpréter. La borne haute du schéma (99) empêche une saisie absurde, pas
+un choix de jeu.
+
+**Le journal nomme toutes les cartes exilées**, pas seulement celle sur laquelle on
+s'arrête : c'est le garde-fou du §1.1, et il ne doit pas être raccourci. Les noms sont
+relevés **tant que les cartes sont à l'exil** — `namedBatch` juge sur la zone
+d'arrivée, et refuserait de nommer après la remise en bibliothèque. L'**ancre**, en
+revanche, ne désigne que la carte restée à l'exil : les autres viennent de perdre leur
+identifiant, et une ancre vers un objet mort ne surligne rien tout en promettant le
+contraire.
+
+**Volontairement non annulable**, pour la raison de `TAKE_BACK` (§5.3) : rejouer l'état
+d'avant republierait, sous leurs anciens identifiants, des cartes que la bibliothèque
+vient de reprendre. Se raviser se fait à la main, avec le menu.
+
+**Ajout d'intent, donc non cassant : `PROTOCOL_VERSION` reste à 3** (§11). Aucun event
+nouveau, aucun format existant modifié, et un client ancien n'émet simplement jamais
+`CASCADE`.
 
 ### 6.5 Révélations
 
@@ -1416,6 +1569,13 @@ serveur qui divergent sur sa valeur restent synchrones, seul le bouton
    ni priorité. Conforme au hors-périmètre.
 4. **Pas de spectateurs** — une connexion est soit un siège joueur, soit une connexion
    en attente de `SIT_DOWN`. Aucun état de partie n'est envoyé hors d'un siège.
+5. **Assister est permis, arbitrer ne l'est pas** (§1.1) — arrêté le 18 septembre 2026,
+   à l'occasion de la cascade. Le principe 5 de la §1 n'est ni retiré ni assoupli : il
+   reçoit une frontière. Une séquence que le joueur déclenche, peut refaire à la main
+   et dont il garde la conclusion est permise, même si le serveur y lit une carte ;
+   refuser un geste, en imposer la conséquence ou conclure à la place du joueur reste
+   interdit. Les trois propriétés du §1.1 sont le **critère** de toute demande à venir,
+   et le saut automatique des terrains en est le prix, consigné.
 
 ---
 
@@ -1452,4 +1612,5 @@ L'interface cible est celle de la capture de référence (`docs/ui-reference.md`
 | 6 | 2026-09-16 | Monotonie de `knownTo` (§5.2) : une connaissance acquise survit à tous les changements de zone, seule l'entrée en bibliothèque l'efface. `relocate` ne recalcule plus `knownTo` à l'arrivée, `UNREVEAL_HAND` ne reprend que son propre dépôt (§6.5), une carte piochée après révélation du dessus reste connue. Critère §12.9. **Aucun format de message ne change : `PROTOCOL_VERSION` reste à 3.** |
 | 7 | 2026-09-16 | `TAKE_BACK` (§5.3, §6.1) : l'unique exception à la monotonie, écrite contre la règle qu'elle excepte. Rattrapage d'une carte posée par erreur, réservé au propriétaire, journalisé nommément, avec **réattribution de l'`ObjectId`** — sans elle, la vue déjà reçue par l'adversaire resterait en place et le masquage serait un mensonge. Le journal perd l'ancre et le nom de la carte (§4.2 réappliquée au passé). Critère §12.10. **Aucun event nouveau, aucun format existant modifié : `PROTOCOL_VERSION` reste à 3** (§11). |
 | 8 | 2026-09-18 | **Densité de séquence** (§4.2, §5, §7, §8.1) : chaque `seq` produit une variante pour **chaque** siège connecté — l'event réel dans l'audience, un `NOTED` sinon, que l'émission porte un journal ou non. Corrige le trou laissé par une émission restreinte et muette (`LOOK_RESULT`), qui déclenchait un `resync` par event suivant et faisait apparaître un message trois fois ; `deltaFor` rend désormais `null` plutôt qu'un delta troué, et deux garde-fous client sont documentés (§8.1). Nouvelle **§5.4 : la ligne de journal est publique quelle que soit l'audience** — `commit` la construit hors de toute boucle d'audience et `logTail` la recopie sans filtrage dans chaque snapshot —, avec `namedBatch`, `publicName` et `NAMED_LOG_LIMIT` hissée en constante de protocole (§11). Cas limite de `RESOLVE_LOOK`/`HAND` tranché en §5.2 : nommer une carte que toute la table a vue n'est pas une fuite. Lignes ajoutées à la matrice §5.1. **Aucun format de message ne change : `PROTOCOL_VERSION` reste à 3**, délibérément (§11). Au passage, **balayage complet des déclarations de types contre `packages/shared/src/protocol/`**, sans rapport avec le travail du jour : `LookMode` gagne `'REVEAL'` (§6.4) ; `ErrorCode` gagne `ERR_NOT_HOST` et `ERR_ROOM_CLOSED` (§11) ; `LOOK_STARTED` son `cards?` servi au seul mode `REVEAL`, `LOOK_RESULT` son `mode`, `SEAT_COSMETICS` son `displayName`, et `PLANE_CHANGED` disparaît — le mode planechase a été retiré (§7) ; `Snapshot` gagne `room.closed`, `pendingLook.mode`, et `room.hostSeat` / `turn.activeSeat` deviennent nullables comme au lobby, le commentaire de `logTail` cesse de promettre un filtrage que la projection ne fait pas (§8.1) ; `PublicCardView` gagne `copyOf` et `revealedTo`, `Counter.value` devient facultatif — un marqueur sans valeur est un mot-clé (§3) ; `SET_COUNTER.value` devient `number | null` facultatif, la valeur d'une étiquette est du **texte** et non un entier, et `ADD_LABEL` / `SET_LABEL` retrouvent `attachedTo` (§6.2) ; `RESOLVE_LOOK` retrouve `toSideboard` et `exileFaceDown`, et les intents `MILL`, `EXILE_TOP`, `RANDOM_DISCARD`, `SCOOP` sont déclarés (§6.4), comme `SET_PRINTING` (§6.1) et `SET_SEAT_COSMETICS`, dont le pseudo se fige au lancement (§6.8). Enfin `SeatSummary`, `Label` et `LogEntry`, jusqu'ici cités sans jamais être déclarés, sont écrits au §8.1 — `LogEntry` avec la règle du §5.4, puisque c'est là qu'on le rencontre. |
+| 9 | 2026-09-18 | **Amendement de l'invariant fondateur.** Le principe 5 de la §1 est conservé mot pour mot et reçoit une frontière écrite, la nouvelle **§1.1 : assister n'est pas arbitrer**. Motif : la cascade fait évaluer au serveur deux règles de Magic (« est-ce un terrain ? », « la valeur de mana est-elle sous le seuil ? »), et le taire aurait été pire que l'écrire. La §1.1 pose les **trois propriétés** qui rendent une assistance acceptable — elle n'interdit rien, elle n'impose rien, elle ne conclut pas — et les érige en critère de toute demande future ; elle consigne sans l'adoucir le **prix** : le saut automatique des terrains (`isLandCard`) est le seul endroit où une erreur du serveur a une conséquence de règles, et le garde-fou est que le journal nomme **toutes** les cartes exilées. Elle consigne aussi les deux endroits où l'on a **refusé de décider** : valeur de mana ambiguë (plusieurs faces portant un coût → la séquence s'arrête au lieu de juger) et « jouer sans payer son coût », qui n'existe pas sur une table sans pile. L'intent `CASCADE` est déclaré et décrit au §6.4, décision arrêtée en §13.5. **Ajout d'intent, donc non cassant : `PROTOCOL_VERSION` reste à 3** (§11). |
 | 3 | 2026-09-15 | Durcissement : `CARD_HIDDEN` à l'entrée en bibliothèque (§2.1), gardes de `MOVE_CARDS` et d'`ATTACH` (§6.1), `copyOf` restreint au champ de bataille (§6.3), verrou de zone et `sortIndex` brassé des `LOOK` (§6.4), `REVEAL_HAND` comme droit de zone (§6.5), `START_GAME` et `SIT_DOWN` durcis (§6.8), cas de bascule du delta et snapshot sans siège (§8.1), fermeture de l'annulation (§9), critères §12.6 et §12.7 |

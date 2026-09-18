@@ -4,6 +4,13 @@ Table virtuelle multijoueur pour Magic: The Gathering, dans le navigateur, **san
 de règles** : les joueurs arbitrent eux-mêmes, comme sur une vraie table. Comptes,
 persistance serveur, import de decks depuis Archidekt, Moxfield (par collage) et texte brut.
 
+« Sans moteur de règles » veut dire **le serveur ne refuse jamais un geste au motif qu'il
+serait illégal**, et c'est la formulation exacte : depuis la cascade, le serveur évalue
+deux règles de Magic pour dérouler une séquence qu'on lui demande de dérouler. La
+frontière — **assister est permis, arbitrer ne l'est pas** — est écrite au §1.1 de
+`docs/protocol.md`, avec les trois propriétés qui la rendent tenable et le prix qu'elle
+coûte. Aucune demande d'assistance ne se tranche sans ce paragraphe.
+
 ## Démarrer
 
 ```sh
@@ -34,10 +41,21 @@ npm run dev:web    # client Vite sur :5173, proxy vers :3000
 | `npm test` | Tests unitaires (parseur, moteur, visibilité, resynchronisation) |
 | `npm run typecheck` | Vérification TypeScript de tout le dépôt |
 | `npm run build` | Build partagé + serveur + client |
-| `npm run ingest -w @mtg/server -- --force` | Force une réingestion Scryfall |
+| `npm run ingest -w @mtg/server -- --force` | Force une réingestion Scryfall. **Écrire la commande exactement ainsi** : `npm run ingest -- --force` depuis la racine ne marche pas, npm avale le drapeau au lieu de le passer au script (voir `docs/backlog.md`). |
 | `npx playwright test` | Tests de bout en bout (voir `e2e/README.md`) |
 | `node scripts/verify-ui.mjs <dossier>` | Recette d'interface dans un vrai navigateur, contre la pile démarrée : glisser-déposer, menus, raccourcis, cohérence des curseurs entre deux clients. Les captures atterrissent dans le dossier passé en argument. |
 | `node scripts/smoke.mjs <dossier>` | Fumée rapide : créer une table, s'asseoir, jouer quelques actions. |
+
+> **À lire avant de déployer — une ré-ingestion est obligatoire.** La colonne
+> `Card.keywords` est **neuve**, donc `null` sur toute base dont le catalogue a été ingéré
+> avant elle — et `null` veut dire « on ne sait pas », pas « aucun mot-clé ». Sans
+> ré-ingestion forcée après déploiement, **aucune carte n'est détectée** comme portant
+> cascade ou découvrir : le raccourci ne remonte dans aucun menu, et le défaut ressemble à
+> une fonctionnalité qui n'aurait pas été livrée du tout. Il faut donc passer
+> `npm run ingest -w @mtg/server -- --force` sur la production une fois le conteneur
+> reconstruit ; compter une quarantaine de secondes. Le chemin manuel, lui, reste ouvert
+> entre-temps — c'est précisément pourquoi « on ne sait pas » ne ferme rien (§1.1 de
+> `docs/protocol.md`).
 
 ## Architecture
 
@@ -120,6 +138,17 @@ implémentation :
    voir `docs/backlog.md`.
 4. **Aucun texte de règles n'est stocké** : la table `Card` ne contient ni oracle text ni
    flavor text. L'image Scryfall les porte déjà, et c'est le navigateur qui va la chercher.
+   L'ajout de la colonne `keywords` (`["Haste","Cascade"]`) **n'entame pas cet
+   invariant**, et il faut le dire explicitement sous peine de le voir cru érodé :
+   Scryfall publie ce champ **à côté** d'`oracle_text`, pas dedans. Ce sont des **noms de
+   mécaniques** — de la terminologie de jeu, exactement de même nature que la `typeLine`
+   (« Creature — Elf Berserker ») que nous stockons depuis le premier jour : 890 valeurs
+   distinctes sur 118 239 lignes, la plus longue fait 35 caractères. Aucune phrase de la
+   carte n'en sort : on sait qu'une carte *cascade*, jamais ce que sa cascade fait ni avec
+   quel nombre — « Discover » ne dit pas « Discover 4 ». L'interdit reste entier sur
+   `oracle_text` et `flavor_text`. Le mot-clé ne **descend pas au moteur** : il voyage par
+   le catalogue de cartes vers le client, et cela est délibéré — il n'est ainsi jamais à
+   portée d'être lu pour décider quoi que ce soit côté serveur.
 
 ## Jalons
 

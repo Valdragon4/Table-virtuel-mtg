@@ -43,7 +43,7 @@ import {
   localizedCardName,
   subscribeLocalizations,
 } from '../lib/cardLocalization.js';
-import { cardLanguageMark, resolveCardImage } from '../lib/i18n/index.js';
+import { cardLanguageMark, keywordName, resolveCardImage } from '../lib/i18n/index.js';
 import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
 import { CardLanguageBadge } from './CardSprite.js';
 import { ManaCost } from './ManaCost.js';
@@ -258,6 +258,31 @@ export function CardPreview(): React.ReactElement | null {
             {shownName}
           </span>
           {meta.manaCost && <ManaCost cost={meta.manaCost} size="md" />}
+        </div>
+      )}
+      {/*
+        Les mécaniques en toutes lettres, et **ici seulement**.
+
+        Sur une vignette, la carte ne porte qu'une pastille de compte : les
+        cartes du rail de main se recouvrent, seule leur bande gauche reste
+        visible, et un mot français coupé en deux a l'air d'un autre mot. Un
+        chiffre supporte d'être lu de biais, pas « Piétinem… ».
+
+        L'aperçu agrandi, lui, a toute la largeur qu'il faut, et c'est
+        précisément l'écran qu'on ouvre pour lire la carte. Les noms non traduits
+        ressortent en anglais plutôt que d'être escamotés : un mot-clé absent du
+        glossaire doit se voir, pas disparaître.
+      */}
+      {meta?.keywords && meta.keywords.length > 0 && (
+        <div
+          className="mt-1 flex flex-wrap gap-1 rounded-lg border border-slate-700/70 bg-slate-950/90 px-2 py-1 text-[10px] text-slate-300 shadow-lg backdrop-blur-md"
+          data-test="preview-keywords"
+        >
+          {meta.keywords.map((kw) => (
+            <span className="rounded bg-slate-800/80 px-1.5 py-0.5" key={kw}>
+              {keywordName(kw, language) ?? kw}
+            </span>
+          ))}
         </div>
       )}
     </div>
