@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import type { DeckSummary } from '@mtg/shared';
 import { api, type Me } from '../lib/api.js';
 import { useGame } from '../store/game.js';
-import { Table, highlightCards } from '../components/Table.js';
+import { NARROW_WIDTH, Table, highlightCards } from '../components/Table.js';
 import { Hand } from '../components/Hand.js';
 import { ActionLog } from '../components/ActionLog.js';
 import { PlayerPanel } from '../components/PlayerPanel.js';
@@ -29,6 +29,8 @@ import { TurnOrder } from '../components/TurnOrder.js';
 import { TableClosed } from '../components/TableClosed.js';
 import { PreGameDeck } from '../components/PreGameDeck.js';
 import { hasSeatToken } from '../net/socket.js';
+import { AccountModal } from '../components/AccountModal.js';
+import { useT } from '../lib/i18n/index.js';
 
 /**
  * Jeton rapide : on résout le nom en impression via la recherche serveur, puis on
@@ -63,17 +65,41 @@ export function RoomPage(): React.ReactElement {
   const menu = useGame((s) => s.menu);
   const openMenu = useGame((s) => s.openMenu);
 
+  const t = useT();
   const [countersOpen, setCountersOpen] = useState(false);
   const [tokenSearch, setTokenSearch] = useState(false);
   /** Où poser le prochain jeton créé par la recherche, en repère de panneau. */
   const tokenSpot = useRef<{ x: number; y: number } | null>(null);
   const [help, setHelp] = useState(false);
   const [settings, setSettings] = useState(false);
+  /** La modale du compte : langue et réglages d'affichage, en pleine partie. */
+  const [accountOpen, setAccountOpen] = useState(false);
   /** Le panneau de composition, ouvert seulement avant le lancement. */
   const [preGame, setPreGame] = useState(false);
   /** Le panneau des zones est ancré à droite : le reste doit lui céder la place. */
   const [zonePanel, setZonePanel] = useState(false);
   const rightInset = zonePanel ? ZONE_PANEL_WIDTH + 8 : 0;
+  /*
+   * Les deux colonnes flottantes — journal à gauche, panneau joueur à droite —
+   * prennent 544 px de large, quelle que soit la fenêtre. Sur un téléphone, et
+   * l'application est une PWA, elles couvraient donc l'écran entier et la table
+   * passait dessous, tandis que la caméra leur réservait une place qui
+   * n'existait pas : le panneau du joueur finissait coupé à droite en
+   * permanence. En deçà de `NARROW_WIDTH`, elles deviennent un tiroir — repliées
+   * par défaut, ouvertes par un bouton, posées par-dessus la table plutôt qu'à
+   * côté d'elle. La caméra, elle, récupère toute la largeur (voir `freeArea`).
+   */
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < NARROW_WIDTH,
+  );
+  const [drawer, setDrawer] = useState(false);
+  useEffect(() => {
+    const onResize = (): void => setNarrow(window.innerWidth < NARROW_WIDTH);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  /** Colonnes visibles : toujours sur grand écran, à la demande sur petit. */
+  const columns = !narrow || drawer;
   /** Les sièges qui n'ont pas encore de deck : lancer la partie leur est dû. */
   const waitingForDecks = seats.filter((seat) => !seat.deckName).map((seat) => seat.displayName);
   useShortcuts(() => setHelp(true));
@@ -165,6 +191,50 @@ export function RoomPage(): React.ReactElement {
           >
             ⚙
           </button>
+          {/*
+            Le compte, en pleine partie : la langue et les réglages d'affichage,
+            dans leur modale, où ils ont la place de porter leur explication.
+
+            **Pourquoi pas le ⚙ juste à gauche.** Il ouvre `SeatSettings`, qui
+            règle le playmat et le dos de carte : des cosmétiques **du siège**,
+            envoyés par `SET_SEAT_COSMETICS` et vus par toute la table, valables
+            pour cette partie. Ce qui s'ouvre ici est l'inverse : des préférences
+            **du compte**, écrites par `PATCH /api/me`, valables partout et
+            visibles de soi seul. Les fondre mélangerait deux portées et deux
+            chemins d'écriture — et demanderait de toucher `SeatSettings`. Donc
+            un déclencheur distinct, mais **nommé** plutôt qu'une seconde icône :
+            c'était tout le reproche fait à l'ancien bouton d'option.
+
+            Les réglages écrivent la préférence du **compte** : la langue ne
+            passe pas par le protocole, deux joueurs à la même table peuvent
+            lire la même partie dans deux langues sans que rien de l'état
+            partagé ne change.
+          */}
+          <button
+            aria-expanded={accountOpen}
+            aria-haspopup="dialog"
+            className="shrink-0 rounded-lg border border-slate-700 bg-slate-900/80 px-2.5 py-1.5 text-xs text-slate-200 shadow-sm backdrop-blur transition-all hover:border-slate-600 hover:bg-slate-800 hover:text-white active:scale-95 sm:text-sm"
+            data-test="open-account-modal"
+            onClick={() => setAccountOpen(true)}
+            type="button"
+          >
+            {t('account.title')}
+          </button>
+          {/*
+            Le tiroir des colonnes, sur petite fenêtre seulement : ailleurs les
+            colonnes sont toujours là, et un bouton pour les cacher serait un
+            réglage de plus à comprendre.
+          */}
+          {narrow && (
+            <button
+              className="rounded-lg border border-slate-700 bg-slate-900/80 px-2.5 py-1.5 text-xs sm:text-sm text-slate-200 hover:bg-slate-800 hover:border-slate-600 hover:text-white shadow-sm backdrop-blur transition-all active:scale-95"
+              data-test="toggle-columns"
+              onClick={() => setDrawer((open) => !open)}
+              title={drawer ? 'Masquer le journal et le panneau joueur' : 'Journal et panneau joueur'}
+            >
+              {drawer ? '✕' : '☰'}
+            </button>
+          )}
           <span className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-xs font-semibold text-slate-300 backdrop-blur shadow-sm">
             {seats.length} joueur{seats.length > 1 ? 's' : ''} · table <span className="font-mono text-sky-400 font-bold">{code}</span>
           </span>
@@ -183,19 +253,23 @@ export function RoomPage(): React.ReactElement {
         />
       </div>
 
-      <div className="pointer-events-none absolute left-3 top-16 w-72 space-y-2">
+      {columns && (
+      <div className="pointer-events-none absolute left-3 top-16 z-10 w-72 space-y-2">
         <TurnOrder />
         <DiceBar />
         <ActionLog onHighlight={highlightCards} />
       </div>
+      )}
 
+      {columns && (
       <div
-        className="pointer-events-none absolute top-16 flex w-60 flex-col gap-2"
+        className="pointer-events-none absolute top-16 z-10 flex w-60 flex-col gap-2"
         style={{ right: 12 + rightInset }}
       >
         <PlayerPanel />
         <TokenShelf onSearch={() => setTokenSearch(true)} />
       </div>
+      )}
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
         {room?.status === 'LOBBY' && (
@@ -276,6 +350,14 @@ export function RoomPage(): React.ReactElement {
       )}
       {countersOpen && <CountersPanel onClose={() => setCountersOpen(false)} />}
       {settings && <SeatSettings onClose={() => setSettings(false)} />}
+      {/*
+        La modale du compte se monte ici, hors du bandeau : le bandeau est
+        `pointer-events-none` et posé en flux, alors que le voile doit couvrir la
+        table entière. Son `z-50` la met au-dessus des voiles de menus
+        contextuels (`z-40`), et elle se démonte complètement à la fermeture —
+        rien ne reste pour avaler les clics suivants.
+      */}
+      {accountOpen && <AccountModal onClose={() => setAccountOpen(false)} />}
       {help && <ShortcutsHelp onClose={() => setHelp(false)} />}
 
       {/*
