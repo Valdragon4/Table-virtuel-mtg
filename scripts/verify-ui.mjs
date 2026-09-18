@@ -25,9 +25,56 @@ const DECK = [
 ].join('\n');
 
 let failures = 0;
-const step = async (label, fn) => {
+
+/**
+ * Les menus contextuels, et rien d'autre.
+ *
+ * Chacun peint un voile plein écran (`fixed inset-0 z-40`) qui avale tous les
+ * clics de la table : un menu laissé ouvert par une étape faisait tomber les
+ * dix suivantes sur des délais de trente secondes, toutes parfaitement saines.
+ * C'est ce qui rendait la recette non déterministe — trois exécutions du même
+ * code ont donné 7, 8 puis 9 échecs selon l'ordre des dominos.
+ *
+ * On refuse donc à chaque étape de rendre la main avec un menu ouvert. Un
+ * échec qui nomme le coupable vaut dix échecs qui désignent des innocents.
+ */
+const MENUS =
+  '[data-test="zone-menu"], [data-test="card-menu"], [data-test="table-menu"], [data-test="label-menu"]';
+
+/** Ferme un menu contextuel et **assure** qu'il a bien disparu. */
+const fermerMenu = async (cible = page) => {
+  await cible.keyboard.press('Escape');
+  await cible.locator(MENUS).first().waitFor({ state: 'detached', timeout: 4000 });
+};
+
+/**
+ * Une étape.
+ *
+ * `menuOuvert` est la seule dérogation au garde-fou : quelques étapes se
+ * passent délibérément un menu ouvert de l'une à l'autre (ouvrir le menu d'un
+ * permanent, puis y cliquer « Ajouter un marqueur »). Elle est explicite,
+ * précisément pour qu'un menu oublié ne puisse jamais se faire passer pour un
+ * relais voulu.
+ */
+const step = async (label, fn, { menuOuvert = false } = {}) => {
   try {
     await fn();
+    const restant = menuOuvert ? 0 : await page.locator(MENUS).count().catch(() => 0);
+    if (restant > 0) {
+      const qui = await page
+        .evaluate(
+          (sel) =>
+            [...document.querySelectorAll(sel)]
+              .map((el) => el.getAttribute('data-test'))
+              .join(', '),
+          MENUS,
+        )
+        .catch(() => '?');
+      throw new Error(
+        `un menu est resté ouvert à la fin de l’étape (${qui}) : son voile plein écran ` +
+          'aurait avalé les clics des étapes suivantes',
+      );
+    }
     console.log('OK    -', label);
   } catch (error) {
     failures += 1;
@@ -596,12 +643,17 @@ try {
 
   // ------------------------------------------------------------ menus contextuels
 
-  await step('menu contextuel : carte en main', async () => {
-    await page.locator('[data-zone$="|HAND"] img[src*="scryfall"]').first().click({ button: 'right' });
-    await page.getByText('Jouer face cachée').waitFor({ timeout: 5000 });
-  });
+  await step(
+    'menu contextuel : carte en main',
+    async () => {
+      await page.locator('[data-zone$="|HAND"] img[src*="scryfall"]').first().click({ button: 'right' });
+      await page.getByText('Jouer face cachée').waitFor({ timeout: 5000 });
+    },
+    // Le menu reste ouvert le temps de la capture, juste en dessous.
+    { menuOuvert: true },
+  );
   await page.screenshot({ path: `${OUT}/ui-04-menu-main.png` });
-  await page.keyboard.press('Escape');
+  await fermerMenu();
 
   await step('menu contextuel : permanent', async () => {
     // Viser une carte **de notre siège** : `[data-card-id]` couvre les champs de
@@ -610,7 +662,8 @@ try {
     // marqueur, et l'étape suivante attendait un compteur qui n'arrivait jamais.
     await myPermanent().click({ button: 'right' });
     await page.getByText('Ajouter un marqueur +1/+1').waitFor({ timeout: 5000 });
-  });
+    // Relais voulu : l'étape suivante clique dans ce menu-ci.
+  }, { menuOuvert: true });
   await page.screenshot({ path: `${OUT}/ui-05-menu-permanent.png` });
 
   await step('poser un marqueur depuis le menu', async () => {
@@ -620,12 +673,20 @@ try {
       null,
       { timeout: 8000 },
     );
+    // Poser un marqueur ne referme pas le menu — on en pose souvent plusieurs.
+    // C'est donc ici qu'on le referme, et qu'on le vérifie.
+    await fermerMenu();
   });
 
-  await step('menu contextuel : bibliothèque', async () => {
-    (await seatZone('LIBRARY')).click({ button: 'right' });
-    await page.getByText('Fouiller la bibliothèque').waitFor({ timeout: 5000 });
-  });
+  await step(
+    'menu contextuel : bibliothèque',
+    async () => {
+      (await seatZone('LIBRARY')).click({ button: 'right' });
+      await page.getByText('Fouiller la bibliothèque').waitFor({ timeout: 5000 });
+    },
+    // Relais voulu : « Échap referme le menu de pile » éprouve sa fermeture.
+    { menuOuvert: true },
+  );
   await page.screenshot({ path: `${OUT}/ui-06-menu-bibliotheque.png` });
 
   await step('Échap referme le menu de pile', async () => {
@@ -636,13 +697,13 @@ try {
   await step('menu contextuel : cimetière', async () => {
     (await seatZone('GRAVEYARD')).click({ button: 'right' });
     await page.getByText('Ouvrir dans le panneau des zones').first().waitFor({ timeout: 5000 });
-    await page.keyboard.press('Escape');
+    await fermerMenu();
   });
 
   await step('menu contextuel : zone de commandement', async () => {
     (await seatZone('COMMAND')).click({ button: 'right' });
     await page.getByText('Ouvrir dans le panneau des zones').first().waitFor({ timeout: 5000 });
-    await page.keyboard.press('Escape');
+    await fermerMenu();
   });
 
   // ------------------------------------------------------------------ actions
@@ -655,7 +716,7 @@ try {
   await page.screenshot({ path: `${OUT}/ui-07-scry.png` });
 
   await step('valider la consultation', async () => {
-    await page.getByRole('button', { name: 'Valider', exact: true }).click();
+    await page.locator('[data-test="look-submit"]').click();
     await page.waitForTimeout(600);
   });
 
@@ -858,9 +919,54 @@ async function findDoubleFaced() {
 
   await step('raccourci global : U dégage tout', async () => {
     await unhover();
-    const before = await page.evaluate(() => window.__mtg.getState().seq);
+    /*
+     * Il faut quelque chose à dégager.
+     *
+     * `UNTAP_ALL` se tait quand rien n'est engagé — comme `TAP`/`UNTAP`, pour
+     * ne pas noyer le journal sous des lignes vides. L'étape mesurait donc une
+     * avancée de `seq`, qui ne bouge plus pour un geste sans effet : elle
+     * tombait sur un serveur parfaitement sain. On engage d'abord un
+     * permanent, puis on assure sur l'état de **la carte**, seule chose que le
+     * raccourci promet. Jamais sur `seq`.
+     */
+    const engage = await page.evaluate(async () => {
+      const s = window.__mtg.getState();
+      const surTable = [...s.cards.values()].filter(
+        (c) => c.zone.kind === 'BATTLEFIELD' && c.zone.seat === s.mySeat,
+      );
+      if (surTable.length === 0) {
+        const enMain = [...s.cards.values()].find(
+          (c) => c.zone.kind === 'HAND' && c.zone.seat === s.mySeat,
+        );
+        if (!enMain) return null;
+        s.send({ type: 'MOVE_CARD', cardId: enMain.id, to: { seat: s.mySeat, kind: 'BATTLEFIELD' }, x: 320, y: 220 });
+        return enMain.id;
+      }
+      return surTable[0].id;
+    });
+    if (!engage) throw new Error('aucune carte à engager pour éprouver le dégagement');
+    await page.waitForFunction(
+      (id) => window.__mtg.getState().cards.get(id)?.zone.kind === 'BATTLEFIELD',
+      engage,
+      { timeout: 8000 },
+    );
+    await page.evaluate(
+      (id) => window.__mtg.getState().send({ type: 'TAP', cardIds: [id] }),
+      engage,
+    );
+    await page.waitForFunction(
+      (id) => window.__mtg.getState().cards.get(id)?.tapped === true,
+      engage,
+      { timeout: 8000 },
+    );
+
+    await unhover();
     await page.keyboard.press('u');
-    await page.waitForFunction((n) => window.__mtg.getState().seq > n, before, { timeout: 8000 });
+    await page.waitForFunction(
+      (id) => window.__mtg.getState().cards.get(id)?.tapped === false,
+      engage,
+      { timeout: 8000 },
+    );
   });
 
   // Les trois raccourcis de permanent portent sur la carte que l'on vient de
@@ -1074,7 +1180,11 @@ async function findDoubleFaced() {
      *    un résultat n'est qu'une impression Scryfall, et l'aperçu doit savoir
      *    la montrer sans qu'aucune carte n'existe côté serveur.
      */
-    await page.locator('[data-test="token-shelf"] button[title="Chercher un jeton"]').click();
+    // On vise un `data-test`, pas un `title` : le titre du bouton porte
+    // aujourd'hui son raccourci (« Chercher un jeton (+) »), un sélecteur
+    // d'attribut est une égalité exacte, et l'étape attendait donc trente
+    // secondes un bouton qui existait sous ses yeux.
+    await page.locator('[data-test="token-search"]').click();
     await page.getByPlaceholder(/Nom du jeton/).fill('spirit');
     const results = page.locator('[data-test="token-result"]');
     await results.first().waitFor({ timeout: 10000 });
@@ -1543,6 +1653,106 @@ async function findDoubleFaced() {
     }
     await page.locator('[data-test="zone-search"]').fill('');
     await page.waitForTimeout(300);
+
+    /*
+     * Et le vrai piège : chercher un nom **français qui diverge de l'anglais**.
+     *
+     * Ce qui précède tape les cinq premiers caractères du nom affiché, et
+     * passait donc par accident sur « Plaine » / « Plains », qui partagent leur
+     * préfixe. La régression qu'on vient de réparer — la recherche filtrait sur
+     * le nom du catalogue tout en affichant le nom localisé, si bien que taper
+     * « Anneau » ne trouvait rien — serait passée sous ce filet.
+     *
+     * On cherche donc une carte dont le nom affiché **diffère** de son nom de
+     * catalogue, et l'on tape son nom affiché en entier.
+     */
+    const catalogueDe = async (ids) =>
+      page.evaluate(async (objets) => {
+        const scryfall = objets.map((id) => window.__mtg.getState().cards.get(id)?.scryfallId);
+        const reponse = await fetch('/api/cards/batch', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ ids: scryfall.filter(Boolean) }),
+        });
+        if (!reponse.ok) return null;
+        const { cards } = await reponse.json();
+        const par = new Map(cards.map((c) => [c.scryfallId, c.name]));
+        return scryfall.map((id) => par.get(id) ?? null);
+      }, ids);
+
+    /** Les cartes du panneau : identifiant, nom affiché, nom de catalogue. */
+    const inventaire = async () => {
+      const vues = await page.evaluate(() =>
+        [...document.querySelectorAll('[data-test="zone-card"]')].map((el) => ({
+          id: el.getAttribute('data-card-in-zone'),
+          affiche: el.querySelector('p')?.textContent?.trim() ?? '',
+        })),
+      );
+      const noms = await catalogueDe(vues.map((v) => v.id));
+      if (!noms) throw new Error('le catalogue n’a pas répondu : divergence invérifiable');
+      return vues.map((v, i) => ({ ...v, catalogue: noms[i] }));
+    };
+
+    /*
+     * On préfère la divergence la plus franche — « Anneau solaire » contre
+     * « Sol Ring » — à celle qui partage son préfixe — « Plaine » contre
+     * « Plains ». Les deux sont valables ici, puisqu'on tape le nom **entier**
+     * et que « Plaine » ne se trouve pas dans « Plains » ; mais la première dit
+     * plus clairement ce que l'étape éprouve quand on lit le rapport.
+     */
+    const choisir = (liste) => {
+      const candidates = liste.filter((c) => c.catalogue && c.affiche && c.affiche !== c.catalogue);
+      return (
+        candidates.find(
+          (c) => c.affiche.slice(0, 5).toLowerCase() !== c.catalogue.slice(0, 5).toLowerCase(),
+        ) ?? candidates[0]
+      );
+    };
+
+    let divergente = choisir(await inventaire());
+    if (!divergente) {
+      // Le cimetière n'a tiré que des noms identiques dans les deux langues :
+      // on y verse quelques cartes de plus plutôt que de laisser passer.
+      await page.evaluate(() => {
+        const s = window.__mtg.getState();
+        const cardIds = [...s.cards.values()]
+          .filter((c) => c.zone.kind === 'HAND' && c.zone.seat === s.mySeat)
+          .slice(0, 4)
+          .map((c) => c.id);
+        if (cardIds.length > 0) {
+          s.send({ type: 'MOVE_CARDS', cardIds, to: { seat: s.mySeat, kind: 'GRAVEYARD' } });
+        }
+      });
+      await page.waitForTimeout(1200);
+      divergente = choisir(await inventaire());
+    }
+    if (!divergente) {
+      throw new Error(
+        'aucune carte au nom localisé divergent dans le cimetière : ' +
+          'la recherche sur le nom affiché n’est pas éprouvée',
+      );
+    }
+
+    await page.locator('[data-test="zone-search"]').fill(divergente.affiche);
+    await page.waitForTimeout(400);
+    const trouvees = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-test="zone-card"]')].map((el) =>
+        el.getAttribute('data-card-in-zone'),
+      ),
+    );
+    if (!trouvees.includes(divergente.id)) {
+      throw new Error(
+        `« ${divergente.affiche} » (catalogue : « ${divergente.catalogue} ») est affiché ` +
+          'mais introuvable : la recherche ne filtre pas sur le nom montré au joueur',
+      );
+    }
+    console.log(
+      `      « ${divergente.affiche} » trouvée par son nom affiché, ` +
+        `qui diverge du catalogue (« ${divergente.catalogue} »)`,
+    );
+    await page.locator('[data-test="zone-search"]').fill('');
+    await page.waitForTimeout(300);
   });
 
   await step('sélection multiple dans le cimetière : clic, Ctrl, Maj', async () => {
@@ -1656,7 +1866,11 @@ async function findDoubleFaced() {
 
     const logBefore = await page.evaluate(() => window.__mtg.getState().log.length);
     await page.locator('[data-test="library-search"]').click();
-    await page.getByText('Consultation —').waitFor({ timeout: 10000 });
+    // `library-search` ouvre la **fouille**, que la modale titre « Fouille de la
+    // bibliothèque » : le texte « Consultation — » appartient au scry, et
+    // n'apparaîtra jamais ici. On assure sur le nœud de la modale, pas sur son
+    // libellé — un chantier de traduction est en cours.
+    await page.locator('[data-test="look-modal"]').waitFor({ timeout: 10000 });
     // La fouille est annoncée : une ligne de journal, publique.
     const announced = await page.evaluate(
       (n) => window.__mtg.getState().log.slice(n).map((l) => l.text).join(' | '),
@@ -1667,7 +1881,7 @@ async function findDoubleFaced() {
     }
     console.log(`      annoncé au journal : « ${announced.slice(0, 80)} »`);
     await page.screenshot({ path: `${OUT}/ui-19-bibliotheque.png` });
-    await page.getByRole('button', { name: 'Valider', exact: true }).click();
+    await page.locator('[data-test="look-submit"]').click();
     await page.waitForTimeout(600);
     await page.locator('[data-test="zone-panel-close"]').click();
   });
@@ -1811,7 +2025,7 @@ async function findDoubleFaced() {
     if (!after.some((l) => l.startsWith('Retourner face visible'))) {
       throw new Error(`la bascule ne s'inverse pas : ${JSON.stringify(after)}`);
     }
-    await page.keyboard.press('Escape');
+    await fermerMenu();
     await page.evaluate((card) => window.__mtg.getState().send({ type: 'TURN_FACE_UP', cardId: card }), id);
     await page.waitForTimeout(500);
   });
@@ -2028,7 +2242,7 @@ async function findDoubleFaced() {
     if ((await page.locator('[data-test="table-menu"]').count()) !== 0) {
       throw new Error('le menu du fond s’est ouvert par-dessus celui de la carte');
     }
-    await page.keyboard.press('Escape');
+    await fermerMenu();
 
     // Et sur une pile, celui de la pile.
     (await seatZone('LIBRARY')).click({ button: 'right' });
@@ -2036,7 +2250,16 @@ async function findDoubleFaced() {
     if ((await page.locator('[data-test="table-menu"]').count()) !== 0) {
       throw new Error('le menu du fond s’est ouvert par-dessus celui de la pile');
     }
-    await page.keyboard.press('Escape');
+    /*
+     * C'est **ici** que naissait le désordre de toute la recette.
+     *
+     * L'étape pressait Échap et passait à la suite sans jamais s'assurer que le
+     * menu s'était refermé. Quand il restait — et il restait parfois — son
+     * voile plein écran avalait les clics des dix étapes suivantes, qui
+     * tombaient sur des délais de trente secondes en désignant du code sain.
+     * D'où trois exécutions du même code à 7, 8 puis 9 échecs.
+     */
+    await fermerMenu();
   });
 
   await step('un jeton créé depuis le menu du fond naît au point cliqué', async () => {
@@ -2385,12 +2608,42 @@ async function findDoubleFaced() {
     // décalage relatif, et le client doit convertir.
     const anchored = await page.locator(`[data-label="${labelId}"]`).boundingBox();
     const cardBox = await page.locator(`[data-card="${target}"]`).boundingBox();
-    const before = anchored.x;
     await dragTo(page.locator(`[data-card="${target}"]`), await seatZone('BATTLEFIELD'), { x: -260, y: 90 });
     const moved = await page.locator(`[data-label="${labelId}"]`).boundingBox();
-    if (Math.abs(moved.x - before) < 20) throw new Error('l’étiquette accrochée ne suit pas sa carte');
+    const cardApres = await page.locator(`[data-card="${target}"]`).boundingBox();
+    if (!moved || !cardApres) throw new Error('l’étiquette ou sa carte a disparu du cadre');
+
+    /*
+     * « Elle suit sa carte » veut dire : **le même déplacement**, pas « un
+     * déplacement ».
+     *
+     * L'étape exigeait 20 px de mouvement sur le seul x, ce qui était une
+     * approximation du vrai propos : avec le cadrage d'aujourd'hui, ce
+     * `dragTo` dépose la carte à un x inchangé et ne bouge qu'en y —
+     * l'étiquette la suivait au pixel près, et l'étape criait au défaut. On
+     * compare donc les deux déplacements entre eux, et l'on refuse l'étape si
+     * la carte, elle, n'a pas réellement bougé : un couple immobile n'a rien
+     * prouvé.
+     */
+    const dCarte = { x: cardApres.x - cardBox.x, y: cardApres.y - cardBox.y };
+    const dEtiquette = { x: moved.x - anchored.x, y: moved.y - anchored.y };
+    const parcours = Math.hypot(dCarte.x, dCarte.y);
+    if (parcours < 20) {
+      throw new Error(
+        `la carte n’a pas bougé (${Math.round(dCarte.x)},${Math.round(dCarte.y)}) : ` +
+          'le suivi de l’étiquette n’est pas éprouvé',
+      );
+    }
+    const decalage = Math.hypot(dEtiquette.x - dCarte.x, dEtiquette.y - dCarte.y);
+    if (decalage > 2) {
+      throw new Error(
+        `l’étiquette accrochée ne suit pas sa carte : carte ${Math.round(dCarte.x)},${Math.round(dCarte.y)} ` +
+          `contre étiquette ${Math.round(dEtiquette.x)},${Math.round(dEtiquette.y)}`,
+      );
+    }
     console.log(
-      `      étiquette accrochée à ${Math.round(anchored.x - cardBox.x)} px de sa carte, et elle la suit`,
+      `      étiquette accrochée à ${Math.round(anchored.x - cardBox.x)} px de sa carte, ` +
+        `et elle la suit : ${Math.round(dCarte.x)},${Math.round(dCarte.y)} à ${decalage.toFixed(1)} px près`,
     );
     await page.screenshot({ path: `${OUT}/ui-23-etiquette-accrochee.png` });
 
@@ -2828,9 +3081,19 @@ async function findDoubleFaced() {
       () => window.__mtg.getState().zoneCounts.get(window.__mtg.getState().mySeat + '|GRAVEYARD') ?? 0,
     );
     await cards[1].click({ ...edge, button: 'right' });
-    const header = await page.locator('div.fixed.z-50.w-60 p').first().textContent();
-    if (!header?.includes('3 sélectionnées')) throw new Error(`en-tête sans le lot : « ${header} »`);
-    await page.locator('div.fixed.z-50.w-60 button').filter({ hasText: /^Défausser/ }).first().click();
+    /*
+     * Le compte du lot est une pastille à part, pas l'en-tête.
+     *
+     * Le premier `<p>` du menu porte le **nom de la carte** ; le « 3 sél. » vit
+     * dans un `<span>` frère. L'étape lisait donc le nom et s'étonnait de n'y
+     * pas trouver « 3 sélectionnées » — un libellé qui n'existe plus. On vise
+     * la pastille par son `data-test`, et l'on lit son compte, pas son texte.
+     */
+    const pastille = page.locator('[data-test="card-menu-count"]');
+    await pastille.waitFor({ timeout: 5000 });
+    const lot = Number(await pastille.getAttribute('data-count'));
+    if (lot !== 3) throw new Error(`le menu annonce ${lot} carte(s) au lieu de 3`);
+    await page.locator('[data-test="card-menu"] button').filter({ hasText: /^Défausser/ }).first().click();
     await page.waitForFunction(
       (n) => (window.__mtg.getState().zoneCounts.get(window.__mtg.getState().mySeat + '|GRAVEYARD') ?? 0) >= n + 3,
       graveyardBefore,
@@ -3457,12 +3720,51 @@ async function findDoubleFaced() {
     if (/meulé\s+\d+\s+carte/.test(ligne)) {
       throw new Error(`le journal de l’adversaire compte au lieu de nommer : « ${ligne} »`);
     }
-    for (const carte of chezLui.slice(0, 3)) {
-      if (!ligne.includes(carte.nom)) {
-        throw new Error(`« ${carte.nom} » manque au journal de l’adversaire : « ${ligne} »`);
+    /*
+     * Le journal nomme les cartes avec le nom du **catalogue**, en anglais.
+     *
+     * Ce n'est pas un oubli : le texte des lignes est construit une fois pour
+     * toute la table, côté serveur, et `docs/i18n.md` §7 (option A) assume que
+     * le journal reste en français avec des noms anglais — le traduire
+     * imposerait de publier des clés, donc de monter `PROTOCOL_VERSION` et de
+     * couper toutes les tables ouvertes.
+     *
+     * L'étape comparait le nom **affiché**, désormais localisé, au texte du
+     * journal : elle échouait sur une divergence voulue, et rendait donc un
+     * faux rouge. On vérifie ici ce qui est vrai aujourd'hui — chaque carte
+     * tombée est nommée, avec son nom de catalogue — ce qui garde entière la
+     * seule promesse de l'étape : le journal **nomme** au lieu de compter.
+     *
+     * Le jour où le journal publiera des clés plutôt qu'un texte, ce bloc doit
+     * changer : il attendra alors le nom affiché, localisé, des deux côtés.
+     */
+    const nomsCatalogue = await voisin.evaluate(async (ids) => {
+      const scryfall = ids
+        .map((id) => window.__mtg.getState().cards.get(id)?.scryfallId)
+        .filter(Boolean);
+      const reponse = await fetch('/api/cards/batch', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ ids: scryfall }),
+      });
+      if (!reponse.ok) return null;
+      const { cards } = await reponse.json();
+      const par = new Map(cards.map((c) => [c.scryfallId, c.name]));
+      return scryfall.map((id) => par.get(id) ?? null);
+    }, chezLui.slice(0, 3).map((c) => c.id));
+    if (!nomsCatalogue || nomsCatalogue.length !== 3 || nomsCatalogue.some((n) => !n)) {
+      throw new Error(`le catalogue n’a pas nommé les trois cartes meulées : ${JSON.stringify(nomsCatalogue)}`);
+    }
+    for (const nom of nomsCatalogue) {
+      if (!ligne.includes(nom)) {
+        throw new Error(`« ${nom} » manque au journal de l’adversaire : « ${ligne} »`);
       }
     }
-    console.log(`      cimetière identique aux deux sièges (${chezLui.length} cartes) — journal : « ${ligne} »`);
+    console.log(
+      `      cimetière identique aux deux sièges (${chezLui.length} cartes) — journal : « ${ligne} » ` +
+        `(affiché à l’écran : ${chezLui.slice(0, 3).map((c) => c.nom).join(', ')})`,
+    );
   });
 
   await step('à deux sièges, décrocher une étiquette ne la déplace pas', async () => {
@@ -3770,8 +4072,38 @@ async function findDoubleFaced() {
         return { deriveA, deriveB };
       };
 
-      /** Décalage de rendu d'une carte attachée, tel que `SeatPanel` le pose. */
-      const ATTACHE = { x: 16, y: 30 };
+      /**
+       * Décalage de rendu d'une carte attachée, **lu sur la page**.
+       *
+       * C'était une copie en dur, et elle a survécu à deux resserrages de
+       * `ATTACH_OFFSET_X/Y` : l'étape tombait sur trois pixels d'écart alors
+       * que le rendu était sain, et l'on a cherché le défaut du mauvais côté
+       * avant de trouver le nombre périmé. Le panneau publie donc maintenant
+       * ses constantes sur la zone de champ de bataille, comme il y publie
+       * déjà `data-zone` et `data-mine` pour cette même recette.
+       *
+       * Si l'attribut manque, on tombe bruyamment plutôt que de se rabattre
+       * sur une valeur devinée : une recette qui s'accommode d'une source
+       * absente est exactement ce qui a produit le faux diagnostic.
+       */
+      const lireAttache = async (cible) => {
+        const brut = await cible.evaluate(() => {
+          const zone = document.querySelector('[data-attach-offset]');
+          return zone ? zone.dataset.attachOffset : null;
+        });
+        if (!brut) {
+          throw new Error(
+            "le panneau ne publie plus data-attach-offset : impossible de savoir où l'attachée devrait se ranger",
+          );
+        }
+        const [x, y] = brut.split(',').map(Number);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          throw new Error(`data-attach-offset illisible : « ${brut} »`);
+        }
+        return { x, y };
+      };
+      const ATTACHE = await lireAttache(page);
+      console.log(`      décalage d'attachement publié par le panneau : ${ATTACHE.x} × ${ATTACHE.y}`);
       const sousSonPorteur = async (cible, ou) => {
         const porteur = await plan(cible, ids.porteur);
         const aura = await plan(cible, ids.aura);
@@ -3835,16 +4167,86 @@ async function findDoubleFaced() {
       //    attachée hors de son porteur. Elle passe sous lui : on la saisit par
       //    la bande qui dépasse, en bas à droite, comme le ferait un joueur.
       await page.evaluate(() => window.__mtg.getState().setSelection(new Set()));
+
+      /*
+       * La prise est **cherchée**, pas devinée.
+       *
+       * Elle valait 0,9 × 0,93 — le coin bas-droit, choisi quand l'attachée
+       * dépassait par là. Mais le champ de bataille est encombré à ce
+       * moment-là, et ce coin tombait sur **une autre carte** posée par-dessus :
+       * le geste saisissait la mauvaise, rien ne partait, et l'étape concluait
+       * « le détachement ne marche pas ». Elle accusait le moteur d'un défaut
+       * qui était dans la recette, et n'a jamais éprouvé ce qu'elle annonce.
+       *
+       * On interroge donc le rendu : quel point de l'attachée est réellement
+       * **elle**, sous le pointeur ? On balaie du bas-droit — la bande qui
+       * dépasse, là où un joueur la saisirait — vers le centre. Si aucun point
+       * ne répond, c'est que l'attachée est entièrement recouverte : ce
+       * serait un vrai défaut d'affichage, et l'étape doit le dire, pas
+       * l'enjamber.
+       */
+      const prise = await page.evaluate(
+        (id) => {
+          const el = document.querySelector(`[data-card-id="${id}"]`);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          const fractions = [0.95, 0.9, 0.82, 0.74, 0.66, 0.58, 0.5];
+          for (const fy of fractions) {
+            for (const fx of fractions) {
+              const cible = document.elementFromPoint(r.x + r.width * fx, r.y + r.height * fy);
+              if (cible?.closest('[data-card-id]')?.getAttribute('data-card-id') === id) {
+                return { fx, fy, balise: cible.tagName.toLowerCase() };
+              }
+            }
+          }
+          // Rien n'a répondu : on dit **qui** recouvre, pour que le rapport
+          // désigne quelque chose plutôt que de constater un vide.
+          const dessus = document.elementFromPoint(r.x + r.width * 0.9, r.y + r.height * 0.93);
+          return {
+            fx: null,
+            fy: null,
+            recouvertePar: dessus?.closest('[data-card-id]')?.getAttribute('data-card-id') ?? null,
+          };
+        },
+        ids.aura,
+      );
+      if (!prise || prise.fx === null) {
+        throw new Error(
+          'aucun point de la carte attachée ne lui appartient à l’écran : elle est ' +
+            `entièrement recouverte (par ${prise?.recouvertePar ?? 'un élément inconnu'}), ` +
+            'donc insaisissable à la main',
+        );
+      }
+      console.log(
+        `      prise de l’attachée trouvée à ${prise.fx} × ${prise.fy} de sa carte ` +
+          `(élément <${prise.balise}>)`,
+      );
+
+      await page.evaluate(() => (window.__sentIntents.length = 0));
       await glisser(
         ids.aura,
         { x: 190, y: 110 },
         'l’attachée seule, tirée hors de son porteur',
         ids.porteur,
-        { fx: 0.9, fy: 0.93 },
+        prise,
       );
+      const partis = await page.evaluate(() =>
+        window.__sentIntents
+          .map((f) => {
+            try {
+              return JSON.parse(f).intent?.type ?? '?';
+            } catch {
+              return '?';
+            }
+          })
+          .join(', '),
+      );
+      console.log(`      intents émis par le geste : ${partis || '(aucun)'}`);
       const detachee = await modele(page, ids.aura);
       if (detachee.attachedTo !== null) {
-        throw new Error('tirer la seule carte attachée aurait dû la détacher');
+        throw new Error(
+          `tirer la seule carte attachée aurait dû la détacher (intents émis : ${partis || 'aucun'})`,
+        );
       }
       await page.screenshot({ path: `${OUT}/ui-23c-attachement-deux-sieges.png` });
     } finally {
@@ -3889,6 +4291,80 @@ async function findDoubleFaced() {
       // Carole doit avoir la pile d'Alice à l'écran : c'est celle-là qu'on lit.
       await pageC.getByRole('button', { name: 'Voir toute la table' }).click();
       await pageC.waitForTimeout(500);
+
+      /**
+       * « L'image peinte est-elle bien celle de cette carte-là ? »
+       *
+       * L'étape comparait l'URL peinte à l'identifiant de catalogue, en
+       * espérant l'y trouver. C'était vrai tant que la table peignait
+       * l'anglais ; ça ne l'est plus : dès que l'impression **localisée**
+       * arrive, la pile peint l'image de cette impression-là, dont l'URL ne
+       * contient pas l'identifiant de catalogue. L'assertion devenait donc
+       * vraie ou fausse selon que le lot de traduction était rentré ou non
+       * avant la mesure — un rouge qui va et vient, et qui n'accuse rien de
+       * réel.
+       *
+       * On résout donc l'attente **comme l'application la résout** : l'image
+       * du catalogue, ou l'une de celles que `POST /api/cards/localized` rend
+       * pour la langue en cours. L'exigence est la même — c'est bien cette
+       * carte-là qui est peinte — seule la façon de l'établir a changé.
+       */
+      const imagesAttendues = (cible, scryfallId) =>
+        cible.evaluate(async (id) => {
+          const langue =
+            (() => {
+              try {
+                return window.localStorage.getItem('mtg.language');
+              } catch {
+                return null;
+              }
+            })() ??
+            document.documentElement.lang ??
+            'en';
+          const urls = [];
+          try {
+            const res = await fetch('/api/cards/localized', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ ids: [id], language: langue }),
+            });
+            if (res.ok) {
+              const { cards } = await res.json();
+              for (const carte of cards ?? []) {
+                // L'impression localisée porte son propre identifiant Scryfall :
+                // c'est lui qui se lit dans l'URL de l'image peinte.
+                if (carte?.localizedScryfallId) urls.push(carte.localizedScryfallId);
+                for (const url of Object.values(carte?.imageUris ?? {})) {
+                  if (typeof url === 'string') urls.push(url);
+                }
+                for (const face of carte?.faces ?? []) {
+                  for (const url of Object.values(face?.imageUris ?? {})) {
+                    if (typeof url === 'string') urls.push(url);
+                  }
+                }
+              }
+            }
+          } catch {
+            /* pas de traduction servie : l'image du catalogue reste attendue. */
+          }
+          return urls;
+        }, scryfallId);
+
+      /** L'image peinte montre-t-elle bien la carte connue ? */
+      const peintBien = async (cible, vue) => {
+        if (!vue.face || !vue.connue) return false;
+        if (vue.face.includes(vue.connue)) return true;
+        // La chaîne de requête (`?1782862134`) est un jeton de cache Scryfall :
+        // elle n'identifie pas l'image, et la comparer ferait échouer l'étape
+        // au prochain rafraîchissement du catalogue.
+        const sansJeton = (url) => url.split('?')[0];
+        const attendues = await imagesAttendues(cible, vue.connue);
+        return attendues.some(
+          (attendue) =>
+            sansJeton(attendue) === sansJeton(vue.face) || vue.face.includes(attendue),
+        );
+      };
 
       /** Ce que Carole voit de la bibliothèque d'Alice, store et DOM ensemble. */
       const chezCarole = () =>
@@ -3967,7 +4443,7 @@ async function findDoubleFaced() {
 
       const premiere = await chezCarole();
       if (!premiere.connue) throw new Error('Carole n’a pas reçu la carte du dessus');
-      if (!premiere.face || !premiere.face.includes(premiere.connue)) {
+      if (!(await peintBien(pageC, premiere))) {
         throw new Error(
           `la pile ne montre pas la carte révélée (peint : ${premiere.face}, attendu : ${premiere.connue})`,
         );
@@ -4034,7 +4510,7 @@ async function findDoubleFaced() {
       await pageC.waitForTimeout(400);
       const seconde = await chezCarole();
       if (!seconde.connue) throw new Error('après la pioche, Carole ne voit plus aucun dessus');
-      if (!seconde.face || !seconde.face.includes(seconde.connue)) {
+      if (!(await peintBien(pageC, seconde))) {
         throw new Error(
           `la pile n’a pas suivi la pioche (peint : ${seconde.face}, attendu : ${seconde.connue})`,
         );
