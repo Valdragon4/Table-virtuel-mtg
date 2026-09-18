@@ -21,6 +21,7 @@ import { resolveSession, SESSION_COOKIE } from '../auth/session.js';
 import { getRoom } from '../game/registry.js';
 import { IntentError } from '../game/errors.js';
 import { snapshotDeck, snapshotFromReport, runImport } from '../decks/service.js';
+import { setDeckSyncLogger } from '../decks/printing-sync.js';
 import { TokenBucket } from '../lib/throttle.js';
 import type { Connection, DeckPayload, Room } from '../game/room.js';
 
@@ -37,6 +38,16 @@ function parseCookies(header: string | undefined): Record<string, string> {
 
 export function registerWebSocket(app: FastifyInstance): void {
   const wss = new WebSocketServer({ noServer: true, maxPayload: LIMITS.maxFrameBytes });
+
+  /*
+   * Modifier le deck enregistré d'un joueur à partir d'une action de jeu doit
+   * laisser une trace ailleurs que dans la base : c'est ici qu'on la branche
+   * sur le journal du serveur, le seul endroit où l'instance Fastify est en vue.
+   */
+  setDeckSyncLogger({
+    info: (msg) => app.log.info(msg),
+    error: (msg) => app.log.error(msg),
+  });
 
   app.server.on('upgrade', (request, socket, head) => {
     const match = ROOM_PATH.exec(new URL(request.url ?? '/', 'http://localhost').pathname);

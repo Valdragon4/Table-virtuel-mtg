@@ -48,6 +48,7 @@ import {
 import { reconcileTopReveals } from './topReveal.js';
 import { ReplayRecorder, frameOf, type ReplaySink } from '../replay/recorder.js';
 import { TokenBucket } from '../lib/throttle.js';
+import type { DeckPrintingChange } from '../decks/printing-sync.js';
 
 export interface Connection {
   id: string;
@@ -91,6 +92,15 @@ export interface RoomHooks {
    * qui ne parlent pas de replay.
    */
   replaySink?: ReplaySink;
+  /**
+   * Report d'un changement d'impression sur le deck enregistré du joueur.
+   *
+   * Absent = on n'écrit rien, et la partie se déroule exactement comme avant :
+   * c'est le cas de tous les tests qui ne parlent pas de deck. Le hook ne rend
+   * rien et ne doit rien lever : l'écriture est asynchrone et sans retour, pour
+   * que la base ne puisse jamais faire échouer une action de jeu.
+   */
+  syncDeckPrinting?: (change: DeckPrintingChange) => void;
 }
 
 /**
@@ -1126,8 +1136,27 @@ export class Room {
         deps.cardData = card;
       }
 
+      /*
+       * L'impression d'avant, relevée avant que le moteur ne l'écrase : c'est
+       * elle qui identifie la ligne du deck enregistré, puisque l'objet portera
+       * la nouvelle. Lu sur l'état serveur, jamais reçu du client.
+       */
+      const printingBefore =
+        intent.type === 'SET_PRINTING' ? this.state.objects.get(intent.cardId) ?? null : null;
+      const wasPrinting = printingBefore
+        ? {
+            scryfallId: printingBefore.card.scryfallId,
+            isFoil: printingBefore.isFoil,
+            origin: printingBefore.origin,
+          }
+        : null;
+
       const result = applyIntent(this.state, conn.seatId, intent, this.rng, deps);
       const seq = this.commit(conn.seatId, result.emissions);
+
+      if (printingBefore && wasPrinting && seq !== null) {
+        this.syncDeckPrinting(conn.seatId, wasPrinting, printingBefore);
+      }
 
       if (seq !== null) {
         // Une action non réversible (mélange, pioche, dé…) ne laisse pas
@@ -1147,6 +1176,56 @@ export class Room {
       }
       conn.send({ t: 'reject', cid, code: 'ERR_INTERNAL' as ErrorCode, message: 'Erreur interne.' });
       throw err;
+    }
+  }
+
+  /**
+   * Reporte sur le deck du compte l'impression qui vient de changer sur la table.
+   *
+   * **Rien ici ne peut faire échouer une action de jeu.** L'appel est sans
+   * retour et enveloppé : même règle que l'enregistrement du replay et que la
+   * persistance du journal, et pour la même raison — une écriture en base n'a
+   * pas à pouvoir faire tomber une table. Le changement d'impression est déjà
+   * commité quand on arrive ici ; si le deck ne suit pas, la partie continue et
+   * l'écran est juste.
+   *
+   * On ne publie rien de plus : le siège porte déjà son `userId` et son
+   * `deckSnapshotId` côté serveur, et aucune de ces deux données ne transite
+   * par le protocole. Voir `decks/printing-sync.ts` pour les droits.
+   */
+  private syncDeckPrinting(
+    seatId: SeatId,
+    was: { scryfallId: string; isFoil: boolean; origin?: ZoneKind },
+    obj: GameObjectState,
+  ): void {
+    const hook = this.hooks.syncDeckPrinting;
+    if (!hook) return;
+    const seat = this.state.seats.get(seatId);
+    if (!seat) return;
+    // Un jeton n'a pas de ligne de deck derrière lui.
+    if (obj.kind !== 'CARD') return;
+
+    /*
+     * `origin` est la zone où le deck figé avait placé la carte : c'est le seul
+     * repère fiable, la zone courante ayant pu changer dix fois depuis. Sans
+     * lui — une carte créée hors chargement de deck — on n'a rien à reporter.
+     */
+    const zone =
+      was.origin === 'COMMAND' ? 'COMMANDER' : was.origin === 'SIDEBOARD' ? 'SIDEBOARD' : was.origin === 'LIBRARY' ? 'MAIN' : null;
+    if (zone === null) return;
+
+    try {
+      hook({
+        userId: seat.userId,
+        deckSnapshotId: seat.deckSnapshotId,
+        zone,
+        previousScryfallId: was.scryfallId,
+        nextScryfallId: obj.card.scryfallId,
+        previousIsFoil: was.isFoil,
+        nextIsFoil: obj.isFoil,
+      });
+    } catch {
+      // Un hook qui lève est un bug du hook, pas une raison d'interrompre la partie.
     }
   }
 

@@ -9,6 +9,7 @@ import { GAME_MODES, type GameMode, type LogEntry } from '@mtg/shared';
 import { prisma } from '../db.js';
 import { Room } from './room.js';
 import { closeAbandonedReplays, prismaReplaySink } from '../replay/store.js';
+import { reportPrintingToDeck } from '../decks/printing-sync.js';
 import type { CardData } from './state.js';
 
 const rooms = new Map<string, Room>();
@@ -68,6 +69,9 @@ export async function getRoom(code: string): Promise<Room | null> {
     persistLog: (roomId, entries) => void persistLog(roomId, entries),
     lookupCard,
     replaySink: prismaReplaySink,
+    // Le choix d'impression fait en partie survit à la partie : il redescend
+    // sur le deck du compte. Sans attente ni exception qui remonte.
+    syncDeckPrinting: reportPrintingToDeck,
   });
   // Une table close ne se rouvre pas en la rechargeant depuis la base : sans
   // cela, il suffisait de recharger la page pour ressusciter une room close et
