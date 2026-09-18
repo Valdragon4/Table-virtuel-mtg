@@ -41,6 +41,18 @@
  * Deux changements successifs s'enchaînent d'eux-mêmes : le premier a fait
  * passer la ligne de A à B, et le second arrive avec B pour ancienne impression.
  *
+ * ## Ce qui reste du choix après une resynchronisation
+ *
+ * La ligne qui **reçoit** la copie est marquée `printingPinned`, dans les trois
+ * branches de la transaction. Sans cette marque, une resynchronisation depuis
+ * Archidekt ou Moxfield remplace le contenu du deck en bloc et le choix
+ * disparaît sans un mot — ce module écrivait alors dans le vide dès le premier
+ * clic sur « Resynchroniser ».
+ *
+ * La marque ne fige que l'**illustration**, jamais la quantité : la source
+ * garde la main sur le contenu du deck. Les règles d'arbitrage sont dans
+ * `pinned-printings.ts`, qui les applique.
+ *
  * ## Qui a le droit
  *
  * Trois barrières, et aucune ne fait confiance au client :
@@ -171,7 +183,7 @@ export async function applyPrintingToDeck(
       // d'ajouter une deuxième ligne identique à côté d'elle.
       await tx.deckCard.update({
         where: { id: target.id },
-        data: { quantity: target.quantity + 1 },
+        data: { quantity: target.quantity + 1, printingPinned: true },
       });
       if (source.quantity > 1) {
         await tx.deckCard.update({
@@ -200,6 +212,7 @@ export async function applyPrintingToDeck(
           // Le même rang que sa sœur : les deux impressions restent voisines
           // dans la liste.
           sortIndex: source.sortIndex,
+          printingPinned: true,
         },
       });
     } else {
@@ -211,6 +224,7 @@ export async function applyPrintingToDeck(
           requestedSetCode: after.setCode,
           requestedCollectorNumber: after.collectorNumber,
           isFoil: change.nextIsFoil,
+          printingPinned: true,
         },
       });
     }

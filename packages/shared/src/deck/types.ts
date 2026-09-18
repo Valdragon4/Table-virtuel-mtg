@@ -64,6 +64,14 @@ export interface ImportReport {
   sourceUrl?: string;
   cards: ResolvedCard[];
   issues: ImportIssue[];
+  /**
+   * Impressions choisies à la main que l'écriture en base a conservées face à la
+   * liste de la source (voir `decks/pinned-printings.ts`, côté serveur).
+   *
+   * Absent quand rien n'a été persisté — l'import d'un invité, par exemple : ce
+   * n'est pas un zéro, c'est une question qui ne s'est pas posée.
+   */
+  pinnedPrintingsKept?: number;
   stats: {
     linesRead: number;
     cardsResolved: number;
@@ -85,5 +93,11 @@ export interface DeckSummary {
   playmatUrl: string | null;
   cardBackUrl: string | null;
   commanders: Array<{ scryfallId: string; name: string }>;
+  /**
+   * Les impressions que le propriétaire a choisies à la main et que la
+   * resynchronisation conserve. Vide sur la plupart des decks : c'est ce qui
+   * permet à l'interface de ne rien afficher tant que la question ne se pose pas.
+   */
+  pinnedPrintings: Array<{ scryfallId: string; name: string; setCode: string }>;
   colorIdentity: string[];
 }

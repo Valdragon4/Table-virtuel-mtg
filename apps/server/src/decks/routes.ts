@@ -53,12 +53,18 @@ export async function deckRoutes(app: FastifyInstance): Promise<void> {
         return reply.send({ persisted: false, report: outcome.report });
       }
 
-      const deckId = await persistImport(outcome, {
+      const { deckId, pinnedPrintingsKept } = await persistImport(outcome, {
         userId: request.userId!,
         ...(body.data.deckId ? { deckId: body.data.deckId } : {}),
         ...(body.data.name ? { name: body.data.name } : {}),
       });
-      return reply.send({ persisted: true, deckId, report: outcome.report });
+      // Recoller l'URL d'un deck qu'on a déjà, c'est le resynchroniser : le
+      // rapport doit annoncer les impressions conservées ici aussi.
+      return reply.send({
+        persisted: true,
+        deckId,
+        report: { ...outcome.report, pinnedPrintingsKept },
+      });
     } catch (err) {
       return sendImportError(reply, err);
     }
@@ -187,6 +193,37 @@ export async function deckRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       return sendImportError(reply, err);
     }
+  });
+
+  /**
+   * Rendre les illustrations à la source : toutes les épingles du deck tombent,
+   * et la prochaine resynchronisation réécrira les impressions comme la source
+   * les annonce.
+   *
+   * Le geste est **volontairement global**. Une épingle par épingle demanderait
+   * de désigner une ligne de deck — donc d'exposer son identifiant au client, et
+   * d'ajouter un écran pour le choisir — alors que ce qu'on répare ici tient en
+   * une phrase : « je ne veux plus de mes illustrations, remets celles de la
+   * source ». Rien ne se perd : le contenu du deck ne bouge pas, seules les
+   * marques disparaissent, et refaire le geste en partie les repose.
+   */
+  app.delete('/api/decks/:id/printing-pins', { preHandler: requireUser }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: 'INVALID_INPUT' });
+
+    // La propriété se vérifie ici, et pas dans un `updateMany` sur `deckCard` :
+    // cette table n'a pas de `userId`, seul le deck en porte un.
+    const deck = await prisma.deck.findFirst({
+      where: { id: params.data.id, userId: request.userId! },
+      select: { id: true },
+    });
+    if (!deck) return reply.code(404).send({ error: 'NOT_FOUND' });
+
+    const { count } = await prisma.deckCard.updateMany({
+      where: { deckId: deck.id, printingPinned: true },
+      data: { printingPinned: false },
+    });
+    return reply.send({ ok: true, released: count });
   });
 
   app.post('/api/decks/:id/resync', { preHandler: requireUser }, async (request, reply) => {

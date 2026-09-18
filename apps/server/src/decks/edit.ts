@@ -149,6 +149,18 @@ export async function saveDeckFromText(
     userId,
     deckId,
     name: options.name ?? deck.name,
+    /*
+     * Les épingles d'impression ne se rappliquent pas ici, et c'est le seul
+     * chemin où elles ne le font pas.
+     *
+     * La liste qui arrive **est** le choix de l'utilisateur, éditions écrites en
+     * clair ligne à ligne : y reposer une épingle défairait la modification
+     * qu'il vient de faire, et retirer une illustration choisie en partie
+     * deviendrait impossible depuis l'éditeur. Rien ne se perd pour autant —
+     * l'éditeur détache le deck de sa source (voir plus bas), donc plus aucune
+     * resynchronisation ne viendra écraser ce qu'il écrit.
+     */
+    preservePinnedPrintings: false,
   });
 
   // Un deck édité à la main s'appelle MANUAL, pas TEXT : il ne vient plus d'un

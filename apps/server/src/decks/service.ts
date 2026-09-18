@@ -4,8 +4,13 @@
  * Un import ne persiste rien tant qu'il n'est pas rattaché à un compte : un
  * invité peut coller une liste, jouer avec, et ne créer un compte qu'après.
  */
-import type { DeckSource, DeckSummary, ImportReport, ParsedDeck } from '@mtg/shared';
+import type { DeckSource, DeckSummary, DeckZone, ImportReport, ParsedDeck, ResolvedCard } from '@mtg/shared';
 import { prisma } from '../db.js';
+import {
+  reconcilePinnedPrintings,
+  type IncomingPrinting,
+  type PinnedPrinting,
+} from './pinned-printings.js';
 import { parseDeckText } from '../import/text.js';
 import { resolveDeck } from '../import/resolve.js';
 import { importFromArchidekt, DeckImportError } from '../import/archidekt.js';
@@ -82,19 +87,49 @@ export interface PersistOptions {
   deckId?: string;
   name?: string;
   format?: string | null;
+  /**
+   * Reporter sur la liste entrante les impressions épinglées à la main.
+   *
+   * Vrai par défaut : c'est ce qui fait qu'une resynchronisation n'efface plus
+   * les illustrations choisies en partie (voir `pinned-printings.ts`).
+   *
+   * L'éditeur de deck, lui, passe `false`, et il a raison : la liste qu'il
+   * envoie **est** le choix de l'utilisateur, éditions comprises, écrites en
+   * clair ligne à ligne. Y rappliquer une épingle reviendrait à défaire la
+   * modification qu'il vient de faire — retirer une illustration épinglée
+   * deviendrait impossible. Et ce chemin détache le deck de sa source, donc plus
+   * aucune resynchronisation ne menace ce qu'il écrit.
+   */
+  preservePinnedPrintings?: boolean;
+}
+
+export interface PersistResult {
+  deckId: string;
+  /** Épingles honorées, à annoncer à l'utilisateur. Voir `pinned-printings.ts`. */
+  pinnedPrintingsKept: number;
 }
 
 /** Écrit le résultat d'un import dans un deck, créé ou remplacé. */
-export async function persistImport(outcome: ImportOutcome, options: PersistOptions): Promise<string> {
+export async function persistImport(
+  outcome: ImportOutcome,
+  options: PersistOptions,
+): Promise<PersistResult> {
   const { report } = outcome;
   const name = options.name ?? report.deckName;
+  const preservePins = options.preservePinnedPrintings !== false;
 
   return prisma.$transaction(async (tx) => {
     let deckId = options.deckId;
+    /*
+     * Les épingles se relisent **avant** le `deleteMany` qui va emporter les
+     * lignes : après, il ne reste rien à quoi les rattacher.
+     */
+    let pins: PinnedPrinting[] = [];
 
     if (deckId) {
       const existing = await tx.deck.findFirst({ where: { id: deckId, userId: options.userId } });
       if (!existing) throw new DeckImportError('Deck introuvable.', 'NOT_FOUND');
+      if (preservePins) pins = await readPinnedPrintings(tx, deckId);
       await tx.deckCard.deleteMany({ where: { deckId } });
       // Liste de champs explicite, et c'est volontaire : `playmatUrl` et
       // `cardBackUrl` n'y figurent pas, donc une resynchronisation depuis
@@ -138,6 +173,7 @@ export async function persistImport(outcome: ImportOutcome, options: PersistOpti
           : null;
 
       if (twin) {
+        if (preservePins) pins = await readPinnedPrintings(tx, twin.id);
         await tx.deckCard.deleteMany({ where: { deckId: twin.id } });
         await tx.deck.update({
           where: { id: twin.id },
@@ -165,22 +201,81 @@ export async function persistImport(outcome: ImportOutcome, options: PersistOpti
       }
     }
 
-    if (report.cards.length > 0) {
+    const incoming = await withIdentity(tx, report.cards);
+    const { rows, kept } = reconcilePinnedPrintings(incoming, pins);
+
+    if (rows.length > 0) {
       await tx.deckCard.createMany({
-        data: report.cards.map((c) => ({
-          deckId: deckId!,
-          scryfallId: c.scryfallId,
-          quantity: c.quantity,
-          zone: c.zone,
-          requestedSetCode: c.requestedSetCode ?? null,
-          requestedCollectorNumber: c.requestedCollectorNumber ?? null,
-          isFoil: c.isFoil,
-          sortIndex: c.sortIndex,
-        })),
+        data: rows.map((row) => ({ deckId: deckId!, ...row })),
       });
     }
 
-    return deckId!;
+    return { deckId: deckId!, pinnedPrintingsKept: kept };
+  });
+}
+
+/**
+ * Transaction Prisma, réduite à ce que ce module en utilise.
+ *
+ * Écrire le type complet obligerait à importer le client généré ici, alors que
+ * `prisma.$transaction` le fournit déjà — et le tapé large casserait les tests,
+ * qui n'injectent qu'une poignée de méthodes.
+ */
+type DeckTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/**
+ * Les lignes épinglées d'un deck, prêtes pour la réconciliation.
+ *
+ * L'identité retenue est l'`oracleId` — deux impressions de la même carte le
+ * partagent, c'est tout l'intérêt —, avec repli sur le nom normalisé quand il
+ * manque, comme le garde-fou de `printing-sync.ts`.
+ */
+async function readPinnedPrintings(tx: DeckTx, deckId: string): Promise<PinnedPrinting[]> {
+  const rows = await tx.deckCard.findMany({
+    where: { deckId, printingPinned: true },
+    include: { card: { select: { oracleId: true, normalizedName: true } } },
+  });
+
+  return rows.map((row) => ({
+    identity: identityOf(row.card),
+    scryfallId: row.scryfallId,
+    quantity: row.quantity,
+    zone: row.zone as DeckZone,
+    isFoil: row.isFoil,
+    requestedSetCode: row.requestedSetCode,
+    requestedCollectorNumber: row.requestedCollectorNumber,
+    sortIndex: row.sortIndex,
+  }));
+}
+
+function identityOf(card: { oracleId: string | null; normalizedName: string }): string {
+  return card.oracleId ?? `name:${card.normalizedName}`;
+}
+
+/** La liste entrante, enrichie de l'identité oracle de chaque carte. */
+async function withIdentity(tx: DeckTx, cards: readonly ResolvedCard[]): Promise<IncomingPrinting[]> {
+  if (cards.length === 0) return [];
+
+  const known = await tx.card.findMany({
+    where: { scryfallId: { in: [...new Set(cards.map((c) => c.scryfallId))] } },
+    select: { scryfallId: true, oracleId: true, normalizedName: true },
+  });
+  const byId = new Map(known.map((c) => [c.scryfallId, c]));
+
+  return cards.map((c) => {
+    const card = byId.get(c.scryfallId);
+    return {
+      // Carte absente de la base : aucune épingle ne peut lui correspondre, et
+      // son identifiant fait un identifiant unique parfaitement acceptable.
+      identity: card ? identityOf(card) : `printing:${c.scryfallId}`,
+      scryfallId: c.scryfallId,
+      quantity: c.quantity,
+      zone: c.zone,
+      isFoil: c.isFoil,
+      requestedSetCode: c.requestedSetCode ?? null,
+      requestedCollectorNumber: c.requestedCollectorNumber ?? null,
+      sortIndex: c.sortIndex,
+    };
   });
 }
 
@@ -210,26 +305,47 @@ export async function resyncDeck(deckId: string, userId: string): Promise<Import
    * (`docs/moxfield.md` §4), pas une optimisation qu'on peut lever.
    */
   const outcome = await runImport({ url: deck.sourceUrl, name: deck.name, fresh: true });
-  await persistImport(outcome, { userId, deckId, name: deck.name });
-  return outcome.report;
+  const { pinnedPrintingsKept } = await persistImport(outcome, { userId, deckId, name: deck.name });
+  /*
+   * Le compte part avec le rapport plutôt que de rester dans le journal : une
+   * resynchronisation qui garde des impressions que la source n'annonce pas doit
+   * le dire sur-le-champ, sinon l'écart entre le deck et sa source ne s'explique
+   * plus qu'en relisant ce fichier.
+   */
+  return { ...outcome.report, pinnedPrintingsKept };
 }
 
 export async function listDecks(userId: string): Promise<DeckSummary[]> {
   const decks = await prisma.deck.findMany({
     where: { userId },
     orderBy: { updatedAt: 'desc' },
-    include: { cards: { include: { card: { select: { name: true, colorIdentity: true } } } } },
+    include: {
+      cards: {
+        orderBy: [{ zone: 'asc' }, { sortIndex: 'asc' }],
+        include: { card: { select: { name: true, setCode: true, colorIdentity: true } } },
+      },
+    },
   });
 
   return decks.map((deck) => {
     const colors = new Set<string>();
     let cardCount = 0;
     const commanders: DeckSummary['commanders'] = [];
+    const pinnedPrintings: DeckSummary['pinnedPrintings'] = [];
 
     for (const dc of deck.cards) {
       cardCount += dc.quantity;
       for (const c of dc.card.colorIdentity) colors.add(c);
       if (dc.zone === 'COMMANDER') commanders.push({ scryfallId: dc.scryfallId, name: dc.card.name });
+      // L'édition part avec le nom : « Forêt » trois fois de suite ne dirait pas
+      // laquelle des trois illustrations est épinglée.
+      if (dc.printingPinned) {
+        pinnedPrintings.push({
+          scryfallId: dc.scryfallId,
+          name: dc.card.name,
+          setCode: dc.card.setCode,
+        });
+      }
     }
 
     return {
@@ -244,6 +360,7 @@ export async function listDecks(userId: string): Promise<DeckSummary[]> {
       playmatUrl: deck.playmatUrl,
       cardBackUrl: deck.cardBackUrl,
       commanders,
+      pinnedPrintings,
       colorIdentity: [...colors].sort(),
     };
   });

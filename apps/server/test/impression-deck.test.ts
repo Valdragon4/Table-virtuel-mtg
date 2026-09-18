@@ -22,6 +22,7 @@ interface FakeDeckCard {
   requestedCollectorNumber: string | null;
   isFoil: boolean;
   sortIndex: number;
+  printingPinned: boolean;
 }
 
 const snapshots = new Map<string, { id: string; deckId: string | null }>();
@@ -147,6 +148,7 @@ function row(overrides: Partial<FakeDeckCard> = {}): FakeDeckCard {
     requestedCollectorNumber: '266',
     isFoil: false,
     sortIndex: 7,
+    printingPinned: false,
     ...overrides,
   };
   deckCards.push(r);
@@ -263,6 +265,43 @@ describe('report sur le deck enregistré', () => {
 
     expect(result).toEqual({ applied: false, reason: 'ROW_NOT_FOUND' });
     expect(deckCards[0]!.scryfallId).toBe(OLD_PRINTING);
+  });
+
+  /*
+   * L'épingle : sans elle, une resynchronisation depuis Archidekt ou Moxfield
+   * effacerait le choix d'illustration au premier clic, et ce module écrirait
+   * dans le vide. Les trois branches de la transaction la posent, et c'est la
+   * ligne qui **reçoit** la copie qui la porte.
+   */
+  it('épingle la ligne créée à côté de sa sœur', async () => {
+    row({ quantity: 3 });
+
+    await applyPrintingToDeck(change());
+
+    expect(deckCards.find((r) => r.scryfallId === NEW_PRINTING)?.printingPinned).toBe(true);
+    // La ligne d'origine reste sous l'autorité de la source : on n'a rien
+    // décidé pour les deux copies qu'on n'a pas touchées.
+    expect(deckCards.find((r) => r.scryfallId === OLD_PRINTING)?.printingPinned).toBe(false);
+  });
+
+  it('épingle la ligne existante dans laquelle la copie fusionne', async () => {
+    row({ quantity: 2 });
+    row({ scryfallId: NEW_PRINTING, quantity: 1, requestedSetCode: 'unf', requestedCollectorNumber: '243' });
+
+    await applyPrintingToDeck(change());
+
+    expect(deckCards.find((r) => r.scryfallId === NEW_PRINTING)).toMatchObject({
+      quantity: 2,
+      printingPinned: true,
+    });
+  });
+
+  it('épingle la ligne qui change d’impression sur place', async () => {
+    row();
+
+    await applyPrintingToDeck(change());
+
+    expect(deckCards[0]).toMatchObject({ scryfallId: NEW_PRINTING, printingPinned: true });
   });
 
   it('distingue la ligne foil de la ligne normale de la même impression', async () => {

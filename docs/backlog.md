@@ -256,6 +256,40 @@ demi-heure de recherche d'un défaut qui n'existe pas.
   l'action dans un menu. **Une ré-ingestion forcée est obligatoire au déploiement** :
   voir « Déploiement » plus bas.
 
+- **Le français officiel, vérifié carte par carte** (18 septembre 2026). Tout le
+  vocabulaire Magic de l'interface était traduit **de mémoire**. La vérification est
+  désormais mécanique : le `printed_text` d'une impression française chez Scryfall donne
+  le libellé imprimé d'une mécanique, sa `printed_type_line` donne celui d'un
+  sous-type. Rien n'entre au dépôt sans une carte pour l'étayer.
+
+  Le glossaire de mécaniques passe de 87 à 145 entrées : Hexproof est **Défense
+  talismanique**, Shroud **Linceul**, Ward **Parade**. Mais le gain principal est
+  ailleurs : **17 traductions déjà en place étaient fausses** — Storm n'est pas
+  « Tempête » mais **Déluge**, Madness **Folie**, Shadow **Distorsion**, Buyback
+  **Rappel**, Kicker **Kick**. Deux d'entre elles étaient nuisibles : Recover et
+  Scavenge tombaient tous deux sur « Récupération », et « Ombre » pour Shadow entrait
+  en collision avec le type de créature Shade. Côté jetons, 19 types de créature
+  étaient inventés : Rogue est **Gredin**, Shaman **Shamane**, Fungus **Fongus**,
+  Minion **Mignon**, Faerie **Peuple fée**.
+
+  **Une régression volontaire** : Phasing redescend de « Décalage » à l'anglais. Ses 12
+  impressions françaises n'ont aucun texte imprimé, donc rien ne l'étayait. Il ne reste
+  que quatre mécaniques en anglais, toutes pour cette raison vérifiée : Banding,
+  Fading, Phasing, Gift. Un mot sans preuve vaut mieux qu'un mot inventé : c'est la
+  règle du glossaire, et la table des refus documente chaque cas.
+
+  **Une source unique, désormais.** `CardSprite.tsx` portait son propre lexique de
+  sous-types, écrit à la main : le dialogue des marqueurs disait « Roublards » quand le
+  jeton s'appelait « Gredin ». L'affichage passe par `tokenNames.ts` ; les anciens mots
+  restent comme **synonymes de saisie**, parce que celui qui joue depuis dix ans tape le
+  mot qu'il connaît. Une seule collision, tranchée en faveur de l'imprimé :
+  « méduse » désigne le *Jellyfish*, dont c'est le terme, et non plus la *Gorgon*, qui
+  garde « gorgone » et gagne « gorgonoïde ».
+
+  Le `printed_text` se **lit** pour vérifier un mot ; il ne se garde pas. Aucune phrase
+  de règles n'entre au dépôt — seulement des libellés de deux ou trois mots, de même
+  nature que la ligne de type. Le §5 de `docs/i18n.md` rend la distinction explicite.
+
 - **Report d'impression vers le deck du compte** (18 septembre 2026). Un changement
   d'impression fait en partie (`SET_PRINTING`) ne meurt plus avec la table : il
   redescend sur le deck (`apps/server/src/decks/printing-sync.ts`).
@@ -273,16 +307,46 @@ demi-heure de recherche d'un défaut qui n'existe pas.
   même, on n'écrit rien, parce qu'on est alors en train de remplacer une carte par une
   autre.
 
-  **Contrepartie assumée, et elle contredit une règle permanente** (voir plus bas) : un
-  deck asservi à Archidekt ou Moxfield est **écrit sans être détaché** de sa source.
+  Un deck asservi à Archidekt ou Moxfield est **écrit sans être détaché** de sa source.
   `printing-sync.ts` touche la `DeckCard` sans passer par le chemin d'édition
   (`decks/edit.ts`, `detachFromSource`), donc sans remettre `source` à `MANUAL` ni vider
-  `sourceUrl`. Une resynchronisation efface le choix, en silence. Le détachement
-  automatique a été écarté : changer une illustration en partie est un geste léger, et
-  couper un deck de sa source à cette occasion serait une conséquence lourde qu'on
-  imposerait sans la demander — exactement le genre de décision que cette table ne
-  prend pas à la place du joueur. Le manque **réel** est ailleurs : le joueur devrait
-  l'apprendre sur le moment, ce qui demande un event adressé à son seul siège.
+  `sourceUrl`. Le détachement automatique a été écarté : changer une illustration en
+  partie est un geste léger, et couper un deck de sa source à cette occasion serait une
+  conséquence lourde qu'on imposerait sans la demander.
+
+  Cela laissait une resynchronisation effacer le choix en silence. **C'est résolu**, voir
+  « Épinglage des impressions » ci-dessous. Le manque qui subsiste est ailleurs : le
+  joueur devrait apprendre le report **sur le moment**, ce qui demande un event adressé
+  à son seul siège.
+
+- **Épinglage des impressions contre la resynchronisation** (18 septembre 2026).
+  `persistImport` remplace le contenu d'un deck en bloc — `deleteMany` puis
+  `createMany` —, donc une resynchronisation depuis Archidekt ou Moxfield effaçait tous
+  les choix d'illustration faits à la main. Le module protégeait déjà `playmatUrl` et
+  `cardBackUrl` pour cette raison exacte ; les impressions rejoignent cette liste.
+
+  `DeckCard.printingPinned` marque la ligne **qui reçoit** la copie, dans les trois
+  branches de `printing-sync.ts`. `decks/pinned-printings.ts` porte la réconciliation,
+  en fonction pure : `persistImport` relit les lignes épinglées avant chaque effacement
+  et les réapplique.
+
+  Trois règles à ne pas défaire. **L'appariement se fait sur l'identité oracle et la
+  zone**, pas sur le `scryfallId` — c'est justement l'impression qui diffère. **La
+  quantité vient de la source, jamais de l'épingle** : la source décide du contenu du
+  deck, l'épingle ne décide que de l'illustration, et une carte qui disparaît en amont
+  emporte son épingle. **Une épingle que la source annonce déjà ne prélève aucune
+  copie** : sans cette clause l'opération n'était pas idempotente et grignotait une
+  copie à chaque passage.
+
+  Deux conséquences connues. `saveDeckFromText` passe `preservePinnedPrintings: false`
+  et fait donc tomber toutes les épingles du deck — il le faut, sinon réappliquer une
+  épingle déferait la modification qu'on vient de taper et *retirer* une illustration
+  depuis l'éditeur deviendrait impossible ; les impressions, elles, sont conservées,
+  puisqu'elles sont dans le texte. Et quand la source liste elle-même l'impression
+  épinglée en plusieurs exemplaires, la ligne se scinde : deux `DeckCard` de même
+  `scryfallId|zone|isFoil` ne différant que par la marque, donc deux lignes identiques
+  dans la liste texte régénérée. Cas rare ; l'alternative — marquer toute la ligne —
+  sur-épinglait.
 
 - **Session de corrections d'interface** (18 septembre 2026). Cadrage de la table
   (« Voir toute la table » ne cadre plus le décor, « Recentrer sur moi » cadre le
@@ -811,9 +875,10 @@ code HTTP `101` affiché juste avant, pas le code de sortie du script.
   **Une exception existe depuis le 18 septembre 2026, et elle est consignée plutôt que
   tue** : le report d'impression fait en partie (`decks/printing-sync.ts`) écrit dans le
   deck **sans** le détacher. C'est un choix — couper un deck de sa source parce qu'on a
-  changé une illustration serait une conséquence lourde pour un geste léger —, mais il
-  laisse intacte la conséquence que cette règle annonce : **une resynchronisation efface
-  le choix d'impression**, en silence. Toute autre écriture dans un `Deck` reste tenue
-  par la règle, et cette exception ne s'étend à rien d'autre.
+  changé une illustration serait une conséquence lourde pour un geste léger.
+  L'exception ne coûte plus ce que cette règle annonce : `DeckCard.printingPinned` fait
+  survivre le choix à la resynchronisation, et elle annonce combien d'impressions elle a
+  conservées. Toute autre écriture dans un `Deck` reste tenue par la règle, et cette
+  exception ne s'étend à rien d'autre.
 - La disposition des sièges est une fonction pure du `seatIndex`, identique sur
   tous les clients : c'est ce qui rend les curseurs interprétables.

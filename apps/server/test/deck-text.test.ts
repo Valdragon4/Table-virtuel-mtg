@@ -171,7 +171,10 @@ vi.mock('../src/decks/service.js', () => ({
     return deck && deck.userId === userId ? { ...deck, cards: [] } : null;
   },
   runImport: async ({ name }: { name?: string }) => ({ report: { ...emptyReport, deckName: name ?? 'x' }, source: 'TEXT' }),
-  persistImport: async (_outcome: unknown, options: { deckId?: string; userId: string; name?: string }) => {
+  persistImport: async (
+    _outcome: unknown,
+    options: { deckId?: string; userId: string; name?: string; preservePinnedPrintings?: boolean },
+  ) => {
     persisted.push(options);
     const deck = decks.get(options.deckId!);
     if (deck) {
@@ -179,7 +182,7 @@ vi.mock('../src/decks/service.js', () => ({
       deck.sourceUrl = null;
       deck.sourceDeckId = null;
     }
-    return options.deckId!;
+    return { deckId: options.deckId!, pinnedPrintingsKept: 0 };
   },
 }));
 
@@ -231,7 +234,15 @@ describe('propriété du deck', () => {
   it('laisse le propriétaire enregistrer', async () => {
     seed();
     await saveDeckFromText('deck-1', OWNER, 'Deck\n1 Sol Ring');
-    expect(persisted).toEqual([{ deckId: 'deck-1', userId: OWNER, name: 'Mon deck' }]);
+    /*
+     * `preservePinnedPrintings: false` fait partie du contrat de ce chemin : la
+     * liste envoyée par l'éditeur porte les éditions en clair, c'est **elle**
+     * qui décide des impressions. Y remettre une épingle rendrait impossible de
+     * retirer une illustration choisie en partie.
+     */
+    expect(persisted).toEqual([
+      { deckId: 'deck-1', userId: OWNER, name: 'Mon deck', preservePinnedPrintings: false },
+    ]);
   });
 });
 

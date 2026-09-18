@@ -140,6 +140,16 @@ model DeckCard {
   requestedCollectorNumber String?
   isFoil                  Boolean  @default(false)
   sortIndex               Int      @default(0)
+  /// Impression choisie à la main, le plus souvent en partie : une
+  /// resynchronisation depuis Archidekt ou Moxfield la conserve au lieu de la
+  /// remplacer par celle de la source. Même raisonnement que `playmatUrl` sur
+  /// le deck — la source externe ne connaît pas ce choix, elle n'a pas à le
+  /// décider. La source garde en revanche la main sur les **quantités** : une
+  /// épingle ne survit que dans la limite du nombre de copies annoncé.
+  ///
+  /// À défaut `false`, donc strictement additif : ce projet déploie par
+  /// `prisma db push --accept-data-loss`, sans migration versionnée.
+  printingPinned          Boolean  @default(false)
 
   deck Deck @relation(fields: [deckId], references: [id], onDelete: Cascade)
   card Card @relation(fields: [scryfallId], references: [scryfallId])

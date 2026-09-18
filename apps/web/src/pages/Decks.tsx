@@ -86,6 +86,27 @@ export function DecksPage(): React.ReactElement {
     }
   }
 
+  /**
+   * Rend les illustrations de ce deck à sa source.
+   *
+   * Aucune confirmation : rien ne se perd qu'on ne puisse refaire — le contenu
+   * du deck ne bouge pas, et rechanger l'impression en partie repose l'épingle.
+   * Les impressions elles-mêmes ne changent qu'à la prochaine
+   * resynchronisation, ce que l'infobulle du bouton annonce.
+   */
+  async function releasePinnedPrintings(id: string): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.del(`/api/decks/${id}/printing-pins`);
+      await refresh();
+    } catch (err) {
+      if (err instanceof ApiError) setError({ message: err.message, hint: err.hint });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="site site-floor min-h-screen">
       <header className="mx-auto flex max-w-[72rem] flex-wrap items-center justify-between gap-4 px-5 py-5 sm:px-8">
@@ -188,6 +209,20 @@ export function DecksPage(): React.ReactElement {
         {report && (
           <div className="mt-6">
             <ImportReportView report={report} />
+            {/*
+              Ce que la resynchronisation a gardé de nous. Une préservation
+              silencieuse s'explique mal trois mois plus tard, quand le deck ne
+              ressemble plus à sa source et qu'on ne sait plus pourquoi.
+
+              La phrase est ici et non dans `ImportReportView` : ce composant
+              rend le rapport de la **source**, et ceci n'en est pas — c'est ce
+              que nous avons décidé de garder contre elle.
+            */}
+            {report.pinnedPrintingsKept !== undefined && report.pinnedPrintingsKept > 0 && (
+              <p className="mt-3 text-[0.85rem] text-[color:var(--site-floor-dim)]">
+                {t('deck.pinnedKept', { count: report.pinnedPrintingsKept })}
+              </p>
+            )}
           </div>
         )}
 
@@ -285,6 +320,49 @@ export function DecksPage(): React.ReactElement {
                     </button>
                   </div>
                 </div>
+
+                {/*
+                  Les illustrations choisies à la main sur ce deck.
+
+                  On les **montre** avant de proposer de les rendre : chaque nom
+                  porte le même survol que les commandants juste au-dessus, donc
+                  l'illustration en jeu s'affiche dans l'aperçu — c'est elle
+                  qu'on s'apprête à perdre, et la voir vaut mieux que de la lire.
+
+                  Rien ne s'affiche tant qu'il n'y a rien d'épinglé, c'est-à-dire
+                  sur la quasi-totalité des decks : la ligne ne s'alourdit que
+                  pour ceux à qui la question se pose.
+                */}
+                {deck.pinnedPrintings.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span className="text-[0.78rem] text-[color:var(--site-floor-dim)]">
+                      {t('deck.pinnedPrintings', { count: deck.pinnedPrintings.length })} ·{' '}
+                      {deck.pinnedPrintings.map((printing, index) => (
+                        <span key={`${printing.scryfallId}-${index}`}>
+                          {index > 0 && ' · '}
+                          <span
+                            className="cursor-help underline decoration-dotted underline-offset-2"
+                            data-test="deck-pinned-printing"
+                            {...previewHoverProps(printing.scryfallId)}
+                          >
+                            {printing.name}
+                          </span>{' '}
+                          <span className="typed">{printing.setCode.toUpperCase()}</span>
+                        </span>
+                      ))}
+                    </span>
+                    <button
+                      className="floor-button px-2.5 py-1 text-[0.66rem]"
+                      data-testid={`deck-unpin-${deck.id}`}
+                      disabled={busy}
+                      onClick={() => void releasePinnedPrintings(deck.id)}
+                      title={t('deck.pinnedReleaseHint')}
+                      type="button"
+                    >
+                      {t('deck.pinnedRelease')}
+                    </button>
+                  </div>
+                )}
 
                 {styling === deck.id && (
                   <DeckLook
