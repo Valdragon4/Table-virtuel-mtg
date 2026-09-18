@@ -5023,6 +5023,134 @@ async function findDoubleFaced() {
 
     await page.screenshot({ path: `${OUT}/ui-15-nouveau-salon.png` });
   });
+
+  /*
+   * L'aperçu dans l'éditeur de deck, et la seule chose qu'on lui demande ici :
+   * **tenir dans la fenêtre**.
+   *
+   * Le défaut signalé était un débordement par le bas. Sa cause n'était pas le
+   * placement mais la *mesure* : la hauteur du panneau était constatée une fois,
+   * sur un panneau encore incomplet — l'image n'était pas chargée, donc haute de
+   * zéro, et la fiche de la carte n'était pas arrivée, donc ni bandeau de nom ni
+   * rangée de mécaniques. Le sommet était posé pour ce panneau-là, puis le
+   * panneau grandissait vers le bas, hors de l'écran.
+   *
+   * D'où la forme de l'étape. Elle ouvre l'éditeur dans une fenêtre **basse**,
+   * où il reste peu de place sous le sommet mal posé ; elle survole une carte
+   * **jamais survolée auparavant**, pour que l'image soit encore à charger — un
+   * second survol de la même carte ne prouve rien, l'élément a déjà ses
+   * dimensions ; et elle **attend que l'image soit chargée** avant de mesurer,
+   * puisque c'est le chargement qui faisait déborder. Enfin elle passe sur
+   * plusieurs cartes, dont une à mots-clés, parce que la rangée de mécaniques
+   * est le second morceau qui arrive en retard.
+   */
+  await step('éditeur de deck : l’aperçu au survol tient dans la fenêtre (fenêtre basse)', async () => {
+    // La bibliothèque de decks n'existe que pour un compte. On en crée un par
+    // l'API plutôt que par les formulaires : ce qui est vérifié ici est
+    // l'aperçu, pas l'inscription, qui a ses propres étapes.
+    const marque = Date.now().toString(36);
+    const compte = {
+      email: `recette-${marque}@exemple.test`,
+      password: `recette-${marque}-motdepasse`,
+      displayName: `Recette ${marque}`,
+    };
+    const inscription = await page.request.post(`${BASE}/api/auth/register`, { data: compte });
+    if (!inscription.ok()) throw new Error(`inscription refusée : ${inscription.status()}`);
+    const connexion = await page.request.post(`${BASE}/api/auth/login`, {
+      data: { email: compte.email, password: compte.password },
+    });
+    if (!connexion.ok()) throw new Error(`connexion refusée : ${connexion.status()}`);
+
+    /*
+     * Serra Angel porte deux mots-clés : c'est elle qui fait apparaître la
+     * rangée de mécaniques sous le bandeau de nom, donc le panneau le plus haut
+     * de la liste. Les autres servent de témoins sans mécanique.
+     */
+    const liste = [
+      '// Commander',
+      '1 Selenia, the Cursed Heart',
+      '',
+      '// Deck',
+      '1 Serra Angel',
+      '1 Sol Ring',
+      '1 Llanowar Elves',
+    ].join('\n');
+    const importation = await page.request.post(`${BASE}/api/decks/import`, {
+      data: { source: 'TEXT', text: liste, name: `Recette ${marque}` },
+    });
+    if (!importation.ok()) throw new Error(`import refusé : ${importation.status()}`);
+    const { deckId } = await importation.json();
+    if (!deckId) throw new Error('le deck n’a pas été enregistré');
+
+    // Une fenêtre basse : c'est la hauteur qui révèle le défaut, un grand écran
+    // laisse assez de place sous le sommet mal posé pour que rien ne se voie.
+    await page.setViewportSize({ width: 1280, height: 620 });
+    await page.goto(`${BASE}/decks`);
+    await page.locator(`[data-testid="deck-edit-${deckId}"]`).click({ timeout: 15000 });
+    await page.locator('[data-testid="deck-editor"]').waitFor({ timeout: 15000 });
+
+    const lignes = page.locator('[data-test="deck-row-card"]');
+    await lignes.first().waitFor({ timeout: 15000 });
+    const preview = page.locator('[data-test="card-preview"]');
+    const total = Math.min(await lignes.count(), 4);
+    if (total === 0) throw new Error('aucune carte dans l’éditeur');
+
+    for (let i = 0; i < total; i++) {
+      const ligne = await lignes.nth(i).boundingBox();
+      if (!ligne) continue;
+      // Sortir du survol entre deux cartes : sans ça, la seconde n'allume rien.
+      await page.mouse.move(1260, 10);
+      await page.waitForTimeout(120);
+      await page.mouse.move(ligne.x + 30, ligne.y + ligne.height / 2);
+      await preview.waitFor({ timeout: 8000 });
+
+      /*
+       * On attend explicitement l'image : c'est l'instant exact où le panneau
+       * grandissait sous un sommet déjà posé. Mesurer avant, c'est mesurer un
+       * panneau qui n'a pas encore débordé.
+       */
+      await preview
+        .locator('[data-test="card-preview-image"]')
+        .evaluate(
+          (el) =>
+            el.complete ||
+            new Promise((resolve) => {
+              el.addEventListener('load', resolve, { once: true });
+              el.addEventListener('error', resolve, { once: true });
+            }),
+          undefined,
+          { timeout: 15000 },
+        );
+      await page.waitForTimeout(250);
+
+      const boite = await preview.boundingBox();
+      const fenetre = page.viewportSize();
+      const debords = [];
+      if (boite.x < -0.5) debords.push(`gauche de ${Math.round(-boite.x)} px`);
+      if (boite.y < -0.5) debords.push(`haut de ${Math.round(-boite.y)} px`);
+      if (boite.x + boite.width > fenetre.width + 0.5) {
+        debords.push(`droite de ${Math.round(boite.x + boite.width - fenetre.width)} px`);
+      }
+      if (boite.y + boite.height > fenetre.height + 0.5) {
+        debords.push(`bas de ${Math.round(boite.y + boite.height - fenetre.height)} px`);
+      }
+      if (debords.length > 0) {
+        await page.screenshot({ path: `${OUT}/echec-apercu-editeur-hors-cadre.png` });
+        throw new Error(
+          `l’aperçu sort du cadre par le ${debords.join(', le ')} ` +
+            `(fenêtre ${fenetre.width}×${fenetre.height}, aperçu ` +
+            `${Math.round(boite.width)}×${Math.round(boite.height)} en ${Math.round(boite.x)},${Math.round(boite.y)})`,
+        );
+      }
+    }
+    console.log(`      ${total} carte(s) survolée(s) dans une fenêtre de 1280×620 : aperçu entier à l’écran`);
+    await page.screenshot({ path: `${OUT}/ui-31-apercu-editeur.png` });
+
+    // On referme, et l'on rend la fenêtre à sa taille : l'étape ne laisse rien
+    // derrière elle, même si elle est la dernière.
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 1600, height: 1000 });
+  });
 } catch (error) {
   failures += 1;
   console.log('ERREUR GLOBALE', String(error).slice(0, 400));

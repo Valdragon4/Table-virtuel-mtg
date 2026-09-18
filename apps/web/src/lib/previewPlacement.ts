@@ -176,3 +176,77 @@ export function hoveredCardRects(
   }
   return rects;
 }
+
+/*
+ * ------------------------------------------------------- la taille du panneau
+ */
+
+/**
+ * Plancher de l'illustration. En dessous, on ne lit plus rien : la réduire
+ * encore pour gagner vingt pixels de marge reviendrait à rendre l'aperçu
+ * inutile pour le sauver. Sous une fenêtre si basse — moins de 200 px — on
+ * assume que le panneau se colle au bord haut et dépasse en bas.
+ */
+export const MIN_PREVIEW_IMAGE_HEIGHT = 120;
+
+/**
+ * La place **réservée** sous l'illustration, qu'elle serve ou non.
+ *
+ * Elle n'est pas une estimation de la hauteur des bandeaux : c'est un créneau.
+ * Le panneau est ancré par le bas, si bien que tout ce qui s'ajoute dessous le
+ * fait grandir vers le haut — or ce qui s'ajoute arrive en retard, par lots :
+ * la fiche de la carte apporte d'abord le nom, puis les mécaniques. Sans
+ * réserve, le panneau remonterait de trente à soixante pixels une demi-seconde
+ * après être apparu, sous les yeux du joueur, et à chaque carte. On lui donne
+ * donc sa place tout de suite, une fois pour toutes.
+ *
+ * Soixante-huit pixels : le bandeau de nom et son écart (39), une rangée de
+ * mécaniques et le sien (29). Une carte qui en déborde — une rangée de
+ * mécaniques sur deux lignes — repousse le sommet d'autant : la mesure reste
+ * là pour ça, et c'est elle qui garantit qu'on ne sort jamais du cadre.
+ */
+export const PREVIEW_BANDS_RESERVE = 68;
+
+export interface PreviewBoxInput {
+  /** Hauteur souhaitée de l'illustration, déduite de la fenêtre. */
+  imageHeight: number;
+  /** Rapport largeur / hauteur d'une carte. */
+  ratio: number;
+  /** Hauteur **mesurée** de ce qui est peint sous l'illustration. */
+  bandsHeight: number;
+  viewport: { height: number };
+  margin: number;
+}
+
+/**
+ * Le créneau qu'occupera le panneau.
+ *
+ * Trois choses s'y jouent, et aucune n'est cosmétique.
+ *
+ * **La hauteur de l'illustration est imposée, pas constatée.** Elle reçoit une
+ * hauteur explicite, donc le panneau a sa taille définitive dès le premier
+ * rendu, avant même que l'image ne soit chargée. C'est exactement ce qui
+ * manquait : une mesure prise sur une `<img>` vide vaut zéro, le sommet se
+ * posait alors juste au-dessus du bord bas, et la carte tombait hors de l'écran
+ * dès que l'image arrivait.
+ *
+ * **Ce qui est sous l'image a sa place réservée**, pour que le panneau ne
+ * remonte pas quand la fiche de la carte rentre.
+ *
+ * **Et ce qui déborde de la réserve est mesuré**, pour que le cadre de la
+ * fenêtre reste tenu quoi qu'il arrive. Sur une fenêtre basse, c'est
+ * l'illustration qui rétrécit ; jamais le bandeau qui sort par le bas.
+ */
+export function previewBox(input: PreviewBoxInput): {
+  width: number;
+  height: number;
+  imageHeight: number;
+} {
+  const { imageHeight, ratio, bandsHeight, viewport, margin } = input;
+  const dessous = Math.max(PREVIEW_BANDS_RESERVE, bandsHeight);
+  const disponible = viewport.height - margin * 2 - dessous;
+  const image = Math.round(
+    Math.max(MIN_PREVIEW_IMAGE_HEIGHT, Math.min(imageHeight, disponible)),
+  );
+  return { width: Math.round(image * ratio), height: image + dessous, imageHeight: image };
+}

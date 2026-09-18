@@ -52,6 +52,7 @@ import {
   DEFAULT_PREVIEW_CORNER,
   choosePreviewCorner,
   hoveredCardRects,
+  previewBox,
   previewRect,
   type PreviewCorner,
 } from '../lib/previewPlacement.js';
@@ -142,40 +143,75 @@ export function CardPreview(): React.ReactElement | null {
    * la carte survolée change, l'aperçu rentre chez lui si rien ne l'en empêche.
    */
   /*
-   * La hauteur réellement occupée, mesurée, et non celle de l'illustration.
+   * La hauteur du panneau : imposée pour l'illustration, mesurée pour le reste.
    *
-   * Sous l'image, le panneau porte un bandeau — nom de la carte, coût de mana —
-   * qui n'entre dans aucun calcul si l'on se contente de `size.height`. Le
-   * placement posait donc le sommet trop bas et le bandeau débordait d'une
-   * vingtaine de pixels sous la fenêtre, à la table comme dans l'éditeur de
-   * deck. On mesure plutôt que d'ajouter une constante : un nom long passe à la
-   * ligne, et la hauteur n'est pas la même selon la carte survolée.
+   * L'ancienne version mesurait le panneau **entier**, une seule fois, dans un
+   * effet dont les dépendances ne couvraient que le changement de carte. Deux
+   * choses arrivent pourtant après cette mesure, et les deux le font grandir :
+   * l'image, qui n'a aucune dimension tant qu'elle n'est pas chargée — une
+   * `<img>` vide mesure zéro —, et la fiche de la carte, qui rentre par lots et
+   * fait alors apparaître le bandeau de nom puis la rangée de mécaniques. Le
+   * sommet avait été posé pour un panneau court ; il restait là pendant que le
+   * panneau s'allongeait vers le bas, hors de l'écran. D'où le « parfois » : au
+   * premier survol l'image n'est pas encore là, aux suivants l'élément garde
+   * les dimensions de la précédente et le défaut se cache.
    *
-   * Tant que rien n'est mesuré, on retombe sur la hauteur d'image : c'est
-   * l'ancien comportement, et il vaut mieux qu'un saut au premier rendu.
+   * On renverse donc la charge. L'illustration reçoit une hauteur **explicite**
+   * — elle est déjà connue, c'est `size.height` —, si bien que le panneau a sa
+   * taille définitive dès le premier rendu, chargé ou non. Seul ce qui est peint
+   * dessous se mesure, et un `ResizeObserver` s'en charge : c'est la seule
+   * manière d'apprendre qu'un lot de fiches vient d'ajouter une rangée.
+   *
+   * Cette mesure ne sert toutefois que de garde-fou. Le panneau étant ancré par
+   * le bas, s'y fier directement le ferait **remonter** sous les yeux du joueur
+   * à chaque fiche qui rentre ; `previewBox` réserve donc la place des bandeaux
+   * d'avance et ne consulte la mesure que lorsqu'elle la dépasse.
    */
-  const panelRef = useRef<HTMLDivElement>(null);
-  const [panelHeight, setPanelHeight] = useState<number | null>(null);
-  const boxed = { width: size.width, height: panelHeight ?? size.height };
+  const bandsRef = useRef<HTMLDivElement>(null);
+  const [bandsHeight, setBandsHeight] = useState(0);
+  const {
+    width: boxWidth,
+    height: boxHeight,
+    imageHeight,
+  } = previewBox({
+    imageHeight: size.height,
+    ratio: CARD_WIDTH / CARD_HEIGHT,
+    bandsHeight,
+    viewport,
+    margin: MARGIN,
+  });
+
+  useLayoutEffect(() => {
+    const node = bandsRef.current;
+    if (!node) {
+      setBandsHeight((current) => (current === 0 ? current : 0));
+      return;
+    }
+    const mesurer = (): void => {
+      const hauteur = node.getBoundingClientRect().height;
+      setBandsHeight((current) => (Math.abs(current - hauteur) < 0.5 ? current : hauteur));
+    };
+    mesurer();
+    // `ResizeObserver` manque à l'environnement de test, qui n'a pas de mise en
+    // page : l'absence d'observateur n'y change rien, la mesure initiale suffit.
+    if (typeof ResizeObserver === 'undefined') return;
+    const observateur = new ResizeObserver(mesurer);
+    observateur.observe(node);
+    return () => observateur.disconnect();
+  }, [shown]);
 
   const previewKey = preview?.scryfallId ?? null;
   useLayoutEffect(() => {
-    const measured = panelRef.current?.getBoundingClientRect().height ?? null;
-    if (measured !== null && measured > 0) {
-      setPanelHeight((current) =>
-        current !== null && Math.abs(current - measured) < 1 ? current : measured,
-      );
-    }
     const next = shown
       ? choosePreviewCorner({
-          size: { width: size.width, height: measured ?? size.height },
+          size: { width: boxWidth, height: boxHeight },
           viewport,
           margin: MARGIN,
           hovered: hoveredCardRects(hoveredId, lastPointer()),
         })
       : DEFAULT_PREVIEW_CORNER;
     setCorner((current) => (current === next ? current : next));
-  }, [shown, hoveredId, previewKey, size.width, size.height, viewport]);
+  }, [shown, hoveredId, previewKey, boxWidth, boxHeight, viewport]);
 
   if (!shown || !scryfallId || !source) return null;
 
@@ -215,9 +251,9 @@ export function CardPreview(): React.ReactElement | null {
     language,
   });
 
-  // `boxed` porte la hauteur **mesurée** du panneau, bandeau de nom compris ;
-  // `size` ne décrit que l'illustration et servirait à poser le sommet trop bas.
-  const rect = previewRect(corner, boxed, viewport, MARGIN);
+  // La boîte porte la hauteur du panneau **entier**, bandeaux compris ; `size`
+  // ne décrit que l'illustration et servirait à poser le sommet trop bas.
+  const rect = previewRect(corner, { width: boxWidth, height: boxHeight }, viewport, MARGIN);
 
   return (
     <div
@@ -232,10 +268,14 @@ export function CardPreview(): React.ReactElement | null {
       data-preview-corner={corner}
       data-preview-side={corner.endsWith('left') ? 'left' : 'right'}
       data-preview-source={source}
-      ref={panelRef}
       style={{ left: rect.left, top: rect.top, width: rect.width }}
     >
-      <div className="relative overflow-hidden rounded-[14px] bg-slate-950 shadow-2xl shadow-black/90 ring-1 ring-white/20 transition-all">
+      {/* Hauteur imposée au cadre : c'est elle qui rend la géométrie du panneau
+          indépendante du chargement de l'image. */}
+      <div
+        className="relative overflow-hidden rounded-[14px] bg-slate-950 shadow-2xl shadow-black/90 ring-1 ring-white/20 transition-all"
+        style={{ height: imageHeight }}
+      >
         {/* `relative` sur le cadre, pour que le repère se pose sur l'image et
             non sur la fenêtre : l'aperçu lui-même est `fixed`. */}
         {/* Même coin que sur la table — haut-gauche — pour qu'on le cherche au
@@ -246,7 +286,7 @@ export function CardPreview(): React.ReactElement | null {
         )}
         <img
           alt={shownName}
-          className="w-full object-cover rounded-[14px]"
+          className="h-full w-full object-cover rounded-[14px]"
           /*
            * Ancre explicite : le panneau contient aussi les symboles de mana,
            * qui sont des `<img>`. Un sélecteur « l'image de l'aperçu » en
@@ -259,39 +299,49 @@ export function CardPreview(): React.ReactElement | null {
           src={imageSrc}
         />
       </div>
-      {meta && (
-        <div className="mt-1.5 flex items-center justify-between gap-1.5 rounded-lg border border-slate-700/90 bg-slate-950/95 px-2.5 py-1 shadow-lg backdrop-blur-md">
-          <span className="truncate text-xs font-semibold text-slate-100">
-            {shownName}
-          </span>
-          {meta.manaCost && <ManaCost cost={meta.manaCost} size="md" />}
-        </div>
-      )}
       {/*
-        Les mécaniques en toutes lettres, et **ici seulement**.
+        Tout ce qui est peint sous l'illustration, dans un seul cadre mesuré.
 
-        Sur une vignette, la carte ne porte qu'une pastille de compte : les
-        cartes du rail de main se recouvrent, seule leur bande gauche reste
-        visible, et un mot français coupé en deux a l'air d'un autre mot. Un
-        chiffre supporte d'être lu de biais, pas « Piétinem… ».
-
-        L'aperçu agrandi, lui, a toute la largeur qu'il faut, et c'est
-        précisément l'écran qu'on ouvre pour lire la carte. Les noms non traduits
-        ressortent en anglais plutôt que d'être escamotés : un mot-clé absent du
-        glossaire doit se voir, pas disparaître.
+        `flex flex-col` n'est pas décoratif : dans un bloc ordinaire, la marge
+        haute du premier enfant s'échapperait du parent — les marges se fondent —
+        et la mesure perdrait les six pixels qui séparent le bandeau de l'image.
+        Un conteneur flex ne fond aucune marge.
       */}
-      {meta?.keywords && meta.keywords.length > 0 && (
-        <div
-          className="mt-1 flex flex-wrap gap-1 rounded-lg border border-slate-700/70 bg-slate-950/90 px-2 py-1 text-[10px] text-slate-300 shadow-lg backdrop-blur-md"
-          data-test="preview-keywords"
-        >
-          {meta.keywords.map((kw) => (
-            <span className="rounded bg-slate-800/80 px-1.5 py-0.5" key={kw}>
-              {keywordName(kw, language) ?? kw}
+      <div className="flex flex-col" ref={bandsRef}>
+        {meta && (
+          <div className="mt-1.5 flex items-center justify-between gap-1.5 rounded-lg border border-slate-700/90 bg-slate-950/95 px-2.5 py-1 shadow-lg backdrop-blur-md">
+            <span className="truncate text-xs font-semibold text-slate-100">
+              {shownName}
             </span>
-          ))}
-        </div>
-      )}
+            {meta.manaCost && <ManaCost cost={meta.manaCost} size="md" />}
+          </div>
+        )}
+        {/*
+          Les mécaniques en toutes lettres, et **ici seulement**.
+
+          Sur une vignette, la carte ne porte qu'une pastille de compte : les
+          cartes du rail de main se recouvrent, seule leur bande gauche reste
+          visible, et un mot français coupé en deux a l'air d'un autre mot. Un
+          chiffre supporte d'être lu de biais, pas « Piétinem… ».
+
+          L'aperçu agrandi, lui, a toute la largeur qu'il faut, et c'est
+          précisément l'écran qu'on ouvre pour lire la carte. Les noms non traduits
+          ressortent en anglais plutôt que d'être escamotés : un mot-clé absent du
+          glossaire doit se voir, pas disparaître.
+        */}
+        {meta?.keywords && meta.keywords.length > 0 && (
+          <div
+            className="mt-1 flex flex-wrap gap-1 rounded-lg border border-slate-700/70 bg-slate-950/90 px-2 py-1 text-[10px] text-slate-300 shadow-lg backdrop-blur-md"
+            data-test="preview-keywords"
+          >
+            {meta.keywords.map((kw) => (
+              <span className="rounded bg-slate-800/80 px-1.5 py-0.5" key={kw}>
+                {keywordName(kw, language) ?? kw}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

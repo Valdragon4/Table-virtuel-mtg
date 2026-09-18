@@ -10,7 +10,10 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PREVIEW_CORNER,
   choosePreviewCorner,
+  MIN_PREVIEW_IMAGE_HEIGHT,
+  PREVIEW_BANDS_RESERVE,
   overlapArea,
+  previewBox,
   previewRect,
   type Rect,
 } from '../src/lib/previewPlacement.js';
@@ -101,5 +104,86 @@ describe('choosePreviewCorner', () => {
     // haut-droit, la carte suivante doit ramener l'aperçu en bas à gauche.
     expect(choose([cardOn('bottom-left'), cardOn('bottom-right')])).toBe('top-right');
     expect(choose([{ left: 700, top: 400, width: 140, height: 200 }])).toBe('bottom-left');
+  });
+});
+
+/**
+ * La taille du panneau entier.
+ *
+ * C'est ici que se joue le défaut signalé : l'aperçu sortait par le bas de la
+ * fenêtre parce que sa hauteur était **constatée** sur un panneau encore
+ * incomplet — image non chargée, fiche pas encore arrivée — puis jamais
+ * reprise. La hauteur de l'illustration est maintenant imposée, et seule la
+ * hauteur des bandeaux entre en donnée. Ce que ces cas vérifient, c'est qu'à
+ * partir de cette donnée le panneau tient toujours dans la fenêtre.
+ */
+describe('previewBox', () => {
+  const RATIO = 166 / 230;
+  const box = (imageHeight: number, bandsHeight: number, height: number) =>
+    previewBox({ imageHeight, ratio: RATIO, bandsHeight, viewport: { height }, margin: MARGIN });
+
+  it('réserve la place des bandeaux, occupée ou non', () => {
+    const r = box(420, 0, 900);
+    expect(r.imageHeight).toBe(420);
+    expect(r.height).toBe(420 + PREVIEW_BANDS_RESERVE);
+    expect(r.width).toBe(Math.round(420 * RATIO));
+  });
+
+  it('ne bouge pas quand la fiche de la carte rentre', () => {
+    // Le défaut de placement qu'on protège ici : le panneau est ancré par le
+    // bas, donc tout ce qui s'ajoute dessous le ferait remonter. Le bandeau de
+    // nom, puis les mécaniques, arrivent une demi-seconde après l'aperçu.
+    const vide = box(420, 0, 900);
+    const nom = box(420, 33, 900);
+    const mecaniques = box(420, PREVIEW_BANDS_RESERVE, 900);
+    expect(nom.height).toBe(vide.height);
+    expect(mecaniques.height).toBe(vide.height);
+  });
+
+  it('cède du terrain quand les bandeaux débordent de la réserve', () => {
+    // Deux lignes de mécaniques : rare, mais le cadre de la fenêtre passe avant
+    // la stabilité du placement.
+    const r = box(420, PREVIEW_BANDS_RESERVE + 30, 900);
+    expect(r.height).toBe(420 + PREVIEW_BANDS_RESERVE + 30);
+  });
+
+  it('garde le rapport de la carte : la largeur suit l’illustration, pas le panneau', () => {
+    const r = box(420, 64, 900);
+    expect(r.width / r.imageHeight).toBeCloseTo(RATIO, 2);
+  });
+
+  it('rétrécit l’illustration plutôt que de laisser le panneau déborder', () => {
+    const r = box(420, 70, 300);
+    expect(r.height).toBeLessThanOrEqual(300 - 2 * MARGIN);
+    expect(r.imageHeight).toBeLessThan(420);
+  });
+
+  it('tient dans la fenêtre pour toute combinaison raisonnable', () => {
+    for (const hauteurFenetre of [280, 400, 620, 768, 900, 1440]) {
+      for (const bandeaux of [0, 28, 64, 96, 140]) {
+        const r = box(500, bandeaux, hauteurFenetre);
+        const rect = previewRect(
+          'bottom-left',
+          r,
+          { width: 1280, height: hauteurFenetre },
+          MARGIN,
+        );
+        expect(rect.top).toBeGreaterThanOrEqual(MARGIN);
+        // Le plancher de lisibilité a son propre cas, juste en dessous : ici on
+        // n'exerce que les fenêtres où réduire suffit encore.
+        if (r.imageHeight > MIN_PREVIEW_IMAGE_HEIGHT) {
+          expect(rect.top + rect.height).toBeLessThanOrEqual(hauteurFenetre - MARGIN);
+        }
+      }
+    }
+  });
+
+  it('s’arrête au plancher de lisibilité, et se colle alors au bord haut', () => {
+    // Une fenêtre de 180 px : rien ne tient. On réduit jusqu'au plancher, puis
+    // on assume le dépassement plutôt que de servir une vignette illisible.
+    const r = box(420, 70, 180);
+    expect(r.imageHeight).toBe(MIN_PREVIEW_IMAGE_HEIGHT);
+    const rect = previewRect('bottom-left', r, { width: 1280, height: 180 }, MARGIN);
+    expect(rect.top).toBe(MARGIN);
   });
 });
