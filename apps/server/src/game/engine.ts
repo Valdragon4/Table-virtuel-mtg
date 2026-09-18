@@ -59,7 +59,7 @@ export interface Emission {
   /** Construit l'event tel que ce siège a le droit de le voir. */
   build: (seat: SeatId) => Event;
   /** Ligne de journal, publique par construction : jamais de nom caché ici. */
-  log?: { text: string; cardIds: ObjectId[] };
+  log?: { text: string; cardIds: ObjectId[]; names?: string[] };
 }
 
 export interface UndoEntry {
@@ -180,10 +180,17 @@ function cardName(obj: GameObjectState): string {
   return obj.card.name;
 }
 
+/**
+ * Périphrase du journal pour une carte que la table n'a pas le droit
+ * d'identifier. Nommée parce qu'elle sort désormais aussi dans `LogEntry.names`,
+ * et que les deux endroits doivent dire le même mot.
+ */
+const CARTE_ANONYME = 'une carte';
+
 /** Nom utilisable en journal public : sinon, une périphrase neutre. */
 function publicName(obj: GameObjectState, state: GameState): string {
   const everyoneSees = [...state.seats.keys()].every((s) => canSeeIdentity(obj, s));
-  return everyoneSees ? cardName(obj) : 'une carte';
+  return everyoneSees ? cardName(obj) : CARTE_ANONYME;
 }
 
 /*
@@ -228,14 +235,22 @@ function publicName(obj: GameObjectState, state: GameState): string {
  * hors de sa portée, et l'oubli serait défait d'un coup d'œil au journal.
  * L'inclusion est donc volontairement plus large que l'énumération ; c'est le
  * sens sûr de l'écart.
+ *
+ * Le champ `all` est la **forme non abrégée de `names`** : exactement la même
+ * liste, dans le même ordre, avant que le seuil ne la coupe — les noms lisibles
+ * d'abord, puis une périphrase par carte que la table ne peut pas identifier.
+ * `all.slice(0, NAMED_LOG_LIMIT)` redonne donc mot pour mot ce que le texte
+ * énumère, et `all.length - NAMED_LOG_LIMIT` le « et N autres cartes ». Il ne
+ * dit rien de plus que la phrase : il dit la même chose sans replier. C'est à
+ * l'appelant de décider s'il le publie — voir `namesForLog`.
  */
 function namedBatch(
   objs: readonly GameObjectState[],
   state: GameState,
   to: ZoneKind,
-): { names: string; cardIds: ObjectId[] } | null {
+): { names: string; cardIds: ObjectId[]; all: string[] } | null {
   if (!isPublicZone(to)) return null;
-  const visible = objs.filter((o) => publicName(o, state) !== 'une carte');
+  const visible = objs.filter((o) => publicName(o, state) !== CARTE_ANONYME);
   if (visible.length === 0) return null;
 
   const shown = visible.slice(0, NAMED_LOG_LIMIT).map((o) => cardName(o));
@@ -251,7 +266,42 @@ function namedBatch(
   } else {
     names = `${shown.slice(0, -1).join(', ')} et ${shown[shown.length - 1]!}`;
   }
-  return { names, cardIds: visible.map((o) => o.id) };
+  const all = [
+    ...visible.map((o) => cardName(o)),
+    ...Array.from({ length: objs.length - visible.length }, () => CARTE_ANONYME),
+  ];
+  return { names, cardIds: visible.map((o) => o.id), all };
+}
+
+/**
+ * Faut-il publier la liste de noms dépliée sur cette ligne, et laquelle ?
+ *
+ * Le dépliage du client se reconstruit normalement depuis les **ancres** : il
+ * résout chaque `cardIds` dans son store. Deux conditions doivent tenir pour
+ * que ce chemin marche, et `CASCADE` est le seul endroit où la seconde tombe :
+ *
+ * 1. la ligne est abrégée — sinon le texte dit déjà tout, et il n'y a rien à
+ *    déplier ;
+ * 2. les ancres couvrent le lot entier — sinon le joueur lit « et N autres
+ *    cartes » et n'a **aucun** moyen d'apprendre lesquelles. C'est le défaut
+ *    que ce champ répare : après une cascade, les cartes reparties sous la
+ *    bibliothèque ont changé d'`ObjectId` (§2.1) et n'existent plus chez
+ *    personne ; leurs ancres sont volontairement omises, parce qu'une ancre
+ *    morte promettrait un survol qui ne surligne rien.
+ *
+ * Hors de ce cas on rend `undefined`, et c'est délibéré : `logTail` recopie
+ * deux cents entrées dans **chaque** snapshot, et une liste de noms sur chaque
+ * ligne multi-cartes serait un coût permanent payé pour une information que le
+ * client sait déjà reconstituer.
+ *
+ * Aucune décision de confidentialité ne se prend ici : `all` sort de
+ * `namedBatch`, donc de `publicName`, donc il ne contient que ce que le texte
+ * de la même ligne contient déjà.
+ */
+function namesForLog(all: readonly string[], anchors: readonly ObjectId[]): string[] | undefined {
+  if (all.length <= NAMED_LOG_LIMIT) return undefined;
+  if (anchors.length >= all.length) return undefined;
+  return [...all];
 }
 
 /**
@@ -1540,6 +1590,7 @@ export {
   detachDependents,
   moveEmission,
   namedBatch,
+  namesForLog,
   objectOf,
   publicName,
   relocate,

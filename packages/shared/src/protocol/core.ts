@@ -323,6 +323,36 @@ export interface LogEntry {
   /** Texte déjà construit côté serveur, avec ses ancres de carte. */
   text: string;
   cardIds: ObjectId[];
+  /**
+   * Noms du lot, dans l'ordre du geste, **quand les ancres ne suffisent pas à
+   * les retrouver**.
+   *
+   * Le dépliage d'une ligne abrégée se reconstruit d'ordinaire depuis
+   * `cardIds` : le client résout chaque identifiant dans son store. Ce chemin
+   * suppose que les cartes du lot ont encore un identifiant publié — ce qui est
+   * vrai partout sauf pour `CASCADE`, où tout ce qui repart sous la
+   * bibliothèque voit son `ObjectId` réattribué (§2.1) et disparaît des
+   * clients. Sans cette liste, le joueur lirait « … et 3 autres cartes » sans
+   * aucun moyen de savoir lesquelles, alors que le serveur les a nommées pour
+   * écrire la phrase juste au-dessus.
+   *
+   * **Elle ne publie rien de plus que `text`.** Chaque entrée est le résultat
+   * de `publicName` sur la même carte, au même instant et dans la même zone
+   * d'arrivée : un nom que le texte aurait tu y figure comme « une carte », et
+   * le compte reste le seul fait révélé. Elle est donc publique au même titre
+   * que le texte, ce que le journal est de toute façon pour toute la table
+   * (§5.4).
+   *
+   * **Facultative, et volontairement rare.** `logTail` recopie deux cents
+   * entrées dans chaque snapshot : une liste de noms sur chaque ligne
+   * multi-cartes serait payée par tout le monde, pour rien. Le serveur ne la
+   * remplit que lorsque la ligne est abrégée *et* que ses ancres ne couvrent
+   * pas le lot entier. Ailleurs, le client déplie depuis `cardIds` comme avant.
+   *
+   * Ajout **facultatif** : un client antérieur l'ignore, et `PROTOCOL_VERSION`
+   * n'a donc pas bougé.
+   */
+  names?: string[];
 }
 
 /**

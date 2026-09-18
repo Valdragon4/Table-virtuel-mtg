@@ -204,7 +204,23 @@ export class ReplayRecorder {
   }
 }
 
-/** Une ligne de journal se recopie telle quelle : elle est publique (§5.4). */
+/**
+ * Une ligne de journal se recopie telle quelle : elle est publique (§5.4).
+ *
+ * `names` compris, et il le faut : sans lui, une cascade longue relue en replay
+ * afficherait « et 3 autres cartes » sans pouvoir se déplier, là où elle se
+ * dépliait en direct. Les cartes remises sous la bibliothèque ont perdu leurs
+ * identifiants — c'est l'anti-corrélation (§2.1) — donc le dépliage ne tient
+ * qu'à cette liste de noms.
+ *
+ * Rien de secret n'y entre : ce sont les noms que le texte de la même ligne
+ * publiait déjà, et les ancres ont été triées en amont, dans `commit`.
+ */
 export function logOf(entry: LogEntry | undefined): ReplayFrame['log'] {
-  return entry ? { text: entry.text, cardIds: entry.cardIds } : undefined;
+  if (!entry) return undefined;
+  return {
+    text: entry.text,
+    cardIds: entry.cardIds,
+    ...(entry.names ? { names: entry.names } : {}),
+  };
 }

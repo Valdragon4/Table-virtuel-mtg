@@ -33,7 +33,7 @@ export interface ServerEvent {
    * public par construction : le serveur n'y met jamais le nom d'une carte que
    * tous les sièges ne peuvent pas voir.
    */
-  log?: { text: string; cardIds: string[] };
+  log?: { text: string; cardIds: string[]; names?: string[] };
 }
 export interface ServerAck { t: 'ack'; cid: string; seq: Seq | null }
 export interface ServerReject { t: 'reject'; cid: string; code: ErrorCode; message: string }

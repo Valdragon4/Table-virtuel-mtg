@@ -392,7 +392,10 @@ describe('le journal reste dans la langue du serveur, et c’est délibéré', (
 
   it('lit le seuil dans `@mtg/shared`, sans le recopier', () => {
     expect(code).toContain("NAMED_LOG_LIMIT, type CardView, type ObjectId } from '@mtg/shared'");
-    expect(code).toContain('cardIds.length > NAMED_LOG_LIMIT');
+    // Le seuil s'applique au **lot**, pas aux seules ancres : une cascade n'en
+    // laisse qu'une pour neuf cartes, et compter les ancres ferait disparaître
+    // le bouton exactement là où il sert (§5.4, `LogEntry.names`).
+    expect(code).toContain('(names ?? cardIds).length > NAMED_LOG_LIMIT');
   });
 
   it('dérive les noms dans un `useMemo`, jamais dans un sélecteur', () => {

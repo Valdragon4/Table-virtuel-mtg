@@ -163,6 +163,50 @@ describe('les libellés et la liste courante', () => {
   });
 });
 
+describe('la pastille de la vignette, et l’infobulle qu’elle ne double pas', () => {
+  const sprite = (): string => source('components/CardSprite.tsx');
+
+  it('ne remet pas les mécaniques dans le `title` du navigateur', () => {
+    /*
+     * C'était le défaut signalé : une boîte jaune en police d'OS, une seconde
+     * après que l'aperçu agrandi a montré les mêmes noms proprement. Le `title`
+     * de la vignette est redevenu le seul nom de la carte.
+     */
+    expect(sprite()).toContain("title={known ? shownName : 'Carte face cachée'}");
+    expect(sprite()).not.toContain('keywordsTitle');
+  });
+
+  it('laisse l’aperçu agrandi porter les noms en toutes lettres', () => {
+    // Un seul panneau au survol, et c'est celui qui sait se placer.
+    expect(source('components/CardPreview.tsx')).toContain('preview-keywords');
+    expect(source('components/CardPreview.tsx')).toContain('keywordName(');
+  });
+
+  it('s’ouvre au doigt, sans amorcer le glisser-déposer', () => {
+    /*
+     * `startCardDrag` est branché sur le `onPointerDown` de la vignette dans
+     * `Hand`, `Table` et `ZonePanel` : arrêter la propagation du `pointerdown`
+     * est ce qui rend la pastille cliquable sans rendre la carte immobile.
+     * C'est le contrat que `CounterBadge` tient déjà.
+     */
+    const bloc = sprite().slice(sprite().indexOf('function KeywordBadges('));
+    const corps = bloc.slice(0, bloc.indexOf('export function CardSprite('));
+    expect(corps).toContain('onPointerDown={(event) => event.stopPropagation()}');
+    expect(corps).toContain('onDoubleClick={(event) => event.stopPropagation()}');
+    expect(corps).toContain('openDialog(');
+    // Le clic droit n'est **pas** intercepté : il doit continuer d'ouvrir le
+    // menu de la carte, comme partout ailleurs.
+    expect(corps).not.toContain('onContextMenu');
+  });
+
+  it('ne met dans le dialogue que des noms, jamais une règle', () => {
+    const bloc = sprite().slice(sprite().indexOf('function KeywordBadges('));
+    const corps = bloc.slice(0, bloc.indexOf('export function CardSprite('));
+    expect(corps).toContain('keywordName(kw, language)');
+    expect(corps).toContain('Affichage seulement');
+  });
+});
+
 describe('ce que ce glossaire ne doit jamais devenir', () => {
   it('ne porte que des noms : aucun texte de règles', () => {
     const code = source('lib/i18n/keywordNames.ts');

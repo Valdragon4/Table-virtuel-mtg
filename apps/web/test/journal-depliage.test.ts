@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { NAMED_LOG_LIMIT, type CardView, type ObjectId } from '@mtg/shared';
-import { estAbregee, nomsDesCartes } from '../src/components/ActionLog.js';
+import { estAbregee, nomsDeplies, nomsDesCartes } from '../src/components/ActionLog.js';
 
 const zone = { seat: 'seat_0', kind: 'BATTLEFIELD' as const };
 
@@ -134,5 +134,74 @@ describe('dépliage d’une ligne de journal abrégée', () => {
 
     expect(noms.filter((n) => n.startsWith('SECRET:'))).toEqual(['SECRET:sf-1']);
     expect(noms.slice(1)).toEqual(Array.from({ length: 6 }, () => 'une carte'));
+  });
+});
+
+/**
+ * Déplier une ligne qui n'a plus d'ancres.
+ *
+ * Une cascade exile face visible puis renvoie tout sous la bibliothèque sous un
+ * identifiant neuf : le store ne contient plus ces cartes, et il ne reste
+ * qu'une ancre pour neuf. Le dépliage ne peut donc pas se reconstruire depuis
+ * `cardIds` — le serveur publie la liste, parce que le dépliage sert à **lire
+ * des noms**, pas à survoler des cartes.
+ */
+describe('dépliage d’une ligne sans ancres (cascade)', () => {
+  /** La ligne telle que le serveur l'écrit : une ancre, neuf noms. */
+  const cascade = {
+    cardIds: ['exil-1'],
+    names: [
+      'Vue 1',
+      'Vue 2',
+      'Vue 3',
+      'Vue 4',
+      'Vue 5',
+      'Vue 6',
+      'Vue 7',
+      'Vue 8',
+      'Trouvée',
+    ],
+  };
+
+  it('juge la ligne dépliable sur le lot, pas sur le nombre d’ancres', () => {
+    // Compter les ancres donnerait 1 : le bouton disparaîtrait exactement là
+    // où il sert.
+    expect(estAbregee(cascade.cardIds)).toBe(false);
+    expect(estAbregee(cascade.cardIds, cascade.names)).toBe(true);
+    // Et une liste qui tient dans la phrase ne se déplie pas : le texte l'a
+    // déjà dite en entier.
+    expect(estAbregee(['a'], ['Vue 1', 'Vue 2'])).toBe(false);
+    expect(estAbregee([], Array.from({ length: NAMED_LOG_LIMIT }, () => 'X'))).toBe(false);
+  });
+
+  it('rend les neuf noms alors que le store n’en connaît qu’un', () => {
+    // Les huit autres ont changé d'identifiant en repartant sous la
+    // bibliothèque : le store ne peut rien en dire, et c'est bien le problème.
+    const cards = new Map<ObjectId, CardView>([['exil-1', visible('exil-1', 'sf-1')]]);
+    expect(nomsDeplies(cascade, cards, nomDeMeta)).toEqual(cascade.names);
+  });
+
+  it('retombe sur les ancres dès que le serveur ne publie pas de liste', () => {
+    // Le chemin normal reste le chemin normal : rien n'a changé pour les lignes
+    // dont les ancres couvrent le lot, et on ne paie pas de liste pour elles.
+    const cards = new Map<ObjectId, CardView>([
+      ['o1', visible('o1', 'sf-1')],
+      ['o2', cachee('o2')],
+    ]);
+    expect(nomsDeplies({ cardIds: ['o1', 'o2'] }, cards, nomDeMeta)).toEqual([
+      'Serra Paragon',
+      'une carte',
+    ]);
+  });
+
+  it('n’invente rien : la liste affichée est exactement celle reçue', () => {
+    // Le serveur a déjà passé chaque nom par `publicName`, et une carte que la
+    // table ne pouvait pas identifier y arrive en périphrase. Le client la
+    // recopie telle quelle — pas de complément par le cache, pas de filtrage.
+    const muette = { cardIds: [], names: ['Vue 1', 'une carte', 'une carte'] };
+    const omniscient = (id: string): string => `SECRET:${id}`;
+    const noms = nomsDeplies(muette, new Map(), omniscient);
+    expect(noms).toEqual(['Vue 1', 'une carte', 'une carte']);
+    expect(noms.some((n) => n.startsWith('SECRET:'))).toBe(false);
   });
 });

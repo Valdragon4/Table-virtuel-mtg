@@ -784,6 +784,12 @@ export function applyIntentPart2(
         names.push(obj.card.name);
         // Le journal est public : il ne cite que les objets que tout le monde
         // a le droit de connaître, et jamais un objet de bibliothèque.
+        //
+        // `commit` applique désormais la même condition à **toutes** les lignes
+        // (`ancresPubliables`, §5.4) : ce test-ci est donc redondant, et on le
+        // garde tel quel. Il dit sur place ce que la révélation à des sièges
+        // nommés a de particulier — l'ancre ne suit pas l'audience de l'event —,
+        // et une garde de trop ne coûte rien là où une garde manquante fuit.
         if (canSeeIdentity(obj, seatId) && [...state.seats.keys()].every((x) => obj.knownTo.has(x))) {
           publicAnchors.push(id);
         }

@@ -1512,12 +1512,50 @@ const COIN_HAUT_GAUCHE = ['top-1', 'top-6', 'top-11', 'top-16'] as const;
  * tronqués par la bande visible, qui fait à peine soixante pixels. Un mot
  * français coupé est pire qu'un chiffre : il a l'air d'un autre mot.
  *
- * Donc **une pastille de compte sur la carte, et les noms traduits en entier
- * dans l'infobulle**, que `CardSprite` compose. On lit « cette carte a six
- * mécaniques » d'un coup d'œil, et « Vol · Vigilance · Initiative · Protection ·
- * Célérité · Piétinement » en s'arrêtant dessus. Le filtre textuel des panneaux
- * de zone, de la fouille et de l'éditeur de deck couvre l'autre besoin, celui de
+ * Donc **une pastille de compte sur la carte**, et les noms en toutes lettres
+ * là où la place existe vraiment : l'**aperçu agrandi** (`CardPreview.tsx`), qui
+ * s'ouvre au survol de cette même carte. Le filtre textuel des panneaux de zone,
+ * de la fouille et de l'éditeur de deck couvre l'autre besoin, celui de
  * retrouver toutes les cartes qui portent une mécanique donnée.
+ *
+ * ## Pourquoi il n'y a **pas** d'infobulle rendue ici
+ *
+ * On a demandé une vraie infobulle, en remplacement de celle du système — police
+ * d'OS, fond jaunâtre, une seconde d'attente — que cette pastille déclenchait via
+ * un `title`. La capture a montré autre chose : au survol d'un permanent,
+ * l'aperçu agrandi est **déjà** à l'écran, instantané, et il porte désormais les
+ * noms de mécaniques en pastilles, dans le vocabulaire visuel du projet. Une
+ * infobulle ancrée à la carte aurait dit exactement la même chose, au même
+ * moment, à trois cents pixels de là.
+ *
+ * L'aperçu fait même mieux, et c'est ce qui a tranché : il montre la carte
+ * imprimée, donc le texte de règles complet ; `previewPlacement.ts` lui interdit
+ * de sortir de la fenêtre **et** de recouvrir la carte survolée, ce qu'une
+ * infobulle ancrée à un permanent de la rangée basse n'aurait pas su faire sans
+ * qu'on réécrive ce calcul ; il s'efface pendant un glissement ; et il est inerte
+ * au pointeur. Les quatre exigences étaient déjà tenues, par du code déjà écrit
+ * et déjà éprouvé.
+ *
+ * Ce qui restait à corriger était donc le **doublon**, pas l'absence : le `title`
+ * de la vignette ne porte plus la liste des mécaniques, il est redevenu le seul
+ * nom de la carte, comme avant ce chantier. Plus de boîte jaune une seconde après
+ * le panneau.
+ *
+ * ## Le doigt
+ *
+ * Il n'y a pas de survol sur une tablette, et un `title` ne s'y est jamais
+ * affiché : le détail n'y était donc **pas** accessible avant, et le retirer ne
+ * régresse rien. Mais il manquait, alors la pastille s'ouvre au **clic**. C'est
+ * le seul endroit de ce fichier qui capte le pointeur, et il le fait comme
+ * `CounterBadge` le fait depuis toujours : `pointerdown` arrêté — sans quoi le
+ * geste amorcerait le glisser-déposer, `startCardDrag` étant branché sur le
+ * `onPointerDown` de la vignette dans les trois zones qui en posent un (`Hand`,
+ * `Table`, `ZonePanel`) —, `click` arrêté et annulé, double-clic arrêté pour ne
+ * pas engager le permanent. Le clic **droit** n'est pas intercepté : il ouvre le
+ * menu de la carte, comme partout ailleurs.
+ *
+ * Ce clic n'ouvre pas une surface flottante de plus : il passe par `openDialog`,
+ * qui se place, se ferme et se pilote au clavier tout seul.
  *
  * ## Où elle se pose
  *
@@ -1526,28 +1564,49 @@ const COIN_HAUT_GAUCHE = ['top-1', 'top-6', 'top-11', 'top-16'] as const;
  * quelles que soient la zone et la taille de la main. Le haut-droit porte la
  * marque de jeton, et tout le bas appartient aux marqueurs, qui débordent vers le
  * bas et s'étalent sur la largeur.
- *
- * Elle est inerte au pointeur, comme tous les repères de ce fichier : une
- * pastille qui capterait le clic amorcerait le glisser-déposer du permanent, ou
- * pire, l'avalerait. C'est aussi pourquoi le détail est sur l'infobulle de la
- * **carte** et non sur la pastille, où aucun `title` ne s'afficherait jamais.
  */
 function KeywordBadges({
   keywords,
   language,
   className,
+  cardName,
 }: {
   keywords: readonly string[];
   language: Language;
   className: string;
+  cardName: string;
 }): React.ReactElement | null {
   if (keywords.length === 0) return null;
+  const noms = keywords.map((kw) => keywordName(kw, language) ?? kw);
+  const liste = noms.join(' · ');
   return (
-    <span
-      className={`pointer-events-none absolute left-1 inline-flex items-center gap-px rounded bg-slate-950/85 px-1 py-0.5 text-[8px] font-bold leading-none text-teal-200 ring-1 ring-teal-400/50 ${className}`}
+    <button
+      className={`absolute left-1 inline-flex cursor-pointer items-center gap-px rounded bg-slate-950/85 px-1 py-0.5 text-[8px] font-bold leading-none text-teal-200 ring-1 ring-teal-400/50 hover:ring-2 hover:ring-teal-200/80 ${className}`}
       data-test="card-keywords"
       data-keyword-count={String(keywords.length)}
-      data-keywords={keywords.map((kw) => keywordName(kw, language) ?? kw).join(' · ')}
+      data-keywords={liste}
+      onClick={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        void openDialog({
+          title: `Mécaniques de « ${cardName} »`,
+          /*
+           * Des **noms**, et rien d'autre : pas un mot de ce que la mécanique
+           * fait. C'est l'invariant du glossaire (`lib/i18n/keywordNames.ts`),
+           * et c'est aussi ce qui garantit qu'aucun texte de règles n'est
+           * recopié ici. Un mot-clé absent du glossaire ressort en anglais
+           * plutôt que d'être escamoté.
+           */
+          description: `${liste}. Affichage seulement : rien n’est appliqué à la partie.`,
+          submitLabel: 'Fermer',
+          // Pas de bouton secondaire : « Annuler » à côté de « Fermer »
+          // demanderait au lecteur ce qu'il annule, et la réponse est rien.
+          readOnly: true,
+        });
+      }}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      type="button"
     >
       {/* Le losange dit « mécanique » et tient à la taille où la pastille est
           encore lisible — un mot n'y tiendrait pas. */}
@@ -1555,7 +1614,7 @@ function KeywordBadges({
         <path d="M4 .8 7.2 4 4 7.2.8 4Z" stroke="currentColor" strokeWidth="1.3" />
       </svg>
       <span className="tabular-nums">{keywords.length}</span>
-    </span>
+    </button>
   );
 }
 
@@ -1651,25 +1710,21 @@ export function CardSprite({
     (card.faceDown === false && card.facedownOnTable ? 1 : 0) + (revealed !== null ? 1 : 0);
 
   /*
-   * Les mécaniques de la carte, pour la pastille et pour l'infobulle.
+   * Les mécaniques de la carte, pour la pastille.
    *
    * Une carte dont l'identité nous est cachée n'en a aucune **pour nous** : on
    * ne connaît pas son identifiant, donc rien ne peut fuiter par ce chemin. Un
    * `keywords` absent ou `null` — ligne de catalogue jamais ré-ingérée — se lit
    * « on ne sait pas », et se traite comme « aucun » à l'affichage : on ne
    * montre pas une pastille pour dire qu'on ignore quelque chose.
+   *
+   * **Elles ne vont plus dans le `title`.** Elles y étaient, et c'était le
+   * défaut : le navigateur en faisait une boîte jaune en police d'OS, une
+   * seconde après que l'aperçu agrandi a montré les mêmes noms proprement. Deux
+   * panneaux qui disent la même chose valent moins qu'un seul bien placé, et le
+   * mauvais des deux est celui qu'on ne peut pas mettre en forme.
    */
   const keywords = known ? (meta?.keywords ?? []) : [];
-  /*
-   * Le détail au survol, sur **l'infobulle de la carte** plutôt que sur la
-   * pastille : les repères de ce fichier sont inertes au pointeur, et un `title`
-   * posé dessus ne s'afficherait donc jamais. Le rendre ici le fait marcher
-   * partout, y compris là où la pastille n'est qu'un chiffre.
-   */
-  const keywordsTitle =
-    keywords.length > 0
-      ? ` — ${keywords.map((kw) => keywordName(kw, language) ?? kw).join(' · ')}`
-      : '';
 
   return (
     <div
@@ -1693,7 +1748,7 @@ export function CardSprite({
       }
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      title={known ? `${shownName}${keywordsTitle}` : 'Carte face cachée'}
+      title={known ? shownName : 'Carte face cachée'}
     >
       {card.faceDown === false && imageSrc ? (
         <img
@@ -1828,6 +1883,7 @@ export function CardSprite({
           COIN_HAUT_GAUCHE[coinsOccupes + (languageMark ? 1 : 0)] ??
           COIN_HAUT_GAUCHE[COIN_HAUT_GAUCHE.length - 1]!
         }
+        cardName={shownName}
         keywords={keywords}
         language={language}
       />

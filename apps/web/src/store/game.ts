@@ -535,6 +535,9 @@ export function handleMessage(message: ServerMessage, set: Setter, get: Getter):
           actor: message.actor,
           text: message.log.text,
           cardIds: message.log.cardIds,
+          // Facultatif, et rare : seules les lignes dont les ancres ne couvrent
+          // pas le lot le portent (cascade). Cf. `LogEntry.names`.
+          ...(message.log.names ? { names: message.log.names } : {}),
         };
         set({ log: [...get().log.slice(-400), entry] });
       }

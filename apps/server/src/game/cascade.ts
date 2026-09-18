@@ -34,6 +34,7 @@ import {
   assertZoneNotLocked,
   moveEmission,
   namedBatch,
+  namesForLog,
   objectOf,
   publicName,
   reassignId,
@@ -259,6 +260,27 @@ export function resolveCascade(
    * contraire. Le texte, lui, garde les noms : la table les a vus.
    */
   const anchors: ObjectId[] = stopped ? [stopped.obj.id] : [];
+
+  /*
+   * ...et c'est précisément pour cela que la ligne porte la **liste dépliée**.
+   *
+   * Sans ancres, le client ne peut rien reconstituer : une cascade de neuf
+   * cartes affichait six noms, « et 3 autres cartes », et le joueur n'avait
+   * aucun moyen de lire les trois dernières. Le dépliage sert à **lire des
+   * noms**, pas à survoler des cartes ; les ancres sont le bonus qui permet de
+   * surligner sur la table, elles ne peuvent pas être la condition pour savoir
+   * ce qui est passé.
+   *
+   * Ce que l'on publie ici est licite pour une raison précise, et elle ne se
+   * généralise pas : ces cartes ont été exilées **face visible** avant de
+   * repartir sous la bibliothèque. Toute la table les a vues, la connaissance
+   * est monotone (§5.2), et la phrase juste au-dessus les nomme déjà. On ne
+   * lit donc jamais une bibliothèque — `revealed` a été relevé en phase 2,
+   * pendant que les cartes étaient à l'exil, et `namedBatch` y a jugé sur la
+   * zone d'arrivée publique. Après la phase 3 il refuserait de nommer, et il
+   * aurait raison.
+   */
+  const names = revealed ? namesForLog(revealed.all, anchors) : undefined;
   // Le verbe suit le mot-clé choisi : « cascade » et « découvre » ne sont pas
   // la même comparaison, et le journal ne doit pas les confondre.
   const verb = intent.compare === 'BELOW' ? 'cascade' : 'découvre';
@@ -291,7 +313,10 @@ export function resolveCascade(
    * n'ajouterait qu'un event vide à la séquence de tout le monde.
    */
   const first = emissions[0];
-  if (first) first.log = { text: `${opening} : ${seen}${outcome}${putBack}`, cardIds: anchors };
+  if (first) {
+    first.log = { text: `${opening} : ${seen}${outcome}${putBack}`, cardIds: anchors };
+    if (names) first.log.names = names;
+  }
   emissions.push(zoneCount(state, library), zoneCount(state, exile));
 
   /*

@@ -33,7 +33,7 @@ export interface ReplayFrame {
    * doit rendre ce que ce siège a reçu, y compris ses silences.
    */
   audience: Audience;
-  log?: { text: string; cardIds: ObjectId[] };
+  log?: { text: string; cardIds: ObjectId[]; names?: string[] };
   /**
    * `knownTo` complet des objets cités par l'event, **au moment de l'émission**.
    * C'est la seule chose qui permette de rejouer la monotonie de la
@@ -121,7 +121,7 @@ export interface ReplayPage {
     at: number;
     actor: SeatId | null;
     event: Event;
-    log?: { text: string; cardIds: ObjectId[] };
+    log?: { text: string; cardIds: ObjectId[]; names?: string[] };
   }>;
   /** Vrai s'il reste des pas au-delà de cette page. */
   more: boolean;

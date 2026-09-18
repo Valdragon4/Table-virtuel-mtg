@@ -16,16 +16,23 @@ import { useT } from '../lib/i18n/index.js';
 const CARTE_ANONYME = 'une carte';
 
 /**
- * Une ligne est dépliable quand elle ancre plus de cartes que le serveur n'en
- * nomme. Déduit des seuls identifiants, donc valable pour tous les assembleurs
- * (`UNTAP_ALL`, `TAP`, `MILL`, `EXILE_TOP`, déplacements…) et dans toutes les
- * langues.
+ * Une ligne est dépliable quand elle porte plus de cartes que le serveur n'en
+ * nomme. Déduit du **lot**, jamais du texte : l'abréviation est une phrase
+ * traduisible, la découper casserait à la première langue ajoutée.
+ *
+ * Le lot se lit à deux endroits, et `names` passe devant quand il est là.
+ * D'ordinaire ce sont les ancres qui le décrivent — vrai pour tous les
+ * assembleurs (`UNTAP_ALL`, `TAP`, `MILL`, `EXILE_TOP`, déplacements…). Mais une
+ * cascade renvoie ses cartes sous la bibliothèque sous un identifiant neuf : il
+ * ne reste qu'une ancre pour neuf cartes, et compter les ancres ferait croire
+ * que la ligne n'a rien à déplier alors qu'elle abrège trois noms. Le serveur
+ * publie alors la liste, et c'est elle qui dit la taille du lot.
  *
  * Le seuil est celui que le serveur applique, lu dans `@mtg/shared` : les deux
  * côtés ne peuvent plus dériver l'un de l'autre.
  */
-export function estAbregee(cardIds: readonly ObjectId[]): boolean {
-  return cardIds.length > NAMED_LOG_LIMIT;
+export function estAbregee(cardIds: readonly ObjectId[], names?: readonly string[]): boolean {
+  return (names ?? cardIds).length > NAMED_LOG_LIMIT;
 }
 
 /**
@@ -72,6 +79,37 @@ export function nomsDesCartes(
     if (!vue || vue.faceDown) return CARTE_ANONYME;
     return nomDeMeta(vue.scryfallId) ?? CARTE_ANONYME;
   });
+}
+
+/**
+ * Ce qu'une ligne dépliée affiche, quelle que soit la façon dont le serveur l'a
+ * décrite.
+ *
+ * **Déplier, c'est lire des noms — pas survoler des cartes.** Les ancres restent
+ * le chemin normal, et le survol de la ligne continue de surligner sur la table
+ * ce qui en a encore une ; mais elles ne peuvent pas être la *condition* pour
+ * savoir ce qui est passé. Une cascade réattribue l'identifiant de tout ce
+ * qu'elle renvoie sous la bibliothèque (§2.1) : ces cartes n'existent plus dans
+ * le store, et les résoudre par ancre ne rendrait que des « une carte ». Le
+ * serveur publie donc la liste dépliée pour ces lignes-là (`LogEntry.names`), et
+ * c'est elle qui fait foi quand elle est présente.
+ *
+ * **Ce n'est pas un contournement de l'invariant de visibilité.** La règle est
+ * que le client n'invente jamais une identité : il n'a le droit d'afficher que
+ * ce que le serveur lui a envoyé. `names` est envoyé par le serveur, filtré par
+ * le même `publicName` que le texte de la ligne, et une carte que la table ne
+ * pouvait pas identifier y figure déjà comme « une carte ». Lire cette liste,
+ * c'est relire la phrase du dessus sans son abréviation — on ne va toujours rien
+ * chercher ailleurs (pas de prédiction locale, pas d'homonyme, pas de cache
+ * d'images).
+ */
+export function nomsDeplies(
+  entry: { cardIds: readonly ObjectId[]; names?: readonly string[] },
+  cards: ReadonlyMap<ObjectId, CardView>,
+  nomDeMeta?: (scryfallId: string) => string | undefined,
+): string[] {
+  if (entry.names) return [...entry.names];
+  return nomsDesCartes(entry.cardIds, cards, nomDeMeta);
 }
 
 /**
@@ -133,7 +171,7 @@ export function ActionLog({
   const noms = useMemo(() => {
     const parSeq = new Map<number, string[]>();
     for (const entry of log) {
-      if (depliees.has(entry.seq)) parSeq.set(entry.seq, nomsDesCartes(entry.cardIds, cards));
+      if (depliees.has(entry.seq)) parSeq.set(entry.seq, nomsDeplies(entry, cards));
     }
     return parSeq;
   }, [log, cards, depliees]);
@@ -172,7 +210,11 @@ export function ActionLog({
         )}
         {log.map((entry) => {
           const actor = nameOf(entry.actor);
-          const depliable = estAbregee(entry.cardIds);
+          const depliable = estAbregee(entry.cardIds, entry.names);
+          // Le compte annoncé par le bouton est celui du lot réel, pas celui
+          // des ancres : après une cascade il n'en reste qu'une pour neuf
+          // cartes, et « Voir la 1 carte » mentirait sur ce qui va s'ouvrir.
+          const taille = entry.names?.length ?? entry.cardIds.length;
           const ouverte = depliees.has(entry.seq);
           return (
             <div
@@ -204,7 +246,7 @@ export function ActionLog({
                     <span aria-hidden="true">{ouverte ? '▾' : '▸'}</span>
                     {ouverte
                       ? t('log.collapse')
-                      : t('log.expandCards', { count: entry.cardIds.length })}
+                      : t('log.expandCards', { count: taille })}
                   </button>
                 </>
               )}
@@ -212,7 +254,10 @@ export function ActionLog({
                 <ul className="mt-1 flex flex-wrap gap-1 border-l border-slate-700/80 pl-2">
                   {(noms.get(entry.seq) ?? []).map((nom, index) => (
                     <li
-                      key={`${entry.cardIds[index] ?? index}`}
+                      // La position, et non l'ancre : `names` peut être plus
+                      // long que `cardIds` (cascade), et un lot contient
+                      // couramment deux fois la même carte.
+                      key={index}
                       className={`rounded bg-slate-800/80 px-1.5 py-0.5 text-[10px] ${
                         nom === CARTE_ANONYME ? 'italic text-slate-500' : 'text-slate-300'
                       }`}

@@ -422,7 +422,7 @@ journal qu'il transporte parfois est publique par construction (§5.4).
 | Décision de scry (agrégat) | oui | oui |
 | Sideboard | oui | non |
 | Carte révélée via `REVEAL` | oui | sièges listés uniquement |
-| Ligne de journal (texte **et** ancres `cardIds`) | oui | **oui, toujours** (§5.4) |
+| Ligne de journal (texte, ancres `cardIds`, lot déplié `names`) | oui | **oui, toujours** (§5.4) |
 | Existence d'un `seq` | oui | oui — event réel ou `NOTED`, jamais rien |
 
 « Décision de scry » est publique en agrégat (« seat_1 met 1 carte dessous ») : c'est
@@ -596,9 +596,31 @@ Deux illustrations, délibérées toutes les deux :
   *laquelle* des cartes face cachée a été regardée, ce que le texte se garde
   justement de dire.
 
-La règle vaut aussi pour les ancres au-delà de ces cas : `commit` filtre les
-`cardIds` qui désignent un objet de zone non énumérable, parce qu'un identifiant
-de bibliothèque n'existe pas pour les autres sièges (§2.1).
+La règle vaut aussi pour les ancres au-delà de ces cas, et `commit` les filtre —
+**une seule fois, pour le wire comme pour `state.log`** (`ancresPubliables`). Le
+même tableau part sur le socket, dans le replay, et dans l'entrée que `logTail`
+recopiera au snapshot de chaque siège : une ligne relue après un resync porte
+donc exactement les ancres qu'elle portait en direct. C'est une propriété à
+tenir, pas un détail d'implémentation — l'une des deux moitiés filtrée sans
+l'autre rouvre le canal par le côté resté ouvert.
+
+**Une ancre est un identifiant, pas une identité**, et c'est ce qui décide du
+critère. La question n'est pas « la table peut-elle lire cette carte ? » — le
+texte y répond, via `publicName` — mais « chaque siège détient-il déjà cet
+identifiant ? ». Deux réponses, selon la zone :
+
+| Zone de l'objet ancré | L'ancre sort-elle ? |
+|---|---|
+| énumérable (champ, cimetière, exil, main, commandement…) | **oui, toujours** — l'objet figure dans le snapshot de tous les sièges et dans les events qui l'y ont amené. Une carte posée **face cachée** est annoncée à tout le monde, vue masquée mais identifiant en clair : son ancre ne révèle rien, et la retirer ferait perdre le surlignage sans rien protéger |
+| `LIBRARY` | **seulement si tous les sièges connaissent l'identité** — c'est-à-dire quand le serveur la leur a déjà remise (consultation en mode `REVEAL`, révélation permanente du dessus). Sinon l'identifiant n'est publié à personne (§2.1) et le corréler avant/après révélerait l'ordre |
+| identifiant sans objet | oui : il ne désigne plus rien (carte détruite, identifiant réattribué), et rien ne s'y corrèle |
+
+Un filtre qui ne poserait que la première question et s'y tiendrait pour les deux
+zones serait faux **dans les deux sens à la fois** : il retirerait les ancres
+d'une révélation que toute la table vient de recevoir, tout en laissant passer
+celles d'une bibliothèque secrète par le chemin qu'il ne couvre pas. C'est la
+condition que `REVEAL` appliquait déjà chez lui, hissée dans `commit` pour
+qu'aucun intent n'ait à la réécrire — ni à l'oublier.
 
 #### `namedBatch` et `NAMED_LOG_LIMIT`
 
@@ -618,16 +640,78 @@ Les lignes portant sur plusieurs cartes passent toutes par un assembleur unique,
 - **rend toutes les ancres `cardIds`, y compris celles des cartes que le seuil a
   repliées.** Le texte s'abrège, la liaison aux cartes non : le survol surligne
   le lot entier, et `TAKE_BACK` (§5.3) efface le passé en parcourant `cardIds` —
-  une carte publique laissée hors des ancres échapperait à l'oubli.
+  une carte publique laissée hors des ancres échapperait à l'oubli. `CASCADE`
+  est le seul appelant qui déroge à ce contrat, et il a une raison : ses cartes
+  ont changé d'identifiant en repartant sous la bibliothèque. C'est ce cas que
+  `LogEntry.names` couvre, ci-dessous ;
+- rend aussi, pour cet usage-là, la **forme non abrégée** de son énumération
+  (`all`). Ce n'est pas une seconde règle de visibilité : c'est la même liste,
+  issue du même `publicName`, avant la coupure du seuil.
 
 `NAMED_LOG_LIMIT` (valeur **6**) est une **constante de protocole**, définie dans
 `packages/shared/src/protocol/core.ts` à côté de `PROTOCOL_VERSION`, et non un
 réglage de serveur. Les deux côtés doivent la lire pareil : le serveur s'en sert
 pour couper l'énumération, le client pour décider si une ligne est dépliable et
-offrir « voir les N cartes ». Le client le déduit des seuls `cardIds`, jamais du
-texte — l'abréviation est une phrase traduisible, la découper casserait à la
-première langue ajoutée. Deux copies qui divergent ne fuient rien, mais donnent
-un bouton en trop ou un bouton manquant.
+offrir « voir les N cartes ». Le client le déduit du **lot**, jamais du texte —
+l'abréviation est une phrase traduisible, la découper casserait à la première
+langue ajoutée. Deux copies qui divergent ne fuient rien, mais donnent un bouton
+en trop ou un bouton manquant.
+
+#### `LogEntry.names` — déplier une ligne qui n'a pas d'ancres
+
+Le dépliage d'une ligne abrégée se reconstruit d'ordinaire depuis `cardIds` : le
+client résout chaque identifiant dans son store. Ce chemin suppose que le lot a
+encore des ancres, ce qui est vrai partout **sauf après une cascade**.
+
+`CASCADE` exile face visible, puis renvoie tout sauf la trouvaille sous la
+bibliothèque **en réattribuant les identifiants** (§2.1, §6.4). Ses ancres sont
+donc volontairement réduites à la seule carte restée à l'exil : une ancre vers un
+objet mort promettrait un survol qui ne surligne rien. Conséquence, et c'était le
+défaut : sur une cascade qui exile neuf cartes, le joueur lisait six noms, « et
+3 autres cartes », et n'avait **aucun moyen** de voir les trois — alors que le
+serveur venait de les calculer pour écrire la phrase.
+
+La correction pose le principe : **le dépliage sert à lire des noms, pas à
+survoler des cartes.** Les ancres restent le bonus qui permet de surligner sur la
+table ; elles ne sont plus la condition pour savoir ce qui est passé. Une
+`LogEntry` peut donc porter `names`, la **forme non abrégée** de son énumération :
+même liste, même ordre, avant que le seuil ne la coupe. `names.slice(0, 6)` est
+mot pour mot ce que le texte énumère, et `names.length - 6` le « et N autres
+cartes ».
+
+Trois règles la tiennent, et aucune n'est négociable :
+
+1. **Elle ne publie rien que le texte ne publie déjà.** Chaque entrée sort de
+   `namedBatch`, donc de `publicName`, appelé sur la même carte, au même instant,
+   dans la même zone d'arrivée publique. Une carte qu'un siège ne peut pas
+   identifier y figure comme « une carte », exactement comme elle sort de
+   l'énumération tout en restant comptée. Il n'y a pas de seconde règle de
+   visibilité à maintenir : il n'y en a qu'une, et c'est celle du texte.
+2. **Elle ne lit jamais une bibliothèque.** Pour la cascade, les noms sont
+   relevés en phase 2, **pendant que les cartes sont à l'exil, face visible** —
+   `namedBatch` juge sur la zone d'arrivée et refuserait de nommer après le
+   remélange, à juste titre. Ce qui rend la publication licite est que toute la
+   table a vu ces cartes et que la connaissance est monotone (§5.2) : on ne
+   révèle rien de neuf, on redit sans replier. Remplir `names` depuis une zone
+   cachée serait une fuite, sans exception ni cas particulier.
+3. **Elle est facultative et volontairement rare.** `logTail` recopie deux cents
+   entrées dans **chaque** snapshot et `state.log` en garde mille : une liste de
+   noms sur chaque ligne multi-cartes serait un coût permanent payé pour une
+   information que le client sait déjà reconstituer. Le serveur ne la remplit que
+   lorsque la ligne est abrégée (`> NAMED_LOG_LIMIT`) **et** que ses ancres ne
+   couvrent pas le lot. Aujourd'hui, `CASCADE` est le seul intent dans ce cas.
+   La décision est prise en un seul endroit, `namesForLog` dans `engine.ts`.
+
+Côté client, `names` prime sur `cardIds` pour la taille du lot, pour le libellé
+du bouton et pour le contenu du dépliage ; le survol de la ligne continue de
+surligner les seules cartes qui ont encore un identifiant. L'invariant client
+reste intact : la seule source d'identité autorisée est ce que le serveur a
+envoyé — `names` en fait partie, le cache de métadonnées ne le complète pas.
+
+`names` est un champ **ajouté et facultatif** : un client antérieur l'ignore et
+retombe sur l'ancien comportement. `PROTOCOL_VERSION` **ne bouge pas** (§11) —
+la monter déconnecterait toutes les tables en cours au déploiement pour un champ
+que personne n'est obligé de lire.
 
 Intents passant par `namedBatch` : `MOVE_CARDS`, `TAP` / `UNTAP`, `UNTAP_ALL`,
 `DESTROY_TOKEN`, `RANDOM_DISCARD`, `MILL`, `EXILE_TOP`, `RESOLVE_LOOK`.
@@ -919,6 +1003,12 @@ d'arrivée, et refuserait de nommer après la remise en bibliothèque. L'**ancre
 revanche, ne désigne que la carte restée à l'exil : les autres viennent de perdre leur
 identifiant, et une ancre vers un objet mort ne surligne rien tout en promettant le
 contraire.
+
+Au-delà de six cartes, la phrase abrège — et comme il n'y a plus d'ancres à
+résoudre, la ligne porte alors `LogEntry.names`, la liste dépliée que le client
+affiche telle quelle (§5.4). C'est le seul intent qui en ait besoin. Elle ne dit
+rien de plus que la phrase : les mêmes noms, relevés au même moment, pendant que
+les cartes étaient à l'exil face visible.
 
 **Volontairement non annulable**, pour la raison de `TAKE_BACK` (§5.3) : rejouer l'état
 d'avant republierait, sous leurs anciens identifiants, des cartes que la bibliothèque
@@ -1395,6 +1485,7 @@ interface LogEntry {
   actor: SeatId | null;           // null : commit système (déconnexion, balayage)
   text: string;
   cardIds: ObjectId[];
+  names?: string[];               // lot déplié, quand les ancres ne le couvrent pas (§5.4)
 }
 ```
 
@@ -1403,14 +1494,14 @@ des dégâts de commandant (§6.6), et c'est pourquoi la main n'y figure que par
 `handCount`. `commanderDamage` est indexé par siège source puis par commandant —
 un joueur peut en avoir deux.
 
-**`LogEntry.text` et `LogEntry.cardIds` sont publics pour toute la table**,
-quelle que soit l'audience de l'event qui les a portés : c'est la règle du §5.4,
-et ce type en est la forme. Le texte est construit une fois côté serveur, jamais
-projeté par destinataire, et `logTail` le recopie à l'identique dans le snapshot
-de chaque siège. Le `seq` est ce par quoi un client déduplique les entrées quand
-un resync chevauche le flux direct (§8.1) ; `cardIds` est ce par quoi le client
-décide si une ligne abrégée est dépliable (`NAMED_LOG_LIMIT`, §5.4) et ce que
-`TAKE_BACK` parcourt pour effacer le passé (§5.3).
+**Tous les champs de `LogEntry` sont publics pour toute la table**, quelle que
+soit l'audience de l'event qui les a portés : c'est la règle du §5.4, et ce type
+en est la forme. Le texte est construit une fois côté serveur, jamais projeté par
+destinataire, et `logTail` le recopie à l'identique dans le snapshot de chaque
+siège. Le `seq` est ce par quoi un client déduplique les entrées quand un resync
+chevauche le flux direct (§8.1) ; `cardIds` est ce par quoi le client surligne
+sur la table, et ce que `TAKE_BACK` parcourt pour effacer le passé (§5.3) ;
+`names`, quand il est là, est le **lot déplié** — voir §5.4.
 
 Le snapshot est **toujours** construit par la même fonction de projection
 `projectFor(seat, state)` que les events : il n'existe qu'un seul endroit où la
@@ -1613,4 +1704,6 @@ L'interface cible est celle de la capture de référence (`docs/ui-reference.md`
 | 7 | 2026-09-16 | `TAKE_BACK` (§5.3, §6.1) : l'unique exception à la monotonie, écrite contre la règle qu'elle excepte. Rattrapage d'une carte posée par erreur, réservé au propriétaire, journalisé nommément, avec **réattribution de l'`ObjectId`** — sans elle, la vue déjà reçue par l'adversaire resterait en place et le masquage serait un mensonge. Le journal perd l'ancre et le nom de la carte (§4.2 réappliquée au passé). Critère §12.10. **Aucun event nouveau, aucun format existant modifié : `PROTOCOL_VERSION` reste à 3** (§11). |
 | 8 | 2026-09-18 | **Densité de séquence** (§4.2, §5, §7, §8.1) : chaque `seq` produit une variante pour **chaque** siège connecté — l'event réel dans l'audience, un `NOTED` sinon, que l'émission porte un journal ou non. Corrige le trou laissé par une émission restreinte et muette (`LOOK_RESULT`), qui déclenchait un `resync` par event suivant et faisait apparaître un message trois fois ; `deltaFor` rend désormais `null` plutôt qu'un delta troué, et deux garde-fous client sont documentés (§8.1). Nouvelle **§5.4 : la ligne de journal est publique quelle que soit l'audience** — `commit` la construit hors de toute boucle d'audience et `logTail` la recopie sans filtrage dans chaque snapshot —, avec `namedBatch`, `publicName` et `NAMED_LOG_LIMIT` hissée en constante de protocole (§11). Cas limite de `RESOLVE_LOOK`/`HAND` tranché en §5.2 : nommer une carte que toute la table a vue n'est pas une fuite. Lignes ajoutées à la matrice §5.1. **Aucun format de message ne change : `PROTOCOL_VERSION` reste à 3**, délibérément (§11). Au passage, **balayage complet des déclarations de types contre `packages/shared/src/protocol/`**, sans rapport avec le travail du jour : `LookMode` gagne `'REVEAL'` (§6.4) ; `ErrorCode` gagne `ERR_NOT_HOST` et `ERR_ROOM_CLOSED` (§11) ; `LOOK_STARTED` son `cards?` servi au seul mode `REVEAL`, `LOOK_RESULT` son `mode`, `SEAT_COSMETICS` son `displayName`, et `PLANE_CHANGED` disparaît — le mode planechase a été retiré (§7) ; `Snapshot` gagne `room.closed`, `pendingLook.mode`, et `room.hostSeat` / `turn.activeSeat` deviennent nullables comme au lobby, le commentaire de `logTail` cesse de promettre un filtrage que la projection ne fait pas (§8.1) ; `PublicCardView` gagne `copyOf` et `revealedTo`, `Counter.value` devient facultatif — un marqueur sans valeur est un mot-clé (§3) ; `SET_COUNTER.value` devient `number | null` facultatif, la valeur d'une étiquette est du **texte** et non un entier, et `ADD_LABEL` / `SET_LABEL` retrouvent `attachedTo` (§6.2) ; `RESOLVE_LOOK` retrouve `toSideboard` et `exileFaceDown`, et les intents `MILL`, `EXILE_TOP`, `RANDOM_DISCARD`, `SCOOP` sont déclarés (§6.4), comme `SET_PRINTING` (§6.1) et `SET_SEAT_COSMETICS`, dont le pseudo se fige au lancement (§6.8). Enfin `SeatSummary`, `Label` et `LogEntry`, jusqu'ici cités sans jamais être déclarés, sont écrits au §8.1 — `LogEntry` avec la règle du §5.4, puisque c'est là qu'on le rencontre. |
 | 9 | 2026-09-18 | **Amendement de l'invariant fondateur.** Le principe 5 de la §1 est conservé mot pour mot et reçoit une frontière écrite, la nouvelle **§1.1 : assister n'est pas arbitrer**. Motif : la cascade fait évaluer au serveur deux règles de Magic (« est-ce un terrain ? », « la valeur de mana est-elle sous le seuil ? »), et le taire aurait été pire que l'écrire. La §1.1 pose les **trois propriétés** qui rendent une assistance acceptable — elle n'interdit rien, elle n'impose rien, elle ne conclut pas — et les érige en critère de toute demande future ; elle consigne sans l'adoucir le **prix** : le saut automatique des terrains (`isLandCard`) est le seul endroit où une erreur du serveur a une conséquence de règles, et le garde-fou est que le journal nomme **toutes** les cartes exilées. Elle consigne aussi les deux endroits où l'on a **refusé de décider** : valeur de mana ambiguë (plusieurs faces portant un coût → la séquence s'arrête au lieu de juger) et « jouer sans payer son coût », qui n'existe pas sur une table sans pile. L'intent `CASCADE` est déclaré et décrit au §6.4, décision arrêtée en §13.5. **Ajout d'intent, donc non cassant : `PROTOCOL_VERSION` reste à 3** (§11). |
+| 10 | 2026-09-18 | **Déplier une ligne de journal qui n'a pas d'ancres** (§5.4, §6.4, §8.1). Défaut corrigé : une cascade qui exile plus de six cartes abrégeait sa phrase en « … et N autres cartes » sans que le joueur puisse lire les N — le dépliage du client se reconstruit depuis `cardIds`, et la cascade réattribue l'identifiant de tout ce qui repart sous la bibliothèque (§2.1), donc elle n'ancre que la carte restée à l'exil. Principe posé : **le dépliage sert à lire des noms, pas à survoler des cartes** ; les ancres restent le bonus qui permet de surligner, elles ne sont plus la condition pour savoir ce qui est passé. `LogEntry` gagne `names?: string[]`, la forme non abrégée de l'énumération, remplie par `namedBatch`/`namesForLog` **seulement** quand la ligne est abrégée et que ses ancres ne couvrent pas le lot — `CASCADE` est aujourd'hui le seul cas. Aucune règle de visibilité nouvelle : les noms sortent du même `publicName`, au même instant, dans la même zone d'arrivée publique, et une carte non identifiable y reste « une carte ». Ils sont relevés **pendant que les cartes sont à l'exil face visible** : on ne lit jamais une bibliothèque, on redit sans replier ce que la table a vu (§5.2). Le client fait primer `names` sur `cardIds` pour la taille du lot, le libellé du bouton et le contenu du dépliage ; le survol continue de ne surligner que ce qui a encore un identifiant. **Champ facultatif et ajouté : `PROTOCOL_VERSION` reste à 3** (§11) — un client ancien l'ignore, et monter la version déconnecterait les tables en cours. |
+| 11 | 2026-09-18 | **Le filtre d'ancres de `commit`, refait sur le bon critère** (§5.4). Deux défauts opposés, et ils se tenaient : le filtre du wire retirait les ancres d'une consultation en mode `REVEAL` — des identifiants que toute la table venait de recevoir par `LOOK_STARTED` — parce qu'il jugeait sur la seule zone ; et `state.log` n'était pas filtré du tout, si bien qu'une ancre retenue en direct ressortait par `logTail`, donc par le snapshot de chaque siège. Propager le premier sur le second aurait transporté le mauvais critère. Le critère retenu : **une ancre est un identifiant, pas une identité** — la question est « chaque siège détient-il déjà cet identifiant ? », pas « peut-il lire la carte ? ». Zone énumérable : oui toujours, y compris face cachée, dont l'identifiant est public même quand l'identité ne l'est pas. `LIBRARY` : seulement si **tous** les sièges connaissent l'identité, condition que `REVEAL` appliquait déjà chez lui et qui est hissée dans `commit` (`ancresPubliables`). Le tri se fait **une seule fois** et sert le wire, le replay et `state.log` : le direct et le rattrapage disent désormais la même chose, ce qui est la propriété à tenir. **Aucun format de message ne change : `PROTOCOL_VERSION` reste à 3.** |
 | 3 | 2026-09-15 | Durcissement : `CARD_HIDDEN` à l'entrée en bibliothèque (§2.1), gardes de `MOVE_CARDS` et d'`ATTACH` (§6.1), `copyOf` restreint au champ de bataille (§6.3), verrou de zone et `sortIndex` brassé des `LOOK` (§6.4), `REVEAL_HAND` comme droit de zone (§6.5), `START_GAME` et `SIT_DOWN` durcis (§6.8), cas de bascule du delta et snapshot sans siège (§8.1), fermeture de l'annulation (§9), critères §12.6 et §12.7 |

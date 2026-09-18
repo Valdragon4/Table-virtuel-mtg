@@ -37,6 +37,7 @@ import { projectCard, projectSnapshot } from './projection.js';
 import { cryptoRandom, type RandomSource } from './random.js';
 import {
   SEAT_COLORS,
+  canSeeIdentity,
   getZone,
   isEnumerableZone,
   startingLife,
@@ -123,6 +124,56 @@ const IRREVERSIBLE_LABELS: Record<string, string> = {
   RESTART_GAME: 'Une relance de partie',
   CONCEDE: 'Une concession',
 };
+
+/**
+ * Les ancres qu'une ligne de journal a le droit de publier.
+ *
+ * **Une ancre est publique ou n'est pas.** Le journal est diffusé à toute la
+ * table et recopié à l'identique dans le snapshot de chaque siège (§5.4) : il
+ * n'existe pas de version par destinataire, donc pas d'ancre « pour certains ».
+ * Cette fonction est le seul endroit où la question se pose, et son résultat
+ * sert à la fois la charge utile du wire **et** l'entrée poussée dans
+ * `state.log`. C'est délibéré : le direct et le rattrapage doivent dire la même
+ * chose, sans quoi une ligne serait plus riche au snapshot qu'en direct.
+ *
+ * **Une ancre est un identifiant, pas une identité.** La question n'est donc pas
+ * « la table peut-elle lire cette carte ? » — c'est le texte qui répond à
+ * celle-là, via `publicName` — mais « chaque siège détient-il déjà cet
+ * identifiant ? ». D'où les deux branches, et elles ne disent pas la même chose :
+ *
+ * - **Zone énumérable** : l'objet figure dans le snapshot de tous les sièges, et
+ *   dans les events qui l'ont amené là. Son identifiant est public même si son
+ *   identité ne l'est pas — une carte posée face cachée est annoncée à tout le
+ *   monde par son `CARD_MOVED`, vue masquée mais identifiant en clair. L'ancrer
+ *   ne révèle donc rien, et la retirer ferait perdre le surlignage sans rien
+ *   protéger.
+ * - **Bibliothèque** : l'identifiant n'y est publié à personne (§2.1), et le
+ *   corréler avant/après révélerait l'ordre. On ne l'ancre que si **tous** les
+ *   sièges connaissent l'identité — c'est-à-dire exactement quand le serveur la
+ *   leur a déjà remise, par une consultation en mode `REVEAL` ou par une
+ *   révélation permanente du dessus. C'est la même condition que `REVEAL`
+ *   applique déjà chez lui (`engine-2.ts`), hissée ici pour qu'aucun intent
+ *   n'ait à la réécrire.
+ *
+ * Le filtre précédent ne posait que la première question, et s'y tenait pour les
+ * deux zones : il retirait donc les ancres d'une révélation publique — des
+ * identifiants que toute la table venait de recevoir — tout en laissant
+ * `state.log` non filtré, où rien ne les retenait. Deux défauts opposés, et
+ * propager le premier sur le second n'aurait fait que transporter le mauvais
+ * critère.
+ *
+ * Un identifiant sans objet est laissé passer : il ne désigne plus rien (carte
+ * détruite, identifiant réattribué), et rien ne s'y corrèle.
+ */
+function ancresPubliables(state: GameState, cardIds: readonly ObjectId[]): ObjectId[] {
+  const seats = [...state.seats.keys()];
+  return cardIds.filter((id) => {
+    const obj = state.objects.get(id);
+    if (!obj) return true;
+    if (isEnumerableZone(obj.zone.kind)) return true;
+    return seats.every((s) => canSeeIdentity(obj, s));
+  });
+}
 
 export class Room {
   readonly state: GameState;
@@ -1329,16 +1380,23 @@ export class Room {
             ? [audience.seat]
             : audience.seats;
 
-      // Le journal est diffusé à toute la table : ses ancres de carte doivent
-      // donc supporter le même examen que son texte. Un objet de bibliothèque
-      // n'existe pas pour les autres sièges, son identifiant non plus (§2.1).
+      /*
+       * Le journal est diffusé à toute la table : ses ancres doivent supporter
+       * le même examen que son texte (§5.4). Le tri se fait **ici et une seule
+       * fois** — `logPayload` part sur le wire, dans le replay, et sert aussi à
+       * l'entrée poussée dans `state.log`, donc dans `logTail`, donc dans le
+       * snapshot de chaque siège. C'est ce qui garantit qu'une ligne relue après
+       * un resync porte exactement les ancres qu'elle portait en direct.
+       *
+       * `names`, lui, ne subit aucun filtrage et n'a rien à filtrer : ce sont
+       * les noms que `publicName` a déjà laissé passer dans le `text` de la même
+       * ligne, jamais une lecture d'objet (cf. `LogEntry.names`).
+       */
       const logPayload = emission.log
         ? {
             text: emission.log.text,
-            cardIds: emission.log.cardIds.filter((id) => {
-              const obj = this.state.objects.get(id);
-              return !obj || isEnumerableZone(obj.zone.kind);
-            }),
+            cardIds: ancresPubliables(this.state, emission.log.cardIds),
+            ...(emission.log.names ? { names: emission.log.names } : {}),
           }
         : null;
       const log = logPayload ? { log: logPayload } : {};
@@ -1381,8 +1439,19 @@ export class Room {
         this.buffer.delete(this.state.seq - LIMITS.eventBuffer);
       }
 
-      if (emission.log) {
-        const entry: LogEntry = { seq, at, actor, text: emission.log.text, cardIds: emission.log.cardIds };
+      if (logPayload) {
+        /*
+         * **La même charge utile que le wire, et c'est tout le point.**
+         *
+         * `logTail` recopie ces entrées dans le snapshot de chaque siège (§5.4) :
+         * une entrée construite ici depuis `emission.log` non filtré rendrait
+         * par le rattrapage les ancres que le direct venait de retenir. Le
+         * `names`, symétriquement, doit être là pour qu'un joueur qui
+         * resynchronise ou qui arrive en cours de partie puisse déplier la même
+         * ligne que ceux qui l'ont reçue en direct.
+         */
+        const entry: LogEntry = { seq, at, actor, text: logPayload.text, cardIds: logPayload.cardIds };
+        if (logPayload.names) entry.names = logPayload.names;
         this.state.log.push(entry);
         if (this.state.log.length > 1000) this.state.log.shift();
         this.pendingLog.push(entry);
@@ -1447,7 +1516,7 @@ export class Room {
     seq: Seq,
     at: number,
     actor: SeatId | null,
-    log: { text: string; cardIds: ObjectId[] } | null,
+    log: { text: string; cardIds: ObjectId[]; names?: string[] } | null,
   ): void {
     const recorder = this.recorder;
     if (!recorder || recorder.isClosed) return;

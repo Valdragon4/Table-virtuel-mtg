@@ -132,6 +132,18 @@ export interface DialogSpec {
   description?: string;
   submitLabel?: string;
   cancelLabel?: string;
+  /**
+   * Masque le bouton secondaire, pour un dialogue qui ne fait que **montrer**.
+   *
+   * « Annuler » à côté de « Fermer » demande au lecteur ce qu'il annulerait : la
+   * réponse est rien, les deux referment. Un panneau en lecture seule — le
+   * détail des mécaniques d'une carte, par exemple — n'a qu'une sortie, et lui
+   * en proposer deux laisse croire qu'elles diffèrent.
+   *
+   * Ne l'utilisez **pas** sur un dialogue qui écrit quoi que ce soit : renoncer
+   * doit toujours rester possible, et visible.
+   */
+  readOnly?: boolean;
   fields?: DialogField[];
   choices?: DialogChoice[];
   choicesLabel?: string;
@@ -766,14 +778,16 @@ export function Dialog({
             Appuyez sur <kbd className="font-mono bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 border border-slate-700">Entrée</kbd> pour valider ou <kbd className="font-mono bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 border border-slate-700">Échap</kbd> pour fermer
           </span>
           <div className="flex items-center gap-2.5 ml-auto">
-            <button
-              className="rounded-lg border border-edge/80 bg-slate-800/80 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-slate-100 transition-all"
-              data-test="dialog-cancel"
-              onClick={() => onDone(null)}
-              type="button"
-            >
-              {spec.cancelLabel ?? 'Annuler'}
-            </button>
+            {!spec.readOnly && (
+              <button
+                className="rounded-lg border border-edge/80 bg-slate-800/80 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-slate-100 transition-all"
+                data-test="dialog-cancel"
+                onClick={() => onDone(null)}
+                type="button"
+              >
+                {spec.cancelLabel ?? 'Annuler'}
+              </button>
+            )}
             <button
               ref={submitButton}
               className={`rounded-lg px-4 py-1.5 text-xs font-semibold text-white shadow-md transition-all active:scale-[0.98] ${

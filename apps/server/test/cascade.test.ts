@@ -17,6 +17,7 @@
  * devinée.
  */
 import { describe, expect, it } from 'vitest';
+import { NAMED_LOG_LIMIT } from '@mtg/shared';
 import { Room, type DeckPayload } from '../src/game/room.js';
 import { seededRandom } from '../src/game/random.js';
 import { getZone, type CardData } from '../src/game/state.js';
@@ -328,5 +329,137 @@ describe('ce que la table sait après coup', () => {
     expect(seen.length).toBeGreaterThanOrEqual(3);
     // Mais la carte jamais atteinte n'a rien à faire dans ses frames.
     expect(b.frames.join('\n')).not.toContain('jamais-vue');
+  });
+});
+
+/**
+ * Lire **toutes** les cartes d'une cascade qui en exile plus de six.
+ *
+ * Le défaut : la ligne abrégeait à six noms et « … et 3 autres cartes », et le
+ * dépliage du client se reconstruisait depuis les ancres — que la cascade n'a
+ * pas, puisque tout ce qui repart sous la bibliothèque change d'identifiant
+ * (§2.1). Trois cartes que toute la table venait de voir devenaient illisibles.
+ *
+ * On lit les **frames brutes de Bob**, jamais `room.state` : le `text` et
+ * maintenant les `names` d'une `LogEntry` sont construits une fois et diffusés
+ * à toute la table (§5.4), donc la seule mesure honnête d'une fuite est ce qui
+ * traverse le socket de l'adversaire.
+ */
+describe('déplier une cascade trop longue pour la phrase', () => {
+  /** Le journal tel que Bob le reçoit, `names` compris. */
+  function journalRecu(conn: FakeConnection): { text: string; cardIds: string[]; names?: string[] }[] {
+    return conn.frames
+      .map((f) => JSON.parse(f) as { t: string; log?: { text: string; cardIds: string[]; names?: string[] } })
+      .flatMap((m) => (m.t === 'event' && m.log ? [m.log] : []));
+  }
+
+  /**
+   * Ce texte nomme-t-il cette carte, en mot entier ? Un `toContain` ferait
+   * passer « Fond 12 » pour « Fond 1 », et un test de fuite qui se trompe de
+   * sens est pire qu'absent.
+   */
+  const nomme = (texte: string, carte: string): boolean =>
+    new RegExp(`(?<![\\p{L}\\p{N}])${carte.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').test(
+      texte,
+    );
+
+  /** Huit cartes trop chères, la trouvaille, puis deux que la séquence n'atteint jamais. */
+  const long: Spec[] = [
+    ...Array.from({ length: 8 }, (_, i) => ({
+      name: `Vue ${i + 1}`,
+      typeLine: 'Creature',
+      manaCost: '{9}',
+    })),
+    { name: 'Trouvée', typeLine: 'Creature', manaCost: '{1}' },
+    { name: 'Fond un', typeLine: 'Creature', manaCost: '{1}' },
+    { name: 'Fond deux', typeLine: 'Creature', manaCost: '{1}' },
+  ];
+
+  const VUES = Array.from({ length: 8 }, (_, i) => `Vue ${i + 1}`);
+
+  it('publie les neuf noms là où la phrase n’en tient que six', async () => {
+    const { room, a, b } = tableWith(long);
+    await room.handleIntent(a, 'c1', { type: 'CASCADE', manaValue: 5, compare: 'BELOW' });
+
+    const ligne = journalRecu(b).find((l) => l.text.startsWith('Alice cascade'));
+    expect(ligne).toBeDefined();
+
+    // La phrase abrège, comme avant : six noms puis le compte.
+    expect(ligne!.text).toContain('et 3 autres cartes');
+    // Les ancres ne désignent toujours que la carte restée à l'exil — on ne
+    // promet pas un survol qui ne surligne rien.
+    const found = getZone(room.state, { seat: 'seat_0', kind: 'EXILE' })[0]!;
+    expect(ligne!.cardIds).toEqual([found]);
+
+    // …et pourtant Bob peut lire les neuf, dans l'ordre du geste.
+    expect(ligne!.names).toEqual([...VUES, 'Trouvée']);
+    // La liste est bien la forme non abrégée de la phrase : ses six premiers
+    // noms sont ceux que le texte énumère, et le reste fait le compte annoncé.
+    for (const name of ligne!.names!.slice(0, NAMED_LOG_LIMIT)) {
+      expect(nomme(ligne!.text, name)).toBe(true);
+    }
+    expect(ligne!.names!.length - NAMED_LOG_LIMIT).toBe(3);
+    auditInvariants(room.state);
+  });
+
+  it('ne publie aucun nom que le texte ne publiait pas — ni le fond de la bibliothèque', async () => {
+    const { room, a, b } = tableWith(long);
+    await room.handleIntent(a, 'c1', { type: 'CASCADE', manaValue: 5, compare: 'BELOW' });
+
+    const ligne = journalRecu(b).find((l) => l.text.startsWith('Alice cascade'))!;
+
+    // La licéité tient à un fait, et à un seul : ces neuf cartes sont passées
+    // par l'exil **face visible**, donc toute la table les a vues (§5.2). La
+    // liste ne fait que redire la phrase sans la replier.
+    expect(ligne.names!.length).toBe(9);
+    expect(ligne.names).not.toContain('une carte');
+
+    // Les deux cartes que la séquence n'a jamais atteinte sont restées en
+    // bibliothèque : leur nom n'a rien à faire dans la liste, ni ailleurs dans
+    // le socket de Bob.
+    const frames = b.frames.join('\n');
+    for (const secret of ['Fond un', 'Fond deux', 'fond-un', 'fond-deux']) {
+      expect(ligne.names!.some((n) => nomme(n, secret))).toBe(false);
+      expect(frames).not.toContain(secret);
+    }
+
+    // Et le tour complet : rien dans la liste qui ne soit une des cartes exilées.
+    for (const nom of ligne.names!) expect([...VUES, 'Trouvée']).toContain(nom);
+    auditInvariants(room.state);
+  });
+
+  it('se tait quand la phrase suffit : pas de liste sur une cascade courte', async () => {
+    const { room, a, b } = tableWith([
+      { name: 'Vue 1', typeLine: 'Creature', manaCost: '{9}' },
+      { name: 'Vue 2', typeLine: 'Creature', manaCost: '{9}' },
+      { name: 'Trouvée', typeLine: 'Creature', manaCost: '{1}' },
+      { name: 'Fond un', typeLine: 'Creature', manaCost: '{1}' },
+    ]);
+    await room.handleIntent(a, 'c1', { type: 'CASCADE', manaValue: 5, compare: 'BELOW' });
+
+    const ligne = journalRecu(b).find((l) => l.text.startsWith('Alice cascade'))!;
+    // Trois cartes, trois noms dans la phrase : il n'y a rien à déplier, et
+    // `logTail` recopie ces entrées deux cents fois par snapshot. On ne paie pas
+    // pour une information que le texte donne déjà.
+    expect(ligne.names).toBeUndefined();
+    expect(ligne.text).not.toContain('autres cartes');
+    // La frame elle-même ne porte pas la clé : c'est le coût qu'on mesure.
+    const brut = b.frames.find((f) => f.includes('Alice cascade'))!;
+    expect(brut).not.toContain('"names"');
+  });
+
+  it('le retardataire déplie la même ligne : `logTail` porte la liste', async () => {
+    const { room, a } = tableWith(long);
+    await room.handleIntent(a, 'c1', { type: 'CASCADE', manaValue: 5, compare: 'BELOW' });
+
+    // Un siège qui resynchronise ou qui arrive en cours de partie relit le
+    // journal par le snapshot (§5.4) : sans la liste là aussi, il retomberait
+    // sur « et 3 autres cartes » sans dépliage possible.
+    for (const seat of ['seat_0', 'seat_1']) {
+      const ligne = room
+        .snapshotFor(seat)
+        .logTail.find((e) => e.text.startsWith('Alice cascade'))!;
+      expect(ligne.names).toEqual([...VUES, 'Trouvée']);
+    }
   });
 });

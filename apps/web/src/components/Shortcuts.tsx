@@ -74,6 +74,7 @@ const globalBindings = (t: BoundT): Binding[] => [
   { keys: 'S', label: t('tableMenu.shuffleLibrary') },
   { keys: 'E', label: t('toolbar.passTurn') },
   { keys: 'Y', label: t('zoneMenu.scry1') },
+  { keys: 'M', label: t('zoneMenu.mill1') },
   { keys: 'Ctrl + Z', label: t('toolbar.undo') },
   { keys: t('keys.enter'), label: t('shortcut.writeMessage') },
   { keys: t('keys.esc'), label: t('shortcut.clearSelection') },
@@ -158,6 +159,20 @@ export function useShortcuts(onHelp: () => void): void {
           break;
         case 'y':
           state.send({ type: 'LOOK', zone: { seat, kind: 'LIBRARY' }, count: 1, mode: 'SCRY' });
+          break;
+        /*
+         * `M` comme « meuler », alors que `M` sert déjà, **sur une carte visée**,
+         * à la poser ou la retourner face cachée.
+         *
+         * La surcharge n'est pas un accident : c'est le motif du fichier. `S`
+         * range une carte sur la pile quand une carte est visée et mélange la
+         * bibliothèque sinon ; `E` exile ou finit le tour. Le contextuel passe
+         * toujours en premier, et l'on ne retombe ici que si aucune carte n'est
+         * survolée ni sélectionnée — donc quand « meuler » est le seul sens
+         * possible du geste.
+         */
+        case 'm':
+          state.send({ type: 'MILL', count: 1 });
           break;
         case '?':
           onHelp();
