@@ -9,6 +9,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { CardView, ZoneKind } from '@mtg/shared';
 import { useGame } from '../store/game.js';
 import { cardMeta, cardName } from '../lib/cards.js';
+import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
+import { useLanguage } from '../store/prefs.js';
+import { useT } from '../lib/i18n/index.js';
 import { PrintingPicker } from './PrintingPicker.js';
 import { useMenuPlacement } from '../lib/menu.js';
 import { askNumber, openDialog } from './Dialog.js';
@@ -21,15 +24,14 @@ import {
   computedCounter,
   describeComputed,
   editCounter,
+  frozenCount,
+  frozenCounterIntents,
   getCardStat,
   isKnownSubtype,
-  measureCount,
+  parseOffset,
   ptCounter,
   renderSide,
-  resolveSource,
   subtypeOptions,
-  subtypesOf,
-  typeFamilies,
 } from './CardSprite.js';
 import { CARD_HEIGHT, CARD_WIDTH } from '../lib/cards.js';
 import { PANEL_WIDTH } from './SeatPanel.js';
@@ -65,11 +67,12 @@ function CustomCounterPreview({
   card: CardView;
   values: Record<string, string>;
 }): React.ReactElement {
+  const t = useT();
   const state = useGame.getState();
   const scryfallId = card.faceDown === false ? card.scryfallId : undefined;
   const meta = cardMeta(scryfallId);
-  const name = meta?.name ?? 'Carte sélectionnée';
-  const typeLine = meta?.typeLine ?? 'Permanent';
+  const name = meta?.name ?? t('card.selectedCard');
+  const typeLine = meta?.typeLine ?? t('card.genericPermanent');
   const forme = values['forme'] ?? 'pt';
 
   let badgeNode: React.ReactNode = null;
@@ -84,7 +87,7 @@ function CustomCounterPreview({
         ⚔️ {pair}
       </span>
     );
-    formulaDesc = `Ajustement fixe de force / endurance : ${pair}`;
+    formulaDesc = t('counter.ptAdjust', { pair });
   } else if (forme === 'named') {
     const kind = values['kind'] || 'loyauté';
     const val = values['value'] || '1';
@@ -93,7 +96,7 @@ function CustomCounterPreview({
         🏷️ {kind} {val ? `(${val})` : ''}
       </span>
     );
-    formulaDesc = `Marqueur nommé « ${kind} » : ${val || '1'} posé(s)`;
+    formulaDesc = t('counter.namedDesc', { kind, value: val || '1' });
   } else if (forme === 'keyword') {
     const kind = values['kind'] || 'vol';
     badgeNode = (
@@ -101,56 +104,28 @@ function CustomCounterPreview({
         ✨ {kind}
       </span>
     );
-    formulaDesc = `Capacité / Mot-clé « ${kind} » conféré sans quantité`;
+    formulaDesc = t('counter.keywordDesc', { kind });
   } else if (forme === 'calc') {
     const src = values['calcsrc'] ?? 'bat.land';
     const qui = (values['calcqui'] ?? 'vous') as 'vous' | 'adv' | 'tous';
     const mode = values['calcmode'] ?? 'suit';
-    const offsetRaw = values['calcoffset'] ?? '0';
-    const offset = Number.parseInt(offsetRaw, 10) || 0;
-    const excludeOther = values['calcexclude'] === 'other';
+    const offset = parseOffset(values['calcoffset']);
+    // Le réglage ne vaut qu'en mode figé : ailleurs il n'a nulle part où aller
+    // dans le `kind`, et l'aperçu ne doit donc pas faire semblant.
+    const excludeOther = mode === 'fige' && values['calcexclude'] === 'other';
 
-    let baseValue = 0;
-    if (src.startsWith('self:')) {
-      const stat = src.slice(5) as 'power' | 'toughness' | 'counters';
-      baseValue = getCardStat(card, stat);
-    } else if (src.startsWith('card:')) {
-      const match = /^card:([^:]+):(power|toughness|counters)$/.exec(src);
-      if (match && match[1]) {
-        const fromCard = state.cards.get(match[1]);
-        if (fromCard) {
-          baseValue = getCardStat(fromCard, match[2] as 'power' | 'toughness' | 'counters');
-        }
-      }
-    } else {
-      const spec = computedCounter(`${COMPUTED_SIGIL}+*/+* ${src}@${qui}`);
-      if (spec) {
-        const measure = measureCount(state, spec, card);
-        baseValue = measure ? measure.n : 0;
-        if (excludeOther) {
-          const res = resolveSource(spec.source);
-          if (res && card.zone.kind === res.source.zone) {
-            const line = meta?.typeLine ?? '';
-            if (res.subtype !== null) {
-              if (subtypesOf(line).has(res.subtype)) baseValue = Math.max(0, baseValue - 1);
-            } else if (res.source.family !== undefined) {
-              if (typeFamilies(line).has(res.source.family)) baseValue = Math.max(0, baseValue - 1);
-            } else if (!res.source.distinctTypes) {
-              baseValue = Math.max(0, baseValue - 1);
-            }
-          }
-        }
-      }
-    }
-
-    const finalValue = Math.max(0, baseValue + offset);
+    /* L'aperçu et la pose lisent la **même** fonction : c'est la seule façon de
+       garantir que ce qu'on montre est ce qui sera posé. */
+    const count = frozenCount(state, card, { src, qui, offset, excludeOther });
+    const baseValue = count?.base ?? 0;
+    const finalValue = count?.final ?? 0;
 
     if (mode === 'fige') {
       const figeForm = values['calcfigeform'] ?? 'pt_set';
       const figeName = values['calcfigename'] ?? 'charge';
       let figeText = '';
       if (finalValue <= 0) {
-        figeText = '0 (aucun marqueur)';
+        figeText = t('counter.noneZero');
       } else if (figeForm === 'pt_set') {
         figeText = `${finalValue}/${finalValue}`;
       } else if (figeForm === 'pt_add') {
@@ -174,16 +149,21 @@ function CustomCounterPreview({
       );
       modeBadge = (
         <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
-          Figé à la pose
+          {t('counter.modeFrozen')}
         </span>
       );
-      countSummary = `Décompte actuel : ${baseValue} ${
-        offset !== 0 ? `(${offset > 0 ? `+${offset}` : offset} décalage)` : ''
-      } = ${finalValue}`;
+      countSummary = t('counter.countFrozen', {
+        base: baseValue,
+        offset:
+          offset !== 0
+            ? t('counter.offsetSuffix', { offset: offset > 0 ? `+${offset}` : offset })
+            : '',
+        final: finalValue,
+      });
       formulaDesc =
         finalValue <= 0
-          ? '⚠️ Le décompte donne 0 : aucun marqueur ne sera posé sur la carte, et le journal indiquera « 0 ».'
-          : `Ce marqueur figera la valeur ${finalValue} une fois pour toutes au moment de la pose (ne bougera plus ensuite).`;
+          ? t('counter.zeroWarning')
+          : t('counter.willFreeze', { value: finalValue });
     } else {
       let gabarit =
         mode === 'ajout' ? (values['calcpt2'] ?? '+*/+*') : (values['calcpt'] ?? '*/*');
@@ -213,12 +193,17 @@ function CustomCounterPreview({
       );
       modeBadge = (
         <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-          Dynamique (en direct)
+          {t('counter.modeDynamic')}
         </span>
       );
-      countSummary = `Décompte actuel : ${baseValue} ${
-        offset !== 0 ? `(${offset > 0 ? `+${offset}` : offset} décalage)` : ''
-      } → ${previewDisplay}`;
+      countSummary = t('counter.countDynamic', {
+        base: baseValue,
+        offset:
+          offset !== 0
+            ? t('counter.offsetSuffix', { offset: offset > 0 ? `+${offset}` : offset })
+            : '',
+        preview: previewDisplay,
+      });
       formulaDesc = spec ? describeComputed(spec) : calcKind;
     }
   }
@@ -227,7 +212,7 @@ function CustomCounterPreview({
     <div className="flex flex-col gap-3.5 h-full" data-test="custom-counter-preview">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-          Aperçu en direct
+          {t('counter.preview')}
         </h3>
         {modeBadge}
       </div>
@@ -253,18 +238,20 @@ function CustomCounterPreview({
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-[11px] text-slate-400 leading-snug space-y-1.5 mt-auto">
-        <p className="font-semibold text-slate-300">💡 Conseil de jeu</p>
-        <p>
-          {forme === 'calc'
-            ? 'Les marqueurs dynamiques sont recalculés côté client sans solliciter le serveur. Vous pouvez compter n’importe quel sous-type ou zone publique.'
-            : 'Vous pourrez ajuster ou retirer ce marqueur à tout moment par double-clic ou via le menu contextuel.'}
-        </p>
+        <p className="font-semibold text-slate-300">{t('counter.tipTitle')}</p>
+        <p>{forme === 'calc' ? t('counter.tipCalc') : t('counter.tipPlain')}</p>
       </div>
     </div>
   );
 }
 
 export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactElement {
+  // Le titre du menu est le seul nom de carte **affiché** par ce fichier ; tous
+  // les autres servent de clé (étiquette de l'étagère, mots-clés de recherche du
+  // dialogue) et restent donc ceux du catalogue.
+  useLocalizationTick();
+  const t = useT();
+  const language = useLanguage();
   const send = useGame((s) => s.send);
   const mySeat = useGame((s) => s.mySeat);
   /** Sideboarder n'a de sens qu'avant le lancement. */
@@ -286,6 +273,8 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
   const live = useGame((s) => s.cards.get(card.id)) ?? card;
 
   useEffect(() => {
+    useGame.getState().setHovered(null);
+    useGame.getState().hoverPreview(null);
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') onClose();
     };
@@ -348,10 +337,10 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
 
   if (inZone === 'HAND') {
     entries.push(
-      { label: 'Jouer', shortcut: 'P', run: () => move('BATTLEFIELD', landing()) },
-      { label: 'Jouer face cachée', shortcut: 'M', run: () => move('BATTLEFIELD', { ...landing(), faceDown: true }) },
-      { label: 'Mettre sur la pile', shortcut: 'S', run: () => move('STACK_NOTE') },
-      { label: 'Révéler à tous', run: () => { send({ type: 'REVEAL', cardIds: targets, toSeats: 'ALL' }); onClose(); } },
+      { label: t('card.play'), shortcut: 'P', run: () => move('BATTLEFIELD', landing()) },
+      { label: t('card.playFaceDown'), shortcut: 'M', run: () => move('BATTLEFIELD', { ...landing(), faceDown: true }) },
+      { label: t('card.toStack'), shortcut: 'S', run: () => move('STACK_NOTE') },
+      { label: t('card.revealAll'), run: () => { send({ type: 'REVEAL', cardIds: targets, toSeats: 'ALL' }); onClose(); } },
       /*
        * Révéler à une ou plusieurs personnes.
        *
@@ -364,16 +353,16 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
       ...(others.length > 0
         ? [
             {
-              label: 'Révéler à…',
+              label: t('card.revealTo'),
               run: () => {
                 onClose();
                 void openDialog({
-                  title: targets.length > 1 ? `Révéler ${targets.length} cartes à…` : 'Révéler cette carte à…',
-                  description: 'Seules les personnes cochées verront la carte.',
-                  choicesLabel: 'Destinataires',
+                  title: t('card.revealDialogTitle', { count: targets.length }),
+                  description: t('card.revealDialogDescription'),
+                  choicesLabel: t('card.revealDialogRecipients'),
                   choices: others.map((s) => ({ id: s.id, label: s.displayName, color: s.color })),
                   requireChoice: true,
-                  submitLabel: 'Révéler',
+                  submitLabel: t('common.reveal'),
                 }).then((result) => {
                   if (result) send({ type: 'REVEAL', cardIds: targets, toSeats: result.chosen });
                 });
@@ -381,12 +370,12 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
             },
           ]
         : []),
-      { label: 'Défausser', shortcut: 'G', run: () => move('GRAVEYARD'), separatorBefore: true },
-      { label: 'Exiler', shortcut: 'E', run: () => move('EXILE') },
-      { label: 'Dessus de la bibliothèque', shortcut: 'L', run: () => move('LIBRARY', { index: 'TOP' }) },
-      { label: 'Dessous de la bibliothèque', shortcut: 'B', run: () => move('LIBRARY', { index: 'BOTTOM' }) },
+      { label: t('card.discard'), shortcut: 'G', run: () => move('GRAVEYARD'), separatorBefore: true },
+      { label: t('card.exile'), shortcut: 'E', run: () => move('EXILE') },
+      { label: t('zone.libraryTop'), shortcut: 'L', run: () => move('LIBRARY', { index: 'TOP' }) },
+      { label: t('zone.libraryBottom'), shortcut: 'B', run: () => move('LIBRARY', { index: 'BOTTOM' }) },
       {
-        label: 'Nième depuis le dessus…',
+        label: t('card.nthFromTop'),
         run: () => {
           /*
            * Le dialogue vit dans sa propre racine : on referme le menu tout de
@@ -396,8 +385,8 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
            */
           onClose();
           void askNumber({
-            title: 'Placer dans la bibliothèque',
-            label: 'Position depuis le dessus (1 = dessus)',
+            title: t('card.libraryPlaceTitle'),
+            label: t('card.libraryPlaceLabel'),
             initial: 3,
             quick: [1, 2, 3, 5, 10],
             memory: 'library-nth',
@@ -409,7 +398,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
     );
     if (!started) {
       entries.push({
-        label: 'Mettre dans la réserve',
+        label: t('card.toSideboard'),
         separatorBefore: true,
         run: () => move('SIDEBOARD'),
       });
@@ -431,7 +420,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
      */
     if (targets.length > 1) {
       entries.push({
-        label: `Aligner les ${targets.length} cartes`,
+        label: t('card.alignSelection', { count: targets.length }),
         run: () => {
           const state = useGame.getState();
           const chosen = targets
@@ -463,7 +452,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
       {
         // Sur une sélection, on ne dégage que si tout est déjà engagé : sinon
         // « engager » laisserait la moitié du groupe dans l'état inverse.
-        label: everyTapped ? 'Dégager' : 'Engager',
+        label: everyTapped ? t('card.untap') : t('card.tap'),
         shortcut: 'T',
         run: () => {
           send(tapIntent(targets));
@@ -471,7 +460,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
         },
       },
       {
-        label: 'Ajouter un marqueur +1/+1',
+        label: t('card.addPlusCounter'),
         shortcut: '+',
         run: () => {
           for (const id of targets) send({ type: 'ADD_COUNTER', targetId: id, kind: '+1/+1', delta: 1 });
@@ -479,7 +468,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
         },
       },
       {
-        label: 'Retirer un marqueur +1/+1',
+        label: t('card.removePlusCounter'),
         shortcut: '−',
         run: () => {
           for (const id of targets) send({ type: 'ADD_COUNTER', targetId: id, kind: '+1/+1', delta: -1 });
@@ -500,7 +489,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
          *   - valeur 0       → le marqueur est retiré.
          * Les valeurs usuelles sont à portée de clic, les noms courants aussi.
          */
-        label: 'Marqueur personnalisé…',
+        label: t('card.customCounter'),
         run: () => {
           onClose();
           const state = useGame.getState();
@@ -510,25 +499,28 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
           const cardTargetOptions = battlefieldCards.flatMap((c) => {
             const scryfallId = c.faceDown === false ? c.scryfallId : undefined;
             const meta = cardMeta(scryfallId);
-            const name = meta?.name ?? 'Carte';
+            const name = meta?.name ?? t('card.generic');
             const isCreature =
               (meta?.typeLine ?? '').toLowerCase().includes('creature') || meta?.power !== undefined;
             const isMe = c.id === card.id;
-            const prefix = isMe ? 'Cette carte : ' : `« ${name} » : `;
-            const grp = isMe ? 'Cette carte' : 'Cartes sur le champ de bataille';
+            const prefix = isMe ? t('counter.prefixSelf') : t('counter.prefixNamed', { name });
+            const grp = isMe ? t('counter.groupThisCard') : t('counter.groupBattlefield');
             const opts = [];
             if (isCreature) {
               const p = getCardStat(c, 'power');
-              const t = getCardStat(c, 'toughness');
+              const tough = getCardStat(c, 'toughness');
               opts.push({
                 value: isMe ? 'self:power' : `card:${c.id}:power`,
-                label: `${prefix}force (${p})`,
+                label: t('counter.optPower', { prefix, value: p }),
                 group: grp,
+                // Les mots-clés sont une **clé de recherche**, pas un libellé :
+                // ils restent tels quels, en français et en anglais à la fois,
+                // pour que la saisie du joueur trouve l'entrée dans les deux.
                 keywords: `${name} force power attaque`,
               });
               opts.push({
                 value: isMe ? 'self:toughness' : `card:${c.id}:toughness`,
-                label: `${prefix}endurance (${t})`,
+                label: t('counter.optToughness', { prefix, value: tough }),
                 group: grp,
                 keywords: `${name} endurance toughness defense`,
               });
@@ -537,7 +529,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
             if (cnt > 0 || (c.counters ?? []).length > 0) {
               opts.push({
                 value: isMe ? 'self:counters' : `card:${c.id}:counters`,
-                label: `${prefix}marqueurs (${cnt})`,
+                label: t('counter.optCounters', { prefix, value: cnt }),
                 group: grp,
                 keywords: `${name} marqueurs counters`,
               });
@@ -546,8 +538,8 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
           });
 
           void openDialog({
-            title: targets.length > 1 ? `Marqueur sur ${targets.length} cartes` : 'Poser un marqueur',
-            submitLabel: 'Poser',
+            title: t('card.counterDialogTitle', { count: targets.length }),
+            submitLabel: t('common.place'),
             memory: 'card-counter',
             size: '2xl',
             preview: (vals) => <CustomCounterPreview card={card} values={vals} />,
@@ -565,17 +557,17 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                  * champ qu'on remplit ; le protocole ne change pas d'un iota.
                  */
                 name: 'forme',
-                label: 'Forme',
+                label: t('counter.fieldShape'),
                 initial: 'pt',
                 options: [
-                  { value: 'pt', label: 'Force / endurance' },
-                  { value: 'named', label: 'Nommé' },
-                  { value: 'keyword', label: 'Mot-clé' },
+                  { value: 'pt', label: t('counter.shapePt') },
+                  { value: 'named', label: t('counter.shapeNamed') },
+                  { value: 'keyword', label: t('counter.shapeKeyword') },
                   // La quatrième forme n'en est pas vraiment une : c'est une
                   // **catégorie** à part, celle des caractéristiques variables,
                   // où l'on ne saisit pas un nombre mais où l'on déclare ce
                   // qu'il faut compter.
-                  { value: 'calc', label: 'Effets classiques' },
+                  { value: 'calc', label: t('counter.shapeCalc') },
                 ],
               },
               /*
@@ -609,32 +601,32 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                */
               {
                 name: 'calcmode',
-                label: 'Comportement',
+                label: t('counter.fieldBehaviour'),
                 initial: 'suit',
                 hidden: (values) => values['forme'] !== 'calc',
                 options: [
-                  { value: 'suit', label: 'Force/endurance égales au décompte' },
-                  { value: 'ajout', label: 'Bonus par unité comptée' },
-                  { value: 'fige', label: 'Marqueurs posés une fois, figés' },
+                  { value: 'suit', label: t('counter.behaviourFollow') },
+                  { value: 'ajout', label: t('counter.behaviourAdd') },
+                  { value: 'fige', label: t('counter.behaviourFrozen') },
                 ],
-                hint: 'Les deux premiers suivent la zone comptée ; le troisième compte maintenant, puis ne bouge plus.',
+                hint: t('counter.behaviourHint'),
               },
               {
                 name: 'calcfigeform',
-                label: 'Forme du marqueur figé',
+                label: t('counter.fieldFrozenShape'),
                 initial: 'pt_set',
                 hidden: (values) => values['forme'] !== 'calc' || values['calcmode'] !== 'fige',
                 options: [
-                  { value: 'pt_set', label: 'X/X — force et endurance fixées' },
-                  { value: 'pt_add', label: '+X/+X — bonus global' },
-                  { value: 'pt_counters', label: '+1/+1 — X marqueurs individuels' },
-                  { value: 'named', label: 'Nommé (X marqueurs)' },
+                  { value: 'pt_set', label: t('counter.frozenShapeSet') },
+                  { value: 'pt_add', label: t('counter.frozenShapeAdd') },
+                  { value: 'pt_counters', label: t('counter.frozenShapeCounters') },
+                  { value: 'named', label: t('counter.frozenShapeNamed') },
                 ],
-                hint: '« X/X » pose un marqueur fixant la force/endurance (ex. 3/3). « +1/+1 » pose autant de marqueurs +1/+1.',
+                hint: t('counter.frozenShapeHint'),
               },
               {
                 name: 'calcfigename',
-                label: 'Nom du marqueur',
+                label: t('counter.fieldName'),
                 initial: 'charge',
                 maxLength: 32,
                 hidden: (values) =>
@@ -648,30 +640,30 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
               },
               {
                 name: 'calcpt',
-                label: 'Gabarit',
+                label: t('counter.fieldTemplate'),
                 initial: '*/*',
                 hidden: (values) => values['forme'] !== 'calc' || values['calcmode'] !== 'suit',
                 options: [
-                  { value: '*/*', label: '*/* — les deux' },
+                  { value: '*/*', label: t('counter.tplBoth') },
                   // Le Lhurgoyf d'Urborg et le Tarmogoyf sont des `*/1+*` :
                   // endurance = le même décompte, plus un.
-                  { value: '*/*+1', label: '*/1+* — endurance +1' },
-                  { value: '*+1/*', label: '1+*/* — force +1' },
-                  { value: '*-1/*-1', label: '*-1/*-1 — les deux -1' },
-                  { value: '*/*-1', label: '*/-1+* — endurance -1' },
-                  { value: '*-1/*', label: '-1+*/* — force -1' },
+                  { value: '*/*+1', label: t('counter.tplToughPlus1') },
+                  { value: '*+1/*', label: t('counter.tplPowerPlus1') },
+                  { value: '*-1/*-1', label: t('counter.tplBothMinus1') },
+                  { value: '*/*-1', label: t('counter.tplToughMinus1') },
+                  { value: '*-1/*', label: t('counter.tplPowerMinus1') },
                 ],
               },
               {
                 name: 'calcpt2',
-                label: 'Gabarit',
+                label: t('counter.fieldTemplate'),
                 initial: '+*/+*',
                 hidden: (values) => values['forme'] !== 'calc' || values['calcmode'] !== 'ajout',
                 options: [
-                  { value: '+*/+*', label: '+1/+1 par unité' },
-                  { value: '+*/+0', label: '+1/+0 par unité' },
-                  { value: '+0/+*', label: '+0/+1 par unité' },
-                  { value: '+*-1/+*-1', label: '+1/+1 (-1 au total)' },
+                  { value: '+*/+*', label: t('counter.tplAddBoth') },
+                  { value: '+*/+0', label: t('counter.tplAddPower') },
+                  { value: '+0/+*', label: t('counter.tplAddTough') },
+                  { value: '+*-1/+*-1', label: t('counter.tplAddBothMinus') },
                 ],
               },
               {
@@ -694,7 +686,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                  * et propose les sous-types à la volée quand on tape « ange », « humain »...
                  */
                 name: 'calcsrc',
-                label: 'Ce qu’on compte / Valeur à prendre',
+                label: t('counter.fieldSource'),
                 initial: 'bat.land',
                 hidden: (values) => values['forme'] !== 'calc',
                 options: [
@@ -711,7 +703,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                    * huit entrées justes — du bruit exactement là où l'on venait
                    * de gagner en lisibilité.
                    */
-                  placeholder: 'Chercher une zone, une carte, un type… ou taper « ange »',
+                  placeholder: t('search.placeholder'),
                   freeform: (query, matches) =>
                     query.trim().length >= 3 && (matches === 0 || isKnownSubtype(query))
                       ? subtypeOptions(query)
@@ -732,66 +724,77 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                     const type = /(creature|terrain|artefact|enchant|type|ephemere|rituel|sous)/.test(mot);
                     if (cachee && type) return HIDDEN_REFUSAL;
                     if (query.trim() !== '' && matches === 0) {
-                      return (
-                        `Rien ne correspond à « ${query.trim()} » dans le catalogue : il vous est proposé ` +
-                        `comme sous-type, et le décompte restera à zéro si ce n’en est pas un. ${HIDDEN_REFUSAL}`
-                      );
+                      // `HIDDEN_REFUSAL` vient de `CardSprite.tsx` : ce fichier
+                      // ne l'écrit pas, il le recopie tel quel.
+                      return t('counter.freeformNote', {
+                        query: query.trim(),
+                        refusal: HIDDEN_REFUSAL,
+                      });
                     }
                     return null;
                   },
                 },
-                hint: 'Sous-types (ange, humain…), décomptes de zone, ou caractéristiques de cartes en jeu.',
+                hint: t('counter.sourceHint'),
               },
               {
                 name: 'calcqui',
-                label: 'Chez qui',
+                label: t('counter.fieldWho'),
                 initial: 'vous',
                 hidden: (values) =>
                   values['forme'] !== 'calc' ||
                   (values['calcsrc'] ?? '').startsWith('card:') ||
                   (values['calcsrc'] ?? '').startsWith('self:'),
                 options: [
-                  { value: 'vous', label: 'Le contrôleur de la carte' },
-                  { value: 'adv', label: 'Ses adversaires' },
-                  { value: 'tous', label: 'Toute la table' },
+                  { value: 'vous', label: t('counter.whoController') },
+                  { value: 'adv', label: t('counter.whoOpponents') },
+                  { value: 'tous', label: t('counter.whoAll') },
                 ],
-                hint: 'Compter le cimetière d’en face est licite : il est public, et chacun le voit déjà.',
+                hint: t('counter.whoHint'),
               },
               {
                 name: 'calcexclude',
-                label: 'Périmètre',
+                label: t('counter.fieldScope'),
                 initial: 'all',
+                // **Seul le mode figé sait exclure la porteuse.** Un marqueur
+                // dynamique n'est qu'un `kind` de 32 caractères relu à chaque
+                // rendu, de la forme « sigle, gabarit, source, arobase, chez
+                // qui » — et rien dans cette grammaire ne dit « sauf moi ».
+                // Proposer le réglage dans les deux autres modes, c'était
+                // promettre un filtre que la pastille n'appliquait pas, tandis
+                // que l'aperçu, lui, l'appliquait : deux nombres différents
+                // pour un seul et même marqueur.
                 hidden: (values) =>
                   values['forme'] !== 'calc' ||
+                  values['calcmode'] !== 'fige' ||
                   (values['calcsrc'] ?? '').startsWith('card:') ||
                   (values['calcsrc'] ?? '').startsWith('self:') ||
                   (values['calcsrc'] ?? '') === 'main' ||
                   (values['calcsrc'] ?? '') === 'biblio' ||
                   (values['calcsrc'] ?? '') === 'vie',
                 options: [
-                  { value: 'all', label: 'Toutes les cartes' },
-                  { value: 'other', label: 'Autres cartes uniquement (exclure cette carte)' },
+                  { value: 'all', label: t('counter.scopeAll') },
+                  { value: 'other', label: t('counter.scopeOther') },
                 ],
-                hint: '« Autres cartes » ne compte pas cette carte si elle a le type/sous-type (ex. « pour chaque autre ange »).',
+                hint: t('counter.scopeHint'),
               },
               {
                 name: 'calcoffset',
-                label: 'Ajustement (décalage de départ)',
+                label: t('counter.fieldOffset'),
                 initial: '0',
                 maxLength: 5,
                 hidden: (values) => values['forme'] !== 'calc',
                 quick: [
                   { label: '-2', value: '-2' },
                   { label: '-1', value: '-1' },
-                  { label: '0 (aucun)', value: '0' },
+                  { label: t('counter.offsetNone'), value: '0' },
                   { label: '+1', value: '+1' },
                   { label: '+2', value: '+2' },
                 ],
-                hint: 'Modificateur appliqué au décompte (ex. -1 pour « nombre d’anges - 1 »). 0 par défaut.',
+                hint: t('counter.offsetHint'),
               },
               {
                 name: 'pair',
-                label: 'Modification de force / endurance',
+                label: t('counter.fieldPair'),
                 initial: '+1/+1',
                 maxLength: 11,
                 hidden: (values) => values['forme'] !== 'pt',
@@ -799,11 +802,11 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                   label: v,
                   value: v,
                 })),
-                hint: 'Deux nombres séparés d’une barre, X compris : +1/+1, -1/-1, +2/+0, X/X.',
+                hint: t('counter.pairHint'),
               },
               {
                 name: 'kind',
-                label: 'Nom du marqueur',
+                label: t('counter.fieldName'),
                 initial: 'loyauté',
                 // Le protocole plafonne `kind` à 32 caractères ; au-delà, le
                 // serveur rejetait l'intent sans que rien ne le dise.
@@ -818,11 +821,11 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
               },
               {
                 name: 'value',
-                label: 'Nombre de marqueurs',
+                label: t('counter.fieldCount'),
                 numeric: true,
                 optional: true,
                 initial: '1',
-                placeholder: 'un nombre, ou rien',
+                placeholder: t('counter.countPlaceholder'),
                 // Un mot-clé n'a par définition pas de nombre : lui en demander
                 // un, fût-ce facultatif, ne peut que semer le doute. Un
                 // marqueur calculé non plus — son nombre est compté, pas saisi.
@@ -834,9 +837,9 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                   { label: '4', value: '4' },
                   { label: '5', value: '5' },
                   { label: '10', value: '10' },
-                  { label: 'aucun', value: '' },
+                  { label: t('counter.countNone'), value: '' },
                 ],
-                hint: 'Trois marqueurs +1/+1, et non « +3/+3 » : c’est la règle du jeu.',
+                hint: t('counter.countHint'),
               },
             ],
           }).then((result) => {
@@ -847,98 +850,61 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
               const src = result.values['calcsrc'] ?? 'bat.land';
               const qui = (result.values['calcqui'] ?? 'vous') as 'vous' | 'adv' | 'tous';
               const mode = result.values['calcmode'] ?? 'suit';
-              const offsetRaw = result.values['calcoffset'] ?? '0';
-              const offset = Number.parseInt(offsetRaw, 10) || 0;
-              const excludeOther = result.values['calcexclude'] === 'other';
+              const offset = parseOffset(result.values['calcoffset']);
+              // Voir le champ « Périmètre » : seul le mode figé sait l'appliquer.
+              const excludeOther = mode === 'fige' && result.values['calcexclude'] === 'other';
               const state = useGame.getState();
 
               if (mode === 'fige') {
                 /*
                  * Le décompte figé se résout **ici**, et ne laisse derrière lui
-                 * qu'un marqueur +1/+1 ordinaire. C'est exactement ce que fait
-                 * une carte qui « arrive avec un marqueur +1/+1 pour chaque… » :
-                 * elle compte une fois, pose des cubes, et les cubes ne savent
-                 * plus d'où ils viennent. Le compte est fait par carte cible,
-                 * parce que « chez vous » dépend du contrôleur de chacune.
-                 * qu'un marqueur ordinaire (+1/+1, X/X, +X/+X, ou nommé). C'est
+                 * qu'un marqueur ordinaire (X/X, +X/+X, +1/+1, ou nommé). C'est
                  * exactement ce que fait une carte qui « arrive avec un marqueur
                  * +1/+1 pour chaque… » ou « avec X marqueurs où X est le nombre
                  * d'anges - 1 » : elle compte une fois au moment de la pose,
-                 * applique le décalage choisi, et les marqueurs ne bougent plus.
-                 * Si le décompte final est nul ou négatif, aucun marqueur n'est posé.
+                 * applique le décalage choisi, et les cubes ne savent plus d'où
+                 * ils viennent. Le compte est refait par carte cible, parce que
+                 * « chez vous » dépend du contrôleur de chacune.
                  */
-                const spec = computedCounter(`${COMPUTED_SIGIL}+*/+* ${src}@${qui}`);
-                if (!spec) return;
-                const figeForm = result.values['calcfigeform'] ?? 'pt_set';
+                const figeForm = (result.values['calcfigeform'] ??
+                  'pt_set') as Parameters<typeof frozenCounterIntents>[3];
                 const figeName = result.values['calcfigename'] ?? 'charge';
 
                 for (const id of targets) {
                   const target = state.cards.get(id);
                   if (!target) continue;
-                  const measure = measureCount(state, spec, target);
-                  if (!measure || measure.n <= 0) continue;
-                  send({ type: 'SET_COUNTER', targetId: id, kind: '+1/+1', value: measure.n });
                   const targetMeta = cardMeta(target.faceDown === false ? target.scryfallId : undefined);
+                  // Non traduit : ce nom ne sert qu'à la bulle ci-dessous, qui
+                  // part au serveur et reste française pour toute la table.
                   const name = targetMeta?.name ?? 'Carte';
-
-                  let baseValue = 0;
-                  if (src.startsWith('self:')) {
-                    const stat = src.slice(5) as 'power' | 'toughness' | 'counters';
-                    baseValue = getCardStat(target, stat);
-                  } else if (src.startsWith('card:')) {
-                    const match = /^card:([^:]+):(power|toughness|counters)$/.exec(src);
-                    if (match && match[1]) {
-                      const fromCard = state.cards.get(match[1]);
-                      if (fromCard) {
-                        baseValue = getCardStat(fromCard, match[2] as 'power' | 'toughness' | 'counters');
-                      }
-                    }
-                  } else {
-                    const spec = computedCounter(`${COMPUTED_SIGIL}+*/+* ${src}@${qui}`);
-                    if (!spec) continue;
-                    const measure = measureCount(state, spec, target);
-                    baseValue = measure ? measure.n : 0;
-                    if (excludeOther) {
-                      const res = resolveSource(spec.source);
-                      if (res && target.zone.kind === res.source.zone) {
-                        const targetScryfall = target.faceDown === false ? target.scryfallId : undefined;
-                        const line = (targetScryfall ? cardMeta(targetScryfall)?.typeLine : undefined) ?? '';
-                        if (res.subtype !== null) {
-                          if (subtypesOf(line).has(res.subtype)) baseValue = Math.max(0, baseValue - 1);
-                        } else if (res.source.family !== undefined) {
-                          if (typeFamilies(line).has(res.source.family)) baseValue = Math.max(0, baseValue - 1);
-                        } else if (!res.source.distinctTypes) {
-                          baseValue = Math.max(0, baseValue - 1);
-                        }
-                      }
-                    }
-                  }
-
-                  const finalValue = Math.max(0, baseValue + offset);
-                  // Si le décompte final est nul ou négatif, aucun marqueur n'est posé
-                  // (ex: 1 ange sur le terrain avec un décalage de -1 => 0 marqueur).
-                  if (finalValue <= 0) continue;
-                  // Le journal annonce que le décompte est égal à 0.
-                  // Si le décompte final est nul ou négatif : aucun marqueur n'est posé.
-                  // On annonce dans le journal que le décompte est égal à 0.
-                  if (finalValue <= 0) {
+                  /*
+                   * **Un seul calcul, donc un seul marqueur.** La version
+                   * précédente émettait ici un « +1/+1 ×décompte » avant même
+                   * d'avoir appliqué « autres cartes uniquement » et le
+                   * décalage, puis émettait le bon marqueur juste après : la
+                   * carte portait les deux, et l'on voyait « +3/+3 » sous
+                   * « +2/+2 » sans comprendre d'où venait le premier.
+                   */
+                  const intents = frozenCounterIntents(
+                    state,
+                    target,
+                    { src, qui, offset, excludeOther },
+                    figeForm,
+                    figeName,
+                  );
+                  if (intents.length === 0) {
+                    // Le décompte donne zéro : on le dit, plutôt que de laisser
+                    // le geste paraître sans effet.
+                    //
+                    // **Non traduit, volontairement.** Ce texte part au serveur
+                    // et s'affiche chez *tous* les joueurs : le traduire dans la
+                    // langue de l'émetteur donnerait une bulle anglaise à une
+                    // table française. C'est la même règle que le journal
+                    // (docs/i18n.md §7), et elle se réglera au même endroit.
                     send({ type: 'CHAT_BUBBLE', text: `Décompte figé sur ${name} = 0 (aucun marqueur)` });
                     continue;
                   }
-
-                  if (figeForm === 'pt_set') {
-                    send({ type: 'SET_COUNTER', targetId: id, kind: `${finalValue}/${finalValue}` });
-                  } else if (figeForm === 'pt_add') {
-                    send({ type: 'SET_COUNTER', targetId: id, kind: `+${finalValue}/+${finalValue}` });
-                  } else if (figeForm === 'pt_counters') {
-                    if (finalValue > 0) {
-                      send({ type: 'SET_COUNTER', targetId: id, kind: '+1/+1', value: finalValue });
-                    }
-                    send({ type: 'SET_COUNTER', targetId: id, kind: '+1/+1', value: finalValue });
-                  } else if (figeForm === 'named') {
-                    const kind = figeName.trim() || 'charge';
-                    send({ type: 'SET_COUNTER', targetId: id, kind, value: finalValue });
-                  }
+                  for (const intent of intents) send({ type: 'SET_COUNTER', targetId: id, ...intent });
                 }
                 return;
               }
@@ -986,7 +952,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
       // et deux M de suite laissaient la carte cachée en écrivant deux fois la
       // même ligne de journal.
       {
-        label: facedown ? 'Retourner face visible' : 'Retourner face cachée',
+        label: facedown ? t('card.turnFaceUp') : t('card.turnFaceDown'),
         shortcut: 'M',
         separatorBefore: true,
         run: () => {
@@ -994,9 +960,9 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
           onClose();
         },
       },
-      { label: 'Transformer (recto-verso)', shortcut: 'F', run: () => { send({ type: 'FLIP_FACE', cardId: card.id }); onClose(); } },
+      { label: t('card.transform'), shortcut: 'F', run: () => { send({ type: 'FLIP_FACE', cardId: card.id }); onClose(); } },
       {
-        label: 'Copier en jeton',
+        label: t('card.copyAsToken'),
         shortcut: 'C',
         run: () => {
           send({ type: 'CREATE_TOKEN', copyOf: card.id, x: card.x + 24, y: card.y + 24 });
@@ -1010,20 +976,20 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
         // cherchait la cible dans la sélection courante et, faute de
         // sélection, ne partait jamais : c'est la raison pour laquelle
         // « l'attachement ne fonctionne pas ».
-        label: 'Attacher à… (cliquer la cible)',
+        label: t('card.attachTo'),
         run: () => {
           beginAttach({ kind: 'CARD', sourceId: card.id });
           onClose();
         },
       },
       ...(card.attachedTo
-        ? [{ label: 'Détacher', run: () => { send({ type: 'DETACH', sourceId: card.id }); onClose(); } }]
+        ? [{ label: t('card.detach'), run: () => { send({ type: 'DETACH', sourceId: card.id }); onClose(); } }]
         : []),
-      { label: 'Vers la main', shortcut: 'H', separatorBefore: true, run: () => move('HAND') },
-      { label: 'Au cimetière', shortcut: 'G', run: () => move('GRAVEYARD') },
-      { label: 'Exiler', shortcut: 'E', run: () => move('EXILE') },
-      { label: 'Dessus de la bibliothèque', shortcut: 'L', run: () => move('LIBRARY', { index: 'TOP' }) },
-      { label: 'Dessous de la bibliothèque', shortcut: 'B', run: () => move('LIBRARY', { index: 'BOTTOM' }) },
+      { label: t('card.toHand'), shortcut: 'H', separatorBefore: true, run: () => move('HAND') },
+      { label: t('card.toGraveyard'), shortcut: 'G', run: () => move('GRAVEYARD') },
+      { label: t('card.exile'), shortcut: 'E', run: () => move('EXILE') },
+      { label: t('zone.libraryTop'), shortcut: 'L', run: () => move('LIBRARY', { index: 'TOP' }) },
+      { label: t('zone.libraryBottom'), shortcut: 'B', run: () => move('LIBRARY', { index: 'BOTTOM' }) },
     );
   }
 
@@ -1036,25 +1002,25 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
    */
   if (inZone === 'SIDEBOARD') {
     entries.push(
-      { label: 'Dessus de la bibliothèque', shortcut: 'L', run: () => move('LIBRARY', { index: 'TOP' }) },
-      { label: 'Mélanger dans la bibliothèque', run: () => move('LIBRARY', { index: 'RANDOM' }) },
-      { label: 'Vers la main', shortcut: 'H', run: () => move('HAND') },
-      { label: 'Sur le champ de bataille', shortcut: 'P', run: () => move('BATTLEFIELD', landing()) },
+      { label: t('zone.libraryTop'), shortcut: 'L', run: () => move('LIBRARY', { index: 'TOP' }) },
+      { label: t('card.shuffleIntoLibrary'), run: () => move('LIBRARY', { index: 'RANDOM' }) },
+      { label: t('card.toHand'), shortcut: 'H', run: () => move('HAND') },
+      { label: t('card.toBattlefield'), shortcut: 'P', run: () => move('BATTLEFIELD', landing()) },
     );
   }
 
   if (inZone === 'GRAVEYARD' || inZone === 'EXILE' || inZone === 'COMMAND' || inZone === 'STACK_NOTE') {
     entries.push(
-      { label: 'Sur le champ de bataille', shortcut: 'P', run: () => move('BATTLEFIELD', landing()) },
-      { label: 'Vers la main', shortcut: 'H', run: () => move('HAND') },
-      { label: 'Dessus de la bibliothèque', shortcut: 'L', run: () => move('LIBRARY', { index: 'TOP' }) },
-      { label: 'Dessous de la bibliothèque', shortcut: 'B', run: () => move('LIBRARY', { index: 'BOTTOM' }) },
+      { label: t('card.toBattlefield'), shortcut: 'P', run: () => move('BATTLEFIELD', landing()) },
+      { label: t('card.toHand'), shortcut: 'H', run: () => move('HAND') },
+      { label: t('zone.libraryTop'), shortcut: 'L', run: () => move('LIBRARY', { index: 'TOP' }) },
+      { label: t('zone.libraryBottom'), shortcut: 'B', run: () => move('LIBRARY', { index: 'BOTTOM' }) },
     );
-    if (inZone !== 'EXILE') entries.push({ label: 'Exiler', shortcut: 'E', run: () => move('EXILE') });
-    if (inZone !== 'GRAVEYARD') entries.push({ label: 'Au cimetière', shortcut: 'G', run: () => move('GRAVEYARD') });
+    if (inZone !== 'EXILE') entries.push({ label: t('card.exile'), shortcut: 'E', run: () => move('EXILE') });
+    if (inZone !== 'GRAVEYARD') entries.push({ label: t('card.toGraveyard'), shortcut: 'G', run: () => move('GRAVEYARD') });
     if (inZone === 'COMMAND') {
       entries.push({
-        label: 'Lancer depuis la zone de commandement',
+        label: t('card.castFromCommand'),
         separatorBefore: true,
         run: () => {
           send({ type: 'MOVE_CARD', cardId: card.id, to: zone('BATTLEFIELD'), ...landing() });
@@ -1090,7 +1056,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
   ) {
     entries.push(
       {
-        label: 'Posée par erreur : reprendre en main',
+        label: t('card.takeBackHand'),
         separatorBefore: true,
         run: () => {
           send({ type: 'TAKE_BACK', cardId: card.id, to: 'HAND' });
@@ -1098,7 +1064,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
         },
       },
       {
-        label: 'Posée par erreur : masquer à tout le monde',
+        label: t('card.takeBackHide'),
         run: () => {
           send({ type: 'TAKE_BACK', cardId: card.id, to: 'FACE_DOWN' });
           onClose();
@@ -1109,7 +1075,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
 
   if (card.faceDown && card.owner === seat) {
     entries.push({
-      label: 'Regarder (annoncé publiquement)',
+      label: t('card.peekFaceDown'),
       separatorBefore: true,
       run: () => {
         send({ type: 'PEEK_FACE_DOWN', cardId: card.id });
@@ -1119,14 +1085,14 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
   }
   if (card.faceDown === false && card.owner === seat) {
     entries.push({
-      label: 'Changer d’impression…',
+      label: t('card.changePrinting'),
       separatorBefore: true,
       run: () => setPicking(true),
     });
   }
   if (card.kind === 'TOKEN' && card.faceDown === false) {
     entries.push({
-      label: 'Ranger ce jeton sur l’étagère',
+      label: t('card.shelveToken'),
       separatorBefore: true,
       run: () => {
         // L'étagère ne retient qu'une impression : aucun objet de partie n'y
@@ -1141,7 +1107,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
     // l'étagère » : on demande une confirmation, dans le menu lui-même plutôt
     // que par une modale native.
     entries.push({
-      label: confirming ? 'Confirmer la destruction ?' : 'Détruire le jeton',
+      label: confirming ? t('card.confirmDestroyToken') : t('card.destroyToken'),
       danger: true,
       separatorBefore: true,
       run: () => {
@@ -1191,11 +1157,20 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
       >
         <div className="border-b border-slate-800 px-3 py-1.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs font-semibold text-slate-100">
-            {card.faceDown === false ? cardName(card.scryfallId) : 'Carte face cachée'}
+            {card.faceDown === false
+              ? (localizedCardName(
+                  localizedCard(card.scryfallId, language),
+                  cardName(card.scryfallId),
+                ) ?? cardName(card.scryfallId))
+              : t('card.faceDown')}
           </p>
           {targets.length > 1 && (
-            <span className="shrink-0 rounded bg-sky-950/80 border border-sky-800/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-300">
-              {targets.length} sél.
+            <span
+              data-test="card-menu-count"
+              data-count={targets.length}
+              className="shrink-0 rounded bg-sky-950/80 border border-sky-800/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-300"
+            >
+              {t('card.selectedCount', { count: targets.length })}
             </span>
           )}
         </div>
@@ -1216,7 +1191,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
         {live.counters.length > 0 && (
           <div className="border-b border-slate-800 px-2 py-1.5" data-test="card-counters">
             <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              Marqueurs sur cette carte
+              {t('card.countersOnThis')}
             </p>
             {live.counters.map((counter) => {
               const pt = ptCounter(counter.kind);
@@ -1248,8 +1223,8 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                     }}
                     title={
                       calc
-                        ? `${describeComputed(calc)} — recalculé tout seul`
-                        : 'Régler ce marqueur, le renommer ou le retirer'
+                        ? t('card.counterComputedHint', { formula: describeComputed(calc) })
+                        : t('card.counterEditHint')
                     }
                   >
                     {calc ? `${COMPUTED_SIGIL} ${describeComputed(calc)}` : counter.kind}
@@ -1260,7 +1235,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                         className="h-6 w-6 shrink-0 rounded bg-slate-800 border border-slate-700 text-sm font-bold leading-none text-slate-200 hover:bg-slate-700 active:scale-95 transition-all"
                         data-test="counter-minus"
                         onClick={() => send({ type: 'ADD_COUNTER', targetId: card.id, kind: counter.kind, delta: -1 })}
-                        title="Un marqueur de moins"
+                        title={t('card.counterOneLess')}
                       >
                         −
                       </button>
@@ -1271,7 +1246,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                         className="h-6 w-6 shrink-0 rounded bg-slate-800 border border-slate-700 text-sm font-bold leading-none text-slate-200 hover:bg-slate-700 active:scale-95 transition-all"
                         data-test="counter-plus"
                         onClick={() => send({ type: 'ADD_COUNTER', targetId: card.id, kind: counter.kind, delta: 1 })}
-                        title="Un marqueur de plus"
+                        title={t('card.counterOneMore')}
                       >
                         +
                       </button>
@@ -1281,7 +1256,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
                     className="ml-0.5 h-6 shrink-0 rounded px-1.5 text-xs text-rose-300 hover:bg-rose-950/60 transition-colors"
                     data-test="counter-remove"
                     onClick={() => send({ type: 'SET_COUNTER', targetId: card.id, kind: counter.kind, value: null })}
-                    title="Retirer ce marqueur"
+                    title={t('card.counterRemove')}
                   >
                     ✕
                   </button>

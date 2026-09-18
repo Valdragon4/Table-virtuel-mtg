@@ -13,6 +13,9 @@ import {
   scryfallImage,
   subscribeCards,
 } from '../lib/cards.js';
+import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
+import { cardLanguageMark, resolveCardImage, type CardLanguageMark } from '../lib/i18n/index.js';
+import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
 
 /**
  * Les dimensions de référence vivent dans `lib/cards.ts`, parce que le calcul
@@ -769,6 +772,124 @@ export function measureCount(
   return { n, approx };
 }
 
+/* ------------------------------------------------------------------------- *
+ * Le décompte **figé** : compter une fois, puis poser des marqueurs ordinaires.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Les trois réglages du dialogue qui transforment un décompte brut en nombre
+ * de marqueurs à poser.
+ *
+ * Ils vivent ici, et non dans `CardMenu`, parce que l'aperçu en direct et la
+ * pose faisaient chacun leur propre version du même calcul — deux copies du
+ * même code, donc deux occasions de diverger. C'est exactement ce qui s'est
+ * produit : la pose émettait un marqueur **avant** d'appliquer l'exclusion, et
+ * la carte se retrouvait avec deux pastilles, le décompte non filtré et le
+ * décompte filtré. Un seul calcul, partagé, ne peut plus se contredire.
+ */
+export interface FrozenOptions {
+  /** Code de source du dialogue : `bat:angel`, `cim.creature`, `self:power`… */
+  src: string;
+  qui: ComputedSpec['scope'];
+  /** Décalage de départ ; un champ vide vaut 0, comme l'aide du dialogue l'annonce. */
+  offset: number;
+  /** « Autres cartes uniquement » : la porteuse ne se compte pas elle-même. */
+  excludeOther: boolean;
+}
+
+/**
+ * Le décalage saisi, tel qu'un champ de texte le rend.
+ *
+ * Vide, « + », « abc » : rien de tout cela n'est un nombre, et l'aide promet
+ * « 0 par défaut ». On tient la promesse ici plutôt que dans chaque appelant,
+ * où un `Number.parseInt` nu aurait rendu `NaN` et empoisonné tout le calcul.
+ */
+export function parseOffset(raw: string | undefined): number {
+  const n = Number.parseInt((raw ?? '').trim(), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Le décompte figé d'une carte : mesure, exclusion de la porteuse, décalage.
+ *
+ * `base` est ce que la zone contient réellement (exclusion comprise), `final`
+ * ce qui sera posé une fois le décalage appliqué et le plancher à zéro tenu.
+ * Rend `null` quand la source est illisible — aucun marqueur ne doit alors
+ * partir, plutôt qu'un zéro qui aurait l'air d'un décompte.
+ */
+export function frozenCount(
+  state: GameState,
+  card: CardView,
+  o: FrozenOptions,
+): { base: number; final: number } | null {
+  let base = 0;
+  if (o.src.startsWith('self:')) {
+    base = getCardStat(card, o.src.slice(5) as 'power' | 'toughness' | 'counters');
+  } else if (o.src.startsWith('card:')) {
+    const match = /^card:([^:]+):(power|toughness|counters)$/.exec(o.src);
+    if (!match) return null;
+    const from = match[1] ? state.cards.get(match[1]) : undefined;
+    if (!from) return null;
+    base = getCardStat(from, match[2] as 'power' | 'toughness' | 'counters');
+  } else {
+    const spec = computedCounter(`${COMPUTED_SIGIL}+*/+* ${o.src}@${o.qui}`);
+    if (!spec) return null;
+    const measure = measureCount(state, spec, card);
+    if (!measure) return null;
+    base = measure.n;
+    if (o.excludeOther) {
+      /* « Pour chaque *autre* ange » : la porteuse n'est retirée que si elle
+         est dans la zone comptée et qu'elle répond au critère — sinon elle
+         n'avait jamais été comptée, et la soustraire ferait perdre un ange. */
+      const res = resolveSource(spec.source);
+      if (res && card.zone.kind === res.source.zone) {
+        const line = (card.faceDown === false ? cardMeta(card.scryfallId)?.typeLine : undefined) ?? '';
+        const compte =
+          res.subtype !== null
+            ? subtypesOf(line).has(res.subtype)
+            : res.source.distinctTypes
+              ? false
+              : res.source.family !== undefined
+                ? typeFamilies(line).has(res.source.family)
+                : true;
+        if (compte) base = Math.max(0, base - 1);
+      }
+    }
+  }
+  return { base, final: Math.max(0, base + o.offset) };
+}
+
+/** Un `SET_COUNTER` à émettre, sans le `targetId` que l'appelant connaît seul. */
+export interface CounterIntent {
+  kind: string;
+  value?: number;
+}
+
+/**
+ * Ce qu'une pose figée doit émettre — **un seul marqueur**, jamais deux.
+ *
+ * Renvoyer la liste plutôt que d'appeler `send` dans la boucle, c'est ce qui
+ * rend la règle vérifiable par un test : un doublon se voit dans un tableau,
+ * il ne se voyait pas dans une suite d'effets.
+ */
+export function frozenCounterIntents(
+  state: GameState,
+  card: CardView,
+  o: FrozenOptions,
+  form: 'pt_set' | 'pt_add' | 'pt_counters' | 'named',
+  name: string,
+): CounterIntent[] {
+  const count = frozenCount(state, card, o);
+  // Décompte illisible ou nul : rien ne se pose. Un « 0/0 » posé ferait mourir
+  // la créature, et un marqueur à zéro n'est pas ce que le joueur demandait.
+  if (!count || count.final <= 0) return [];
+  const n = count.final;
+  if (form === 'pt_set') return [{ kind: `${n}/${n}` }];
+  if (form === 'pt_add') return [{ kind: `+${n}/+${n}` }];
+  if (form === 'pt_counters') return [{ kind: '+1/+1', value: n }];
+  return [{ kind: name.trim() || 'charge', value: n }];
+}
+
 /** Le côté gauche ou droit de la pastille, une fois le décompte connu. */
 export function renderSide(side: ComputedSide, n: number): string {
   const v = side.coef * n + side.offset;
@@ -1160,6 +1281,68 @@ export interface CardSpriteProps {
   onContextMenu?: (event: React.MouseEvent) => void;
 }
 
+/**
+ * Le repère de langue, dans la grammaire des autres repères de ce fichier :
+ * petit, en coin, inerte au pointeur, un anneau de couleur et trois lettres.
+ *
+ * **Il est strictement personnel.** Il se dérive de la résolution localisée,
+ * côté client, pour la langue de **celui qui regarde** : rien ne part au
+ * serveur, aucun event ne le transporte, et un joueur ne voit jamais le repère
+ * d'un autre. Un joueur en anglais n'en voit aucun.
+ *
+ * **En haut à gauche, et minuscule.** C'est le coin demandé, et la taille aussi :
+ * ce repère double une information que la carte porte déjà — son texte est en
+ * anglais, cela se voit. Il ne sert qu'à dire que c'est un **repli** et non un
+ * choix, donc il doit se lire quand on le cherche et disparaître quand on ne le
+ * cherche pas. D'où la moitié de la taille des autres repères, et pas de
+ * remplissage.
+ *
+ * Deux voisins occupent le même coin — « face cachée » et l'œil de révélation —
+ * et peuvent coexister avec lui : `CardSprite` le décale alors sous eux plutôt
+ * que de les recouvrir. Le haut-droit porte la marque de jeton, et le bas est
+ * réservé aux marqueurs, qui débordent vers le bas et partent de la gauche.
+ *
+ * L'infobulle dit **pourquoi**, parce que les trois cas n'appellent pas la même
+ * réaction : changer d'édition peut régler le premier, rien ne réglera le
+ * second, et le troisième n'est pas un défaut mais une divergence assumée.
+ */
+export function CardLanguageBadge({
+  mark,
+  className = 'absolute left-1 top-1',
+}: {
+  mark: CardLanguageMark;
+  className?: string;
+}): React.ReactElement {
+  const substitue = mark.kind === 'substituted';
+  // Pour une substitution, l'édition réelle est ce qu'il y a de plus utile à
+  // afficher : elle dit d'un coup d'œil que l'image ne vient pas de l'impression
+  // choisie, et laquelle elle est. À défaut, on se rabat sur « fr ».
+  const etiquette = substitue ? (mark.setCode ?? mark.language) : 'en';
+  const titre = substitue
+    ? `Illustration d’une autre édition (${(mark.setCode ?? '').toUpperCase() || 'édition inconnue'}) : l’impression choisie n’existe pas dans votre langue. Le sélecteur d’impression, lui, annonce toujours l’impression réellement choisie.`
+    : mark.kind === 'unusableImage'
+      ? 'L’impression traduite existe, mais Scryfall n’en publie pas de scan utilisable : illustration anglaise.'
+      : 'Pas de version traduite de cette impression : illustration anglaise. La carte existe peut-être dans votre langue sous une autre édition.';
+
+  return (
+    <span
+      className={`pointer-events-none inline-flex items-center gap-px rounded-[2px] bg-slate-950/80 px-px text-[6px] font-bold uppercase leading-[1.4] tracking-wide ring-1 ${className} ${
+        substitue ? 'text-emerald-300 ring-emerald-400/40' : 'text-slate-300 ring-slate-400/30'
+      }`}
+      data-test="card-language-mark"
+      data-language-mark={mark.kind}
+      title={titre}
+    >
+      {substitue && (
+        <svg aria-hidden fill="none" height="4" viewBox="0 0 10 8" width="5">
+          <path d="M1 2.5h7L6.2 1M9 5.5H2l1.8 1.5" stroke="currentColor" strokeWidth="1.6" />
+        </svg>
+      )}
+      {etiquette}
+    </span>
+  );
+}
+
 export function CardSprite({
   card,
   cardBackUrl,
@@ -1172,13 +1355,60 @@ export function CardSprite({
   onContextMenu,
 }: CardSpriteProps): React.ReactElement {
   useCardMetaTick();
+  // Les résolutions localisées arrivent par lots, comme les métadonnées : sans
+  // cet abonnement, la carte resterait en anglais jusqu'au prochain rendu venu
+  // d'ailleurs.
+  useLocalizationTick();
+  const language = useLanguage();
+  // Sélecteur scalaire : un booléen, comparable par `Object.is`.
+  const forceLocalizedPrinting = useForceLocalizedPrinting();
 
   const mySeat = useGame((s) => s.mySeat);
   const seatHandRevealed = useGame((s) => s.handsRevealed.has(card.zone.seat));
   const revealed = revealFlag(card, mySeat, seatHandRevealed);
 
-  const meta = card.faceDown === false ? cardMeta(card.scryfallId) : undefined;
-  const face = card.faceDown === false && card.flipped && isDoubleFaced(meta) ? 'back' : 'front';
+  // Une carte dont l'identité nous est cachée ne demande rien : on ne connaît
+  // pas son identifiant, et le demander serait une fuite autant qu'une erreur.
+  const known = card.faceDown === false ? card : null;
+  const meta = known ? cardMeta(known.scryfallId) : undefined;
+  // `resolveCardImage` compte les faces à partir de 0 ; le retournement ne
+  // change pas d'un iota, seule la façon de nommer la face demandée change.
+  const faceIndex = known && known.flipped && isDoubleFaced(meta) ? 1 : 0;
+  const localized = known ? localizedCard(known.scryfallId, language) : undefined;
+  /*
+   * La résolution n'est faite que pour une carte dont on connaît l'identité —
+   * `known` est nul dès que `faceDown !== false`. C'est aussi ce qui garantit
+   * qu'aucun repère de langue ne peut apparaître sur un dos de carte : sans
+   * résolution, il n'y a rien à marquer, et `cardLanguageMark` exige en plus
+   * qu'on lui affirme explicitement que l'identité est connue.
+   *
+   * Si la résolution ne rend pas d'URL pour cette face, on redescend sur le
+   * motif du CDN, qui est ce que cette carte affichait avant ce chantier.
+   */
+  const resolved = known
+    ? resolveCardImage({
+        card: meta ?? { scryfallId: known.scryfallId },
+        localized,
+        language,
+        face: faceIndex,
+        allowSubstitute: forceLocalizedPrinting,
+      })
+    : null;
+  const imageSrc = known
+    ? (resolved?.url ?? scryfallImage(known.scryfallId, 'large', faceIndex === 0 ? 'front' : 'back'))
+    : null;
+  /*
+   * Le repli n'est plus muet, mais il reste discret : trois lettres en coin, et
+   * seulement pour celui qui regarde. Une carte `pending` n'est jamais marquée —
+   * elle va sans doute devenir française d'ici une seconde.
+   */
+  const languageMark = cardLanguageMark({
+    identityKnown: known !== null,
+    resolved,
+    language,
+  });
+  // Le nom imprimé français quand il existe ; le nom du catalogue sinon.
+  const shownName = localizedCardName(localized, meta?.name, faceIndex) ?? 'Carte';
   const width = CARD_WIDTH * scale;
   const height = CARD_HEIGHT * scale;
 
@@ -1204,17 +1434,19 @@ export function CardSprite({
       }
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      title={card.faceDown === false ? (meta?.name ?? 'Carte') : 'Carte face cachée'}
+      title={known ? shownName : 'Carte face cachée'}
     >
-      {card.faceDown === false ? (
+      {card.faceDown === false && imageSrc ? (
         <img
-          alt={meta?.name ?? 'Carte'}
+          alt={shownName}
           className="h-full w-full rounded-[6px] object-cover"
           draggable={false}
           loading="lazy"
           /* L'image vient directement du CDN Scryfall : elle ne transite jamais
-             par notre serveur, qui n'en garde aucune copie. Toujours en haute résolution ('large'). */
-          src={scryfallImage(card.scryfallId, 'large', face)}
+             par notre serveur, qui n'en garde aucune copie. Toujours en haute
+             résolution ('large'). L'URL française est une **autre** URL, publiée
+             par Scryfall pour une autre carte — elle ne se fabrique pas. */
+          src={imageSrc}
         />
       ) : (
         <CardBack url={cardBackUrl} />
@@ -1305,6 +1537,32 @@ export function CardSprite({
             <circle cx="8" cy="5" fill="currentColor" r="1.9" />
           </svg>
         </span>
+      )}
+
+      {/*
+        Le repère de langue. `languageMark` vaut `null` dès que l'identité de la
+        carte nous est cachée : rien ne peut donc s'afficher sur un dos, ce qui
+        apprendrait à son porteur que notre client en connaît l'identité.
+
+        Il occupe le coin haut-gauche, que deux voisins peuvent déjà tenir : le
+        bandeau « face cachée » d'une carte posée face cachée dont on connaît
+        l'identité, et l'œil de révélation. Les deux disent quelque chose sur la
+        **partie** ; ce repère-ci ne dit qu'une chose sur l'**affichage**. Il
+        descend donc sous eux au lieu de les recouvrir — et sous les deux à la
+        fois quand ils coexistent, ce qui arrive sur une carte montrée puis
+        retournée.
+      */}
+      {languageMark && (
+        <CardLanguageBadge
+          className={`absolute left-1 ${
+            card.faceDown === false && card.facedownOnTable && revealed !== null
+              ? 'top-11'
+              : (card.faceDown === false && card.facedownOnTable) || revealed !== null
+                ? 'top-6'
+                : 'top-1'
+          }`}
+          mark={languageMark}
+        />
       )}
 
       {card.counters.length > 0 && (
