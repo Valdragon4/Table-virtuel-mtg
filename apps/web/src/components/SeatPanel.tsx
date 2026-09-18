@@ -787,6 +787,15 @@ function ZonePile({
       )}
       {shownBadge !== null && (
         <span
+          /*
+           * Ancre explicite, et elle a coûté cher avant d'exister : la recette
+           * cherchait « le premier `span` de la pile dont le texte est un
+           * nombre ». Depuis que la carte du dessus révélée porte une pastille
+           * de mécaniques — qui affiche, elle aussi, un nombre —, ce premier
+           * `span` était tantôt l'un tantôt l'autre selon la carte tirée, et le
+           * pas échouait deux fois sur cinq.
+           */
+          data-test="pile-count"
           className={`absolute -right-1 -top-1 min-w-5 rounded px-1 text-[11px] font-semibold ring-1 ${
             badgeTone === 'tax'
               ? 'bg-amber-900/90 text-amber-200 ring-amber-500/50'

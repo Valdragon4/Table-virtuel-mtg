@@ -14,6 +14,7 @@ import { resolveCardImage, tokenName } from '../lib/i18n/index.js';
 import { useLanguage } from '../store/prefs.js';
 import { findDropTarget } from '../lib/drag.js';
 import { loadShelf, saveShelf, type ShelfToken } from '../lib/shelf.js';
+import { TokenNameBand } from './TokenNameBand.js';
 
 /** Position de repli quand on clique sans viser. */
 const DEFAULT_DROP = { x: 60, y: 60 };
@@ -169,7 +170,9 @@ export function TokenShelf({ onSearch }: { onSearch: () => void }): React.ReactE
             return (
             <div key={token.scryfallId} className="group relative">
               <button
-                className="block w-full overflow-hidden rounded-lg ring-1 ring-white/10 hover:ring-2 hover:ring-sky-400 shadow-md transition-all active:scale-95"
+                /* `relative` : le bandeau de nom se colle au bord bas de la
+                   vignette, et `overflow-hidden` lui rend l'arrondi du cadre. */
+                className="relative block w-full overflow-hidden rounded-lg ring-1 ring-white/10 hover:ring-2 hover:ring-sky-400 shadow-md transition-all active:scale-95"
                 data-test="shelf-token"
                 data-token={token.scryfallId}
                 /* Une vignette d'étagère est une impression, pas un objet de
@@ -188,6 +191,16 @@ export function TokenShelf({ onSearch }: { onSearch: () => void }): React.ReactE
                      rien n'est préchargé ni mis en cache ici. */
                   src={src}
                 />
+                {/*
+                  Le nom français, écrit par-dessus l'illustration — qui, elle,
+                  restera anglaise : Scryfall ne publie aucun jeton traduit. Il
+                  était jusqu'ici calculé pour n'aller que dans `title` et
+                  `alt`, c'est-à-dire nulle part pour qui regarde l'étagère.
+                  Une vignette d'étagère est **par construction** un jeton dont
+                  on connaît l'impression : il n'y a pas de face cachée ici, et
+                  rien à protéger.
+                */}
+                <TokenNameBand fontSize={9} name={shownName} />
               </button>
               <button
                 className="absolute -right-1 -top-1 hidden h-4 w-4 rounded-full bg-slate-900 text-[10px] leading-4 text-slate-300 ring-1 ring-white/20 group-hover:block"

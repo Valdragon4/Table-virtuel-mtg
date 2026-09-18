@@ -7,6 +7,7 @@ import { foldForSearch } from './Dialog.js';
 import { useGame } from '../store/game.js';
 import { useLanguage } from '../store/prefs.js';
 import { useCloseOnEscape } from '../lib/overlay.js';
+import { TokenNameBand } from './TokenNameBand.js';
 
 /**
  * Recherche de jeton ou de carte, servie par la base locale — jamais par Scryfall.
@@ -196,18 +197,37 @@ export function TokenSearch({
                 onClose();
               }}
             >
-              <img
-                alt={shownName}
-                className="w-full rounded ring-1 ring-transparent transition group-hover:ring-sky-500"
-                loading="lazy"
-                src={src}
-              />
+              {/*
+                `relative` : le bandeau de nom d'un jeton se colle au bord bas
+                de la vignette, et `overflow-hidden` lui rend l'arrondi.
+              */}
+              <div className="relative overflow-hidden rounded">
+                <img
+                  alt={shownName}
+                  className="w-full rounded ring-1 ring-transparent transition group-hover:ring-sky-500"
+                  loading="lazy"
+                  src={src}
+                />
+                {/*
+                  Le bandeau ne concerne **que** les jetons, pour la raison déjà
+                  dite plus haut : la case décochée rend des cartes ordinaires,
+                  dont l'illustration porte déjà son nom imprimé — le recouvrir
+                  d'un doublon serait du bruit, et d'un nom qui ne nous
+                  appartient pas.
+                */}
+                {estJeton && <TokenNameBand fontSize={10} name={shownName} />}
+              </div>
               {/*
                 Le nom seul ne suffit pas à choisir : il existe seize « Spirit »
                 différents. On affiche donc ce qui les sépare — la taille et la
                 couleur — sans quoi l'utilisateur doit deviner à la vignette.
+
+                Pour un jeton, le nom **n'est plus répété ici** : le bandeau le
+                porte, sur l'illustration même, et l'écrire deux fois à trois
+                pixels d'écart n'aide personne à choisir. Une carte ordinaire,
+                elle, n'a pas de bandeau et garde sa ligne.
               */}
-              <p className="mt-1 truncate text-[11px] text-slate-300">{shownName}</p>
+              {!estJeton && <p className="mt-1 truncate text-[11px] text-slate-300">{shownName}</p>}
               <p className="truncate text-[10px] text-slate-500">
                 {[
                   card.power !== null && card.toughness !== null

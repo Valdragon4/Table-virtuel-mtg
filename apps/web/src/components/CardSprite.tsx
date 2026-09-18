@@ -37,6 +37,7 @@ import {
   type CardLanguageMark,
 } from '../lib/i18n/index.js';
 import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
+import { TokenNameBand, tokenBandName } from './TokenNameBand.js';
 
 /**
  * Les dimensions de référence vivent dans `lib/cards.ts`, parce que le calcul
@@ -1945,10 +1946,27 @@ export function CardSprite({
    * — `meta.name` reste la clé partout ailleurs. `card.kind` est le signal qui
    * fait foi : c'est le protocole qui dit qu'un objet est un jeton, pas nous.
    */
+  const nomCatalogue = localizedCardName(localized, meta?.name, faceIndex);
   const shownName =
-    (card.kind === 'TOKEN'
-      ? tokenName(localizedCardName(localized, meta?.name, faceIndex), language)
-      : localizedCardName(localized, meta?.name, faceIndex)) ?? 'Carte';
+    (card.kind === 'TOKEN' ? tokenName(nomCatalogue, language) : nomCatalogue) ?? 'Carte';
+  /*
+   * Le nom à **peindre sur** l'illustration du jeton, ou `null` s'il n'y a rien
+   * à peindre. La règle entière — c'est un jeton, et son identité nous est
+   * connue — vit dans `tokenBandName`, où elle est testée une fois pour les
+   * trois endroits qui affichent un jeton.
+   *
+   * `known !== null` est exactement `card.faceDown === false`, c'est-à-dire la
+   * condition sous laquelle l'`<img>` ci-dessous est rendue : le bandeau naît et
+   * meurt avec l'illustration qu'il légende, et ne peut donc pas apparaître sur
+   * un dos de carte. Pour un adversaire, `faceDown` vaut `true` et le
+   * `scryfallId` n'est même pas publié — il n'y a rien à fuiter par ce chemin.
+   */
+  const nomJeton = tokenBandName({
+    kind: card.kind,
+    identityKnown: known !== null,
+    name: nomCatalogue,
+    language,
+  });
   const width = CARD_WIDTH * scale;
   const height = CARD_HEIGHT * scale;
 
@@ -2140,6 +2158,27 @@ export function CardSprite({
         keywords={keywords}
         language={language}
       />
+
+      {/*
+        Le nom français du jeton, écrit sur son illustration.
+
+        **Pourquoi il est là.** Scryfall ne publie aucun jeton hors anglais : le
+        nom peint sur la carte restera « Faerie » quoi qu'on fasse, et le
+        glossaire qui sait dire « Peuple fée » n'allait jusqu'ici que dans le
+        `title` et l'`alt`, c'est-à-dire nulle part pour qui joue.
+
+        **Sa taille suit le sprite.** `16 * scale` donne les 8 px des autres
+        repères de ce fichier au champ de bataille (`BATTLEFIELD_SCALE` vaut
+        0,5), moins sur une vignette de pile, plus dans la consultation
+        agrandie. Un bandeau à taille fixe aurait été énorme sur une vignette et
+        illisible une fois la table dézoomée.
+
+        **En bas**, parce que le haut porte le nom imprimé de la carte, que les
+        coins sont pris (face cachée, révélation, langue, mécaniques à gauche ;
+        marque de jeton à droite), et que les marqueurs, eux, débordent **sous**
+        la carte (`-bottom-1`) et ne se recouvrent donc pas avec lui.
+      */}
+      {nomJeton && <TokenNameBand fontSize={16 * scale} name={nomJeton} />}
 
       {card.counters.length > 0 && (
         <div className="absolute -bottom-1 left-1 right-1 flex flex-wrap gap-1">

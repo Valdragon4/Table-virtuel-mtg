@@ -3767,6 +3767,194 @@ async function findDoubleFaced() {
     );
   });
 
+  await step('le nom français d’un jeton est écrit sur son illustration — jamais sur un dos', async () => {
+    /*
+     * Pourquoi ce pas existe, et pourquoi à deux sièges.
+     *
+     * Le glossaire (`lib/i18n/tokenNames.ts`) sait dire « Trésor » depuis
+     * longtemps ; personne ne le voyait. Les trois endroits où un jeton
+     * apparaît — l’étagère, la recherche, la table — n’affichaient que son
+     * illustration, et Scryfall n’en publie aucune en français : sur 2 838
+     * jetons au catalogue, les 110 pour lesquels une impression française a été
+     * cherchée sont toutes « introuvables ». Le nom est donc peint par-dessus.
+     *
+     * Et c’est exactement le genre d’affordance qui fuit. Un bandeau qui
+     * s’afficherait sur un jeton retourné dirait à la table ce que seul son
+     * propriétaire a le droit de savoir. À un seul siège on ne peut rien en
+     * prouver : `faceDown` y vaut toujours `false`, même sur un permanent posé
+     * face cachée (c’est `facedownOnTable` qui le dit). On regarde donc le DOM
+     * réellement peint **chez le voisin**, à qui le serveur n’envoie ni nom ni
+     * `scryfallId`.
+     */
+    const { voisin } = await ouvrirSecondSiege('Denis');
+
+    // Un Trésor, par le chemin le plus court : le menu « Créer », comme le fait
+     // déjà l’étape de l’étagère. « Treasure » est au glossaire, et son nom
+    // français en diffère — sans quoi le pas passerait sans rien montrer.
+    const avant = await page.evaluate(() =>
+      [...window.__mtg.getState().cards.values()].filter((c) => c.kind === 'TOKEN').map((c) => c.id),
+    );
+    await page.getByRole('button', { name: /Créer/ }).click();
+    await page.getByRole('button', { name: 'Treasure', exact: true }).click();
+    const id = await page
+      .waitForFunction(
+        (deja) => {
+          const neuf = [...window.__mtg.getState().cards.values()].filter(
+            (c) => c.kind === 'TOKEN' && !deja.includes(c.id),
+          );
+          return neuf.length > 0 ? neuf[neuf.length - 1].id : null;
+        },
+        avant,
+        { timeout: 15000 },
+      )
+      .then((h) => h.jsonValue());
+
+    // 1. Chez son créateur : le bandeau porte bien le nom **français**.
+    const bandeau = page.locator(`[data-card="${id}"] [data-test="token-name-band"]`);
+    await bandeau.waitFor({ timeout: 10000 });
+    const ecrit = (await bandeau.textContent())?.trim();
+    if (ecrit !== 'Trésor') {
+      throw new Error(`le bandeau du jeton dit « ${ecrit} » au lieu de « Trésor »`);
+    }
+
+    /*
+     * 2. Il doit être **inerte au pointeur** et **discret**. La table repose
+     *    entièrement sur le survol et le glisser-déposer, et un bandeau posé en
+     *    bas d’une carte se trouve précisément là où l’on attrape un permanent :
+     *    s’il interceptait le pointeur, on ne pourrait plus déplacer un jeton en
+     *    le prenant par le bas. Et il doit rester une bande basse — on ajoute
+     *    une affordance, on ne redessine pas la carte.
+     */
+    const forme = await page.evaluate((cardId) => {
+      const carte = document.querySelector(`[data-card="${cardId}"]`);
+      const bande = carte?.querySelector('[data-test="token-name-band"]');
+      if (!carte || !bande) return null;
+      const c = carte.getBoundingClientRect();
+      const b = bande.getBoundingClientRect();
+      return {
+        pointerEvents: getComputedStyle(bande).pointerEvents,
+        largeurRelative: b.width / c.width,
+        hauteurRelative: b.height / c.height,
+        dessus: document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)?.closest(
+          '[data-test="token-name-band"]',
+        )
+          ? 'le bandeau'
+          : 'la carte',
+      };
+    }, id);
+    if (!forme) throw new Error('bandeau introuvable dans le DOM du jeton');
+    if (forme.pointerEvents !== 'none') {
+      throw new Error(`le bandeau intercepte le pointeur (pointer-events: ${forme.pointerEvents})`);
+    }
+    if (forme.dessus !== 'la carte') {
+      throw new Error('le point sous le bandeau désigne le bandeau et non la carte');
+    }
+    if (forme.hauteurRelative > 0.3) {
+      throw new Error(
+        `le bandeau couvre ${Math.round(forme.hauteurRelative * 100)} % de la hauteur de la carte`,
+      );
+    }
+    console.log(
+      `      bandeau « ${ecrit} » : ${Math.round(forme.hauteurRelative * 100)} % de la hauteur, inerte au pointeur`,
+    );
+
+    // 3. Le voisin, qui voit le jeton face visible, lit le même nom.
+    await voisin.locator(`[data-card="${id}"] [data-test="token-name-band"]`).waitFor({ timeout: 10000 });
+
+    /*
+     * 4. L’invariant : **rien de ce que le client ne sait pas identifier ne
+     *    porte de bandeau**.
+     *
+     * Pourquoi ce n’est pas un jeton qu’on retourne ici. `CREATE_TOKEN` inscrit
+     * le jeton dans le `knownTo` de **tous les sièges assis** (engine-2), et
+     * `knownTo` est monotone : `TURN_FACE_DOWN` sur un jeton que la table a vu
+     * naître ne le cache donc à personne, et c’est voulu — c’est la réalité
+     * physique du geste. Un jeton à la fois **face cachée** et **inconnu** n’est
+     * pas atteignable depuis l’interface à une table où chacun était là à sa
+     * création ; cette branche-là se vérifie au test unitaire
+     * (`apps/web/test/jetons-noms-fr.test.ts`), où l’on peut fabriquer la vue.
+     *
+     * Ce qui est atteignable, et qui est le vrai risque, c’est qu’un bandeau
+     * s’échappe sur un **dos de carte**. On en fabrique donc un vrai — le
+     * voisin pose un morph, que nous n’avons jamais vu — puis on balaie la
+     * page entière : aucune carte dont la vue dit `faceDown` ne doit porter de
+     * bandeau, et il doit y en avoir au moins une, sinon on ne prouve rien.
+     */
+    // Le voisin a joué et défaussé depuis le début de la recette : sa main peut
+    // être vide, et l'on mesurerait alors l'absence de carte plutôt que celle de
+    // bandeau.
+    await voisin.evaluate(() => window.__mtg.getState().send({ type: 'DRAW', count: 2 }));
+    await voisin.waitForFunction(
+      () => {
+        const s = window.__mtg.getState();
+        return [...s.cards.values()].some((c) => c.zone.kind === 'HAND' && c.zone.seat === s.mySeat);
+      },
+      null,
+      { timeout: 10000 },
+    );
+    const morph = await voisin.evaluate(() => {
+      const s = window.__mtg.getState();
+      const carte = [...s.cards.values()].find(
+        (c) => c.zone.kind === 'HAND' && c.zone.seat === s.mySeat,
+      );
+      if (!carte) return null;
+      s.send({
+        type: 'MOVE_CARD',
+        cardId: carte.id,
+        to: { seat: s.mySeat, kind: 'BATTLEFIELD' },
+        x: 120,
+        y: 120,
+        faceDown: true,
+      });
+      return carte.id;
+    });
+    if (!morph) throw new Error('le voisin n’a plus de carte en main pour poser un morph');
+    await page.waitForFunction(
+      (cardId) => window.__mtg.getState().cards.get(cardId)?.faceDown === true,
+      morph,
+      { timeout: 10000 },
+    );
+    await page.waitForTimeout(300);
+
+    const balayage = await page.evaluate(() => {
+      const s = window.__mtg.getState();
+      const dos = [];
+      const fuites = [];
+      for (const el of document.querySelectorAll('[data-card]')) {
+        const vue = s.cards.get(el.getAttribute('data-card'));
+        // Sans vue, ce n'est pas une carte de la partie (fantôme de glissement,
+        // aperçu) : on ne compte que ce dont le store dit qu'il est un dos.
+        if (!vue || vue.faceDown === false) continue;
+        dos.push(el.getAttribute('data-card'));
+        if (el.querySelector('[data-test="token-name-band"]')) {
+          fuites.push({ id: el.getAttribute('data-card'), texte: el.textContent.trim() });
+        }
+      }
+      return { dos, fuites };
+    });
+    if (balayage.dos.length === 0) {
+      throw new Error('aucun dos de carte à l’écran : le balayage ne prouverait rien');
+    }
+    if (balayage.fuites.length > 0) {
+      throw new Error(
+        `fuite : ${balayage.fuites.length} carte(s) face cachée(s) portent un bandeau de nom — ` +
+          JSON.stringify(balayage.fuites),
+      );
+    }
+    console.log(
+      `      ${balayage.dos.length} dos de carte à l’écran, aucun ne porte de bandeau de nom`,
+    );
+
+    // On rend la table comme on l’a trouvée : le morph du voisin repart en main.
+    await voisin.evaluate(
+      (cardId) => {
+        const s = window.__mtg.getState();
+        s.send({ type: 'MOVE_CARD', cardId, to: { seat: s.mySeat, kind: 'HAND' } });
+      },
+      morph,
+    );
+  });
+
   await step('à deux sièges, décrocher une étiquette ne la déplace pas', async () => {
     /*
      * Pourquoi cette étape existe **en plus** de celle qui décroche déjà une
@@ -4375,9 +4563,10 @@ async function findDoubleFaced() {
           const face = pile?.querySelector('img[src*="cards.scryfall.io"]') ?? null;
           const dos = pile?.querySelector('img[src*="backs.scryfall.io"]') ?? null;
           const oeil = pile?.querySelector('[data-test="top-revealed"]') ?? null;
-          const compte = [...(pile?.querySelectorAll('span') ?? [])]
-            .map((e) => (e.textContent ?? '').trim())
-            .find((t) => /^\d+$/.test(t));
+          // Ancre, et non « le premier `span` qui contient un nombre » : la
+          // pastille de mécaniques de la carte révélée en porte un aussi, et
+          // passait devant selon la carte tirée.
+          const compte = (pile?.querySelector('[data-test="pile-count"]')?.textContent ?? '').trim() || undefined;
           return {
             cardId: id,
             connue: id === null ? null : (s.cards.get(id)?.scryfallId ?? null),

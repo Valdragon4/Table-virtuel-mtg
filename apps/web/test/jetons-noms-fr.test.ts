@@ -15,6 +15,7 @@ import {
   tokenQueryAliases,
 } from '../src/lib/i18n/tokenNames.js';
 import { foldForSearch } from '../src/components/Dialog.js';
+import { tokenBandName } from '../src/components/TokenNameBand.js';
 
 const ID = '11111111-2222-3333-4444-555555555555';
 
@@ -157,5 +158,64 @@ describe('le repère de langue sur un jeton', () => {
     expect(
       cardLanguageMark({ identityKnown: true, resolved: resolu, language: 'fr' }),
     ).not.toBeNull();
+  });
+});
+
+/**
+ * Le bandeau de nom écrit **par-dessus** l'illustration d'un jeton.
+ *
+ * Ce qui se fige ici n'est pas la mise en forme — c'est la seule condition qui
+ * ait des conséquences : **quand** un nom s'écrit. Elle est recopiée nulle part
+ * ailleurs, parce qu'un bandeau qui apparaîtrait sur un dos de carte
+ * apprendrait à la table que notre client, lui, connaît l'identité de la carte.
+ * C'est la fuite d'information cachée la plus bête qu'on puisse écrire, et elle
+ * se teste en trois lignes.
+ */
+describe('le bandeau de nom d’un jeton', () => {
+  it('écrit le nom français quand on connaît l’identité du jeton', () => {
+    const band = (name: string): string | null =>
+      tokenBandName({ kind: 'TOKEN', identityKnown: true, name, language: 'fr' });
+    expect(band('Treasure')).toBe('Trésor');
+    expect(band('Faerie')).toBe('Peuple fée');
+    expect(band('Elf Warrior')).toBe('Elfe et Guerrier');
+    // Pas de traduction à moitié : l'anglais s'écrit tel quel plutôt que faux.
+    expect(band('Eldrazi Spawn')).toBe('Eldrazi Spawn');
+  });
+
+  it('écrit l’anglais pour qui joue en anglais : le catalogue *est* anglais', () => {
+    expect(tokenBandName({ kind: 'TOKEN', identityKnown: true, name: 'Treasure', language: 'en' })).toBe(
+      'Treasure',
+    );
+  });
+
+  it('ne dit rien d’une carte dont l’identité nous est cachée', () => {
+    // Le cas qui compte : un jeton posé face cachée, vu d'en face. Le client
+    // n'a ni nom ni `scryfallId` — mais même si on lui en tendait un, le
+    // bandeau doit se taire.
+    expect(
+      tokenBandName({ kind: 'TOKEN', identityKnown: false, name: 'Goblin', language: 'fr' }),
+    ).toBeNull();
+    expect(
+      tokenBandName({ kind: 'TOKEN', identityKnown: false, name: null, language: 'fr' }),
+    ).toBeNull();
+  });
+
+  it('ne dit rien d’une carte qui n’est pas un jeton, quoi que dise sa ligne de type', () => {
+    // C'est `kind` qui fait foi : le protocole, et non une heuristique. Une
+    // carte ordinaire porte déjà son nom imprimé, et le recouvrir serait mentir
+    // sur ce qui est écrit dessus.
+    expect(
+      tokenBandName({ kind: 'CARD', identityKnown: true, name: 'Soldier', language: 'fr' }),
+    ).toBeNull();
+    expect(
+      tokenBandName({ kind: undefined, identityKnown: true, name: 'Soldier', language: 'fr' }),
+    ).toBeNull();
+  });
+
+  it('ne dit rien plutôt que d’écrire une bande vide', () => {
+    // Les métadonnées d'un jeton fraîchement créé peuvent n'être pas encore
+    // arrivées : mieux vaut aucune bande qu'un rectangle noir sans texte.
+    expect(tokenBandName({ kind: 'TOKEN', identityKnown: true, name: null, language: 'fr' })).toBeNull();
+    expect(tokenBandName({ kind: 'TOKEN', identityKnown: true, name: '', language: 'fr' })).toBeNull();
   });
 });
