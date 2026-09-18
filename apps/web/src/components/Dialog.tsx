@@ -132,18 +132,20 @@ export interface DialogSpec {
   description?: string;
   submitLabel?: string;
   cancelLabel?: string;
-  /**
-   * Masque le bouton secondaire, pour un dialogue qui ne fait que **montrer**.
+  /*
+   * Il a existé ici un `readOnly` qui masquait le bouton secondaire, pour un
+   * dialogue qui ne faisait que **montrer**. Il a été retiré avec son unique
+   * appelant — le détail des mécaniques d'une carte, devenu un panneau ancré
+   * (`KeywordPanel`, dans `CardSprite.tsx`).
    *
-   * « Annuler » à côté de « Fermer » demande au lecteur ce qu'il annulerait : la
-   * réponse est rien, les deux referment. Un panneau en lecture seule — le
-   * détail des mécaniques d'une carte, par exemple — n'a qu'une sortie, et lui
-   * en proposer deux laisse croire qu'elles diffèrent.
-   *
-   * Ne l'utilisez **pas** sur un dialogue qui écrit quoi que ce soit : renoncer
-   * doit toujours rester possible, et visible.
+   * Le retirer plutôt que de le garder « au cas où » est délibéré : masquer le
+   * bouton d'annulation ne réglait que le plus visible des symptômes. Ce
+   * composant est un dialogue de **saisie** — il accumule des champs typés et ne
+   * rend ses valeurs qu'à la validation —, et un contenu en lecture y garde de
+   * toute façon un bouton de validation, la consigne « Entrée pour valider » et
+   * une modale voilée. Ce qu'il faut à de la lecture, c'est un autre composant,
+   * pas une option de plus sur celui-ci.
    */
-  readOnly?: boolean;
   fields?: DialogField[];
   choices?: DialogChoice[];
   choicesLabel?: string;
@@ -778,16 +780,14 @@ export function Dialog({
             Appuyez sur <kbd className="font-mono bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 border border-slate-700">Entrée</kbd> pour valider ou <kbd className="font-mono bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 border border-slate-700">Échap</kbd> pour fermer
           </span>
           <div className="flex items-center gap-2.5 ml-auto">
-            {!spec.readOnly && (
-              <button
-                className="rounded-lg border border-edge/80 bg-slate-800/80 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-slate-100 transition-all"
-                data-test="dialog-cancel"
-                onClick={() => onDone(null)}
-                type="button"
-              >
-                {spec.cancelLabel ?? 'Annuler'}
-              </button>
-            )}
+            <button
+              className="rounded-lg border border-edge/80 bg-slate-800/80 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-slate-100 transition-all"
+              data-test="dialog-cancel"
+              onClick={() => onDone(null)}
+              type="button"
+            >
+              {spec.cancelLabel ?? 'Annuler'}
+            </button>
             <button
               ref={submitButton}
               className={`rounded-lg px-4 py-1.5 text-xs font-semibold text-white shadow-md transition-all active:scale-[0.98] ${

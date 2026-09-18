@@ -165,6 +165,16 @@ describe('les libellés et la liste courante', () => {
 
 describe('la pastille de la vignette, et l’infobulle qu’elle ne double pas', () => {
   const sprite = (): string => source('components/CardSprite.tsx');
+  /** Le corps de la pastille seule, sans le panneau ni le reste du fichier. */
+  const badge = (): string => {
+    const code = sprite();
+    return code.slice(code.indexOf('function KeywordBadges('), code.indexOf('function KeywordPanel('));
+  };
+  /** Le corps du panneau seul. */
+  const panneau = (): string => {
+    const code = sprite();
+    return code.slice(code.indexOf('function KeywordPanel('), code.indexOf('export function CardSprite('));
+  };
 
   it('ne remet pas les mécaniques dans le `title` du navigateur', () => {
     /*
@@ -189,21 +199,51 @@ describe('la pastille de la vignette, et l’infobulle qu’elle ne double pas',
      * est ce qui rend la pastille cliquable sans rendre la carte immobile.
      * C'est le contrat que `CounterBadge` tient déjà.
      */
-    const bloc = sprite().slice(sprite().indexOf('function KeywordBadges('));
-    const corps = bloc.slice(0, bloc.indexOf('export function CardSprite('));
-    expect(corps).toContain('onPointerDown={(event) => event.stopPropagation()}');
-    expect(corps).toContain('onDoubleClick={(event) => event.stopPropagation()}');
-    expect(corps).toContain('openDialog(');
+    expect(badge()).toContain('onPointerDown={(event) => event.stopPropagation()}');
+    expect(badge()).toContain('onDoubleClick={(event) => event.stopPropagation()}');
     // Le clic droit n'est **pas** intercepté : il doit continuer d'ouvrir le
     // menu de la carte, comme partout ailleurs.
-    expect(corps).not.toContain('onContextMenu');
+    expect(badge()).not.toContain('onContextMenu');
   });
 
-  it('ne met dans le dialogue que des noms, jamais une règle', () => {
-    const bloc = sprite().slice(sprite().indexOf('function KeywordBadges('));
-    const corps = bloc.slice(0, bloc.indexOf('export function CardSprite('));
-    expect(corps).toContain('keywordName(kw, language)');
-    expect(corps).toContain('Affichage seulement');
+  it('ouvre un panneau de lecture, et non un dialogue de saisie', () => {
+    /*
+     * `Dialog` accumule des champs et ne rend ses valeurs qu'à la validation :
+     * le détourner pour de la lecture donnait un formulaire sans formulaire —
+     * bouton de validation, « Entrée pour valider », et une modale voilée pour
+     * montrer deux mots.
+     */
+    expect(badge()).not.toContain('openDialog(');
+    expect(badge()).toContain('<KeywordPanel');
+    // L'option qui masquait le bouton d'annulation n'avait plus d'appelant :
+    // elle est partie avec lui, plutôt que de rester « au cas où ».
+    expect(source('components/Dialog.tsx')).not.toContain('readOnly?:');
+    expect(source('components/Dialog.tsx')).not.toContain('spec.readOnly');
+  });
+
+  it('réutilise le placement des menus plutôt que d’en recalculer un', () => {
+    // Un panneau ancré à une carte de la rangée basse ne doit pas déborder :
+    // `useMenuPlacement` mesure le rendu réel et bascule au-dessus si besoin.
+    expect(panneau()).toContain('useMenuPlacement(anchor.x, anchor.y)');
+    expect(sprite()).toContain("from '../lib/menu.js'");
+  });
+
+  it('écoute `Échap` en capture, et ne pose aucun voile', () => {
+    /*
+     * Un écouteur en bouillonnement ne recevrait jamais la touche. Et aucun
+     * calque plein écran : c'est ce qui avalait tous les clics dans le défaut
+     * déjà corrigé sur un menu de ce projet.
+     */
+    expect(panneau()).toContain("window.addEventListener('keydown', onKey, true)");
+    expect(panneau()).toContain("window.addEventListener('pointerdown', onDown, true)");
+    expect(panneau()).not.toContain('fixed inset-0');
+  });
+
+  it('ne met dans le panneau que des noms, jamais une règle ni un avertissement', () => {
+    expect(badge()).toContain('keywordName(kw, language)');
+    // Une pastille par mécanique, et pas une phrase qui les noie.
+    expect(panneau()).toContain('names.map(');
+    expect(panneau()).not.toContain('Affichage seulement');
   });
 });
 

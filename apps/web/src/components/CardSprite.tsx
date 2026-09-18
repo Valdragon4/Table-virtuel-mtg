@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   HIDDEN_ZONES,
   type CardView,
@@ -10,6 +11,7 @@ import {
 import { useGame, zoneKey } from '../store/game.js';
 import { CardBack } from './CardBack.js';
 import { openDialog } from './Dialog.js';
+import { useMenuPlacement } from '../lib/menu.js';
 import {
   BATTLEFIELD_SCALE,
   CARD_HEIGHT,
@@ -1576,45 +1578,182 @@ function KeywordBadges({
   className: string;
   cardName: string;
 }): React.ReactElement | null {
+  /** L'ancre du panneau, relevée au clic. `null` : le panneau est fermé. */
+  const [ancre, setAncre] = useState<{ x: number; y: number } | null>(null);
+  const pastille = useRef<HTMLButtonElement | null>(null);
+
   if (keywords.length === 0) return null;
   const noms = keywords.map((kw) => keywordName(kw, language) ?? kw);
-  const liste = noms.join(' · ');
+
   return (
-    <button
-      className={`absolute left-1 inline-flex cursor-pointer items-center gap-px rounded bg-slate-950/85 px-1 py-0.5 text-[8px] font-bold leading-none text-teal-200 ring-1 ring-teal-400/50 hover:ring-2 hover:ring-teal-200/80 ${className}`}
-      data-test="card-keywords"
-      data-keyword-count={String(keywords.length)}
-      data-keywords={liste}
-      onClick={(event) => {
-        event.stopPropagation();
-        event.preventDefault();
-        void openDialog({
-          title: `Mécaniques de « ${cardName} »`,
+    <>
+      <button
+        ref={pastille}
+        aria-expanded={ancre !== null}
+        className={`absolute left-1 inline-flex cursor-pointer items-center gap-px rounded px-1 py-0.5 text-[8px] font-bold leading-none ring-1 ${className} ${
+          ancre === null
+            ? 'bg-slate-950/85 text-teal-200 ring-teal-400/50 hover:ring-2 hover:ring-teal-200/80'
+            : // Ouverte, la pastille reste allumée : sans cela on ne sait plus
+              // laquelle des quarante cartes a ouvert le panneau.
+              'bg-teal-500 text-teal-950 ring-teal-200/90'
+        }`}
+        data-test="card-keywords"
+        data-keyword-count={String(keywords.length)}
+        data-keywords={noms.join(' · ')}
+        onClick={(event) => {
+          event.stopPropagation();
+          event.preventDefault();
           /*
-           * Des **noms**, et rien d'autre : pas un mot de ce que la mécanique
-           * fait. C'est l'invariant du glossaire (`lib/i18n/keywordNames.ts`),
-           * et c'est aussi ce qui garantit qu'aucun texte de règles n'est
-           * recopié ici. Un mot-clé absent du glossaire ressort en anglais
-           * plutôt que d'être escamoté.
+           * Re-toucher la pastille referme. C'est le seul geste de fermeture qui
+           * aille de soi au doigt : sur une tablette il n'y a pas d'`Échap`, et
+           * « toucher ailleurs » n'est pas une affordance qu'on voit.
            */
-          description: `${liste}. Affichage seulement : rien n’est appliqué à la partie.`,
-          submitLabel: 'Fermer',
-          // Pas de bouton secondaire : « Annuler » à côté de « Fermer »
-          // demanderait au lecteur ce qu'il annule, et la réponse est rien.
-          readOnly: true,
-        });
-      }}
-      onDoubleClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-      type="button"
+          if (ancre !== null) {
+            setAncre(null);
+            return;
+          }
+          const rect = event.currentTarget.getBoundingClientRect();
+          // Sous la pastille, aligné sur son bord gauche. `useMenuPlacement`
+          // rattrape le reste — bord de fenêtre, bascule au-dessus.
+          setAncre({ x: rect.left, y: rect.bottom + 4 });
+        }}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+        type="button"
+      >
+        {/* Le losange dit « mécanique » et tient à la taille où la pastille est
+            encore lisible — un mot n'y tiendrait pas. */}
+        <svg aria-hidden fill="none" height="6" viewBox="0 0 8 8" width="6">
+          <path d="M4 .8 7.2 4 4 7.2.8 4Z" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+        <span className="tabular-nums">{keywords.length}</span>
+      </button>
+      {ancre !== null && (
+        <KeywordPanel
+          anchor={ancre}
+          badge={pastille}
+          cardName={cardName}
+          names={noms}
+          onClose={() => setAncre(null)}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * Le panneau de lecture des mécaniques.
+ *
+ * **Pourquoi ce n'est pas un `Dialog`.** Ça l'a été, et c'était une erreur de
+ * composant, pas de réglage. `Dialog` est un dialogue de **saisie** : il
+ * accumule des champs typés et ne rend ses valeurs qu'à la validation. Il porte
+ * donc, par construction, un bouton de validation, un bouton d'annulation et la
+ * consigne « Entrée pour valider ». Le détourner pour de la lecture donnait
+ * exactement ce qu'on a vu à l'écran — un formulaire sans formulaire : un titre
+ * pleine largeur, deux mécaniques noyées dans la même phrase qu'un
+ * avertissement, « rien à valider » proposé à la validation, et une modale
+ * voilée qui éteignait la table entière pour montrer deux mots.
+ *
+ * Ici, les mécaniques **sont** le contenu : une pastille chacune, rien autour.
+ *
+ * **Sans avertissement.** Le « affichage seulement : rien n'est appliqué à la
+ * partie » occupait plus de place que la liste qu'il commentait. Personne
+ * n'attend d'une liste en lecture qu'elle applique une règle, et le vrai
+ * garde-fou n'est de toute façon pas une phrase dans un panneau : c'est que
+ * `keywords` ne descend pas au moteur et que le serveur n'applique aucune règle.
+ * Une phrase ici n'aurait rien protégé, et coûtait la lisibilité.
+ *
+ * **Sans voile.** Aucun calque plein écran n'est posé, donc aucun clic n'est
+ * avalé — c'est le défaut qu'un menu de ce projet a déjà connu. On ferme en
+ * touchant ailleurs, à `Échap`, ou en re-touchant la pastille ; et le clic
+ * « ailleurs » continue de faire ce qu'il allait faire, ce qui est le
+ * comportement d'un panneau de lecture et non d'une modale.
+ *
+ * **Placement réutilisé.** `useMenuPlacement` est déjà le calcul de ce projet
+ * pour poser une surface flottante : il mesure le rendu réel, garde la surface
+ * dans la fenêtre et bascule au-dessus de l'ancre quand le dessous ne suffit
+ * pas — le cas d'un permanent de la rangée basse et celui d'une carte du rail de
+ * main. Rien n'est recalculé ici.
+ *
+ * **`Échap` en capture**, comme tous les menus de ce projet : un écouteur en
+ * bouillonnement ne recevrait jamais la touche.
+ *
+ * **Et il sort de la vignette par un portail**, ce qui n'est pas cosmétique : la
+ * racine de `CardSprite` porte un `transform` — la rotation d'engagement, posée
+ * même à zéro degré. Or un ancêtre transformé devient le bloc conteneur de ses
+ * descendants `position: fixed` : peint à l'intérieur, le panneau se plaçait
+ * **relativement à la carte** au lieu de la fenêtre, et la sonde l'a trouvé à
+ * `top: 1223` dans une fenêtre haute de 1000. `useMenuPlacement` n'y était pour
+ * rien, il calculait juste. C'est la raison pour laquelle `CardMenu` et
+ * `CardPreview` vivent déjà au premier niveau, et `TableLabel` passe par
+ * `createPortal` : ce panneau fait de même.
+ */
+function KeywordPanel({
+  anchor,
+  badge,
+  cardName,
+  names,
+  onClose,
+}: {
+  anchor: { x: number; y: number };
+  badge: React.MutableRefObject<HTMLButtonElement | null>;
+  cardName: string;
+  names: readonly string[];
+  onClose: () => void;
+}): React.ReactElement {
+  const { ref, style } = useMenuPlacement(anchor.x, anchor.y);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    /*
+     * On ferme au `pointerdown`, qui précède le `click` : le panneau a donc
+     * disparu avant que le geste n'aboutisse, et l'on ne le voit jamais survivre
+     * une frame à un début de glissement.
+     *
+     * La pastille est **exclue** : c'est elle qui referme, et fermer ici en plus
+     * rouvrirait le panneau dans la foulée du même clic.
+     */
+    const onDown = (event: PointerEvent): void => {
+      const cible = event.target as Node | null;
+      if (cible && (ref.current?.contains(cible) || badge.current?.contains(cible))) return;
+      onClose();
+    };
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [onClose, ref, badge]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      /* `z-50` : au-dessus de l'aperçu agrandi (`z-[45]`), qui reste allumé sous
+         le curseur pendant qu'on lit le panneau. */
+      className="fixed z-50 max-w-[15rem] rounded-xl border border-slate-700/80 bg-slate-900/95 px-2.5 py-2 shadow-2xl shadow-black/80 backdrop-blur-xl"
+      data-test="card-keywords-panel"
+      style={style}
     >
-      {/* Le losange dit « mécanique » et tient à la taille où la pastille est
-          encore lisible — un mot n'y tiendrait pas. */}
-      <svg aria-hidden fill="none" height="6" viewBox="0 0 8 8" width="6">
-        <path d="M4 .8 7.2 4 4 7.2.8 4Z" stroke="currentColor" strokeWidth="1.3" />
-      </svg>
-      <span className="tabular-nums">{keywords.length}</span>
-    </button>
+      {/* Le nom, en sourdine : le panneau flotte près de la carte mais peut
+          basculer au-dessus d'elle, et l'on doit savoir de laquelle on parle. */}
+      <p className="mb-1.5 truncate text-[10px] font-medium text-slate-400">{cardName}</p>
+      <div className="flex flex-wrap gap-1">
+        {names.map((nom) => (
+          <span
+            className="rounded bg-slate-800/90 px-1.5 py-0.5 text-[11px] font-semibold text-teal-200 ring-1 ring-teal-400/30"
+            key={nom}
+          >
+            {nom}
+          </span>
+        ))}
+      </div>
+    </div>,
+    document.body,
   );
 }
 
