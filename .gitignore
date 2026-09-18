@@ -16,7 +16,7 @@ coverage/
 playwright-report/
 test-results/
 .nyc_output/
-.verify/
+.verify*/
 
 # Test screenshots & probes (preserve apps/web/public/ and app assets)
 /*.png

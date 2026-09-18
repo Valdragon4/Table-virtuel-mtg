@@ -199,6 +199,21 @@ function pushBubble(set: Setter, get: Getter, seat: SeatId, text: string, ms = 4
 const pendingPredictions = new Map<string, ObjectId>();
 const PREDICTION_TTL_MS = 4000;
 
+/**
+ * Garde contre les resyncs multiples.
+ *
+ * Quand un event est émis vers un sous-ensemble de sièges (ex. `LOOK_RESULT`
+ * vers le joueur actif seul, sans log ni `NOTED`), les autres sièges ne
+ * reçoivent rien pour ce `seq` : le suivant crée un trou de séquence qui
+ * déclenche un `resync`. Si le commit qui suit produit plusieurs events,
+ * chacun arrive en trou et chacun appelle `resync` — et chaque réponse
+ * `hello/delta` rejoue les mêmes logs, d'où la duplication.
+ *
+ * Ce drapeau bloque les appels supplémentaires tant que le premier resync
+ * n'a pas été résolu par un `hello`.
+ */
+let resyncPending = false;
+
 /** Oublie une prédiction : l'état affiché redevient celui du dernier event. */
 function dropPrediction(cardId: ObjectId): void {
   const predicted = useGame.getState().predicted;
@@ -229,6 +244,9 @@ function blankRoomState(): Pick<
     clearTimeout(previewTimer);
     previewTimer = null;
   }
+  // Une table neuve n'attend le `hello` de personne : garder le drapeau armé
+  // interdirait le premier resync de la suivante.
+  resyncPending = false;
   return {
     status: 'closed',
     statusDetail: null,
@@ -309,7 +327,13 @@ export const useGame = create<GameStore>((set, get) => ({
     get().socket?.close();
     const socket = new GameSocket(code, {
       currentSeq: () => get().seq,
-      onStatus: (status, detail) => set({ status, statusDetail: detail ?? null }),
+      onStatus: (status, detail) => {
+        // Le resync demandé sur l'ancienne socket ne reviendra jamais : sans
+        // cette remise à zéro, le drapeau resterait armé et le client ne
+        // redemanderait plus jamais de rattrapage après la reconnexion.
+        if (status !== 'open') resyncPending = false;
+        set({ status, statusDetail: detail ?? null });
+      },
       onMessage: (message) => handleMessage(message, set, get),
     });
     // Une table n'hérite jamais de la précédente. Le store est global et
@@ -357,6 +381,7 @@ export const useGame = create<GameStore>((set, get) => ({
   },
 
   setHovered(cardId) {
+    if (get().menu !== null && cardId !== null) return;
     if (get().hoveredCardId === cardId) return;
     set({ hoveredCardId: cardId });
   },
@@ -372,9 +397,12 @@ export const useGame = create<GameStore>((set, get) => ({
       if (get().hoveredPreview !== null) set({ hoveredPreview: null });
       return;
     }
+    // Si un menu est ouvert, ne pas déclencher d'aperçu qui masquerait le menu
+    if (get().menu !== null) return;
     if (get().hoveredPreview?.scryfallId === scryfallId) return;
     previewTimer = setTimeout(() => {
       previewTimer = null;
+      if (get().menu !== null) return;
       set({ hoveredPreview: { scryfallId } });
     }, PREVIEW_DELAY_MS);
   },
@@ -430,7 +458,15 @@ export const useGame = create<GameStore>((set, get) => ({
   },
 
   openMenu(menu) {
-    set({ menu });
+    if (previewTimer !== null) {
+      clearTimeout(previewTimer);
+      previewTimer = null;
+    }
+    if (menu) {
+      set({ menu, hoveredCardId: null, hoveredPreview: null });
+    } else {
+      set({ menu });
+    }
   },
 
   dismissReject() {
@@ -445,16 +481,26 @@ export const useGame = create<GameStore>((set, get) => ({
 type Setter = (partial: Partial<GameStore> | ((state: GameStore) => Partial<GameStore>)) => void;
 type Getter = () => GameStore;
 
-function handleMessage(message: ServerMessage, set: Setter, get: Getter): void {
+/**
+ * Exporté pour les tests : c'est le seul point d'entrée de tout ce que le
+ * serveur dit à ce client, et les règles de rattrapage (trou de séquence,
+ * déduplication du journal) ne s'observent nulle part ailleurs.
+ */
+export function handleMessage(message: ServerMessage, set: Setter, get: Getter): void {
   switch (message.t) {
     case 'hello': {
+      resyncPending = false;
       if (message.snapshot) {
         applySnapshot(message.snapshot, message.seat, set);
       } else if (message.delta) {
+        // Les `seq` déjà connus : un resync en vol peut se chevaucher avec des
+        // events reçus entre-temps, et le delta les rejouerait en double.
+        const knownSeqs = new Set(get().log.map((e) => e.seq));
         for (const event of message.delta) {
           applyEvent(event.event, set, get);
           set({ seq: event.seq });
-          if (event.log) {
+          if (event.log && !knownSeqs.has(event.seq)) {
+            knownSeqs.add(event.seq);
             set({
               log: [
                 ...get().log.slice(-400),
@@ -473,7 +519,11 @@ function handleMessage(message: ServerMessage, set: Setter, get: Getter): void {
       if (message.seq < expected) return; // déjà appliqué
       if (message.seq > expected && get().seq > 0) {
         // Trou de séquence : on demande le rattrapage plutôt que de bricoler.
-        get().socket?.resync(get().seq);
+        // Un seul resync suffit : les suivants n'apporteraient que des doublons.
+        if (!resyncPending) {
+          resyncPending = true;
+          get().socket?.resync(get().seq);
+        }
         return;
       }
       applyEvent(message.event, set, get);
@@ -789,6 +839,15 @@ function applyEvent(event: Event, set: Setter, get: Getter): void {
         event.seat,
         `🪙 ${event.results.map((r) => (r === 'HEADS' ? 'pile' : 'face')).join(', ')}`,
       );
+      return;
+
+    /*
+     * `NOTED` est un no-op, et c'est tout son intérêt : il ne porte que son
+     * `seq` — et la ligne de journal, traitée par l'appelant. Il tient la
+     * séquence dense pour un siège hors audience, qui sans lui verrait un trou
+     * et demanderait un rattrapage dont il n'a aucun besoin.
+     */
+    case 'NOTED':
       return;
 
     case 'UNDONE':

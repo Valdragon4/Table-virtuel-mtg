@@ -217,7 +217,13 @@ export class Room {
       const variants = this.buffer.get(s);
       if (!variants) return null;
       const event = variants.get(seat) ?? variants.get(null);
-      if (event) out.push(event);
+      // Le tampon est dense pour tout siège présent (voir `commit`) : une
+      // variante manquante signifie que ce `seq` est antérieur à ce siège, ou
+      // que le tampon a été rogné. Rendre le delta amputé recréerait chez le
+      // client le trou de séquence même qu'on cherche à supprimer — un snapshot
+      // complet est la seule réponse honnête.
+      if (!event) return null;
+      out.push(event);
     }
     return out;
   }
@@ -1242,15 +1248,27 @@ export class Room {
         variants.set(seatId, { t: 'event', seq, at, actor, event: emission.build(seatId), ...log });
       }
 
-      // Une ligne de journal est publique par construction (§4.2) : elle ne peut
-      // pas dépendre de l'audience de l'event qui la porte. Les sièges hors
-      // audience reçoivent le même `seq` avec un event `NOTED`, sans charge
-      // utile — ils lisent la trace, pas le fait.
-      if (emission.log) {
-        for (const seatId of this.state.seats.keys()) {
-          if (variants.has(seatId)) continue;
-          variants.set(seatId, { t: 'event', seq, at, actor, event: { type: 'NOTED' }, ...log });
-        }
+      /*
+       * **La séquence est dense pour tout le monde, sans exception.**
+       *
+       * Chaque `seq` donne lieu à un message pour chaque siège : l'event réel
+       * s'il est dans l'audience, un `NOTED` sans charge utile sinon. Ce
+       * remplissage était autrefois conditionné à la présence d'une ligne de
+       * journal, et c'est ce conditionnement qui coûtait cher : un
+       * `LOOK_RESULT`, adressé au seul consultant et sans journal, ne laissait
+       * rien aux autres sièges pour son `seq`. L'event suivant arrivait donc en
+       * trou de séquence chez eux, chacun déclenchait un `resync`, et chaque
+       * `hello/delta` rejouait les mêmes lignes de journal — d'où un message vu
+       * trois fois.
+       *
+       * `NOTED` ne dit rien de plus que « un seq s'est produit », ce que le
+       * trou révélait déjà, en pire : il ne peut donc rien faire fuiter. La
+       * ligne de journal, elle, reste publique par construction (§4.2) et
+       * voyage avec le remplissage.
+       */
+      for (const seatId of this.state.seats.keys()) {
+        if (variants.has(seatId)) continue;
+        variants.set(seatId, { t: 'event', seq, at, actor, event: { type: 'NOTED' }, ...log });
       }
 
       this.buffer.set(seq, variants);
