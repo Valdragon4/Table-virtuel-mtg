@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api.js';
 import { PaperShell } from '../components/PaperShell.js';
+import { usePrefs } from '../store/prefs.js';
+import { useT } from '../lib/i18n/index.js';
 
 /**
  * Destination de retour après connexion.
@@ -15,6 +17,7 @@ function safeNext(raw: string | null): string | null {
 }
 
 export function AuthPage({ mode }: { mode: 'login' | 'register' }): React.ReactElement {
+  const t = useT();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = safeNext(params.get('next'));
@@ -32,20 +35,35 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }): React.ReactE
     try {
       if (mode === 'register') {
         await api.post('/api/auth/register', { email, password, displayName });
-        setNotice(
-          'Compte créé. Un email de confirmation vient de partir — en développement, il est écrit dans les logs du serveur.',
-        );
+        setNotice(t('auth.registered'));
       } else {
         await api.post('/api/auth/login', { email, password });
+        /*
+         * Relire la langue du compte, **maintenant**.
+         *
+         * `hydrate()` a déjà été joué au démarrage (`main.tsx`), alors qu'il n'y
+         * avait pas de session : il a échoué sans bruit et posé `hydrated`, ce
+         * qui est exactement son rôle — ne pas rejouer l'appel à chaque écran.
+         * Mais cette page **navigue sans recharger la page** : sans ce rejeu,
+         * quelqu'un qui se connecte depuis un navigateur neuf verrait l'interface
+         * dans l'estimation locale (`localStorage`, puis `navigator.language`)
+         * jusqu'au prochain chargement complet.
+         *
+         * L'appel n'est pas attendu : il avale ses échecs et n'a aucune raison
+         * de retarder la navigation.
+         */
+        void usePrefs.getState().rehydrate();
         // On revient à l'accueil, pas dans la gestion des decks : on se connecte
         // pour jouer, et c'est de l'accueil qu'on crée ou rejoint une table.
         navigate(next ?? '/');
       }
     } catch (err) {
+      // Message et indication d'`ApiError` viennent du serveur, déjà rédigés :
+      // ils s'affichent tels quels. Seul le repli est un libellé à nous.
       setError(
         err instanceof ApiError
           ? { message: err.message, ...(err.hint ? { hint: err.hint } : {}) }
-          : { message: 'Échec.' },
+          : { message: t('auth.failed') },
       );
     } finally {
       setBusy(false);
@@ -58,35 +76,34 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }): React.ReactE
         mode === 'login' ? (
           <>
             <Link className="floor-link" to="/forgot-password">
-              Mot de passe oublié
+              {t('auth.forgotPassword')}
             </Link>
-            . Pas de compte ?{' '}
+            {t('auth.asideNoAccount')}{' '}
             <Link className="floor-link" to={withNext('/register', next)}>
-              En créer un
+              {t('auth.createOne')}
             </Link>
-            . Et rappel utile : le compte ne sert pas à jouer, vous pouvez{' '}
+            {t('auth.asideRemind')}{' '}
             <Link className="floor-link" to={next ?? '/'}>
-              vous asseoir sans
+              {t('auth.sitWithout')}
             </Link>
             .
           </>
         ) : (
           <>
-            Déjà inscrit ?{' '}
+            {t('auth.alreadyRegistered')}{' '}
             <Link className="floor-link" to={withNext('/login', next)}>
-              Se connecter
+              {t('auth.login')}
             </Link>
-            . Le compte garde vos decks, vos playmats et vos réglages — il n’est jamais exigé
-            pour rejoindre une table.
+            {t('auth.asideAccountKeeps')}
           </>
         )
       }
-      title={mode === 'login' ? 'Se connecter' : 'Créer un compte'}
+      title={mode === 'login' ? t('auth.login') : t('auth.createAccount')}
     >
       <form className="space-y-5" onSubmit={(e) => void submit(e)}>
         {mode === 'register' && (
           <label className="block">
-            <span className="paper-label">Pseudo affiché à table</span>
+            <span className="paper-label">{t('auth.displayName')}</span>
             <input
               className="paper-field"
               maxLength={32}
@@ -99,7 +116,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }): React.ReactE
         )}
 
         <label className="block">
-          <span className="paper-label">Email</span>
+          <span className="paper-label">{t('auth.email')}</span>
           <input
             autoComplete="email"
             className="paper-field"
@@ -111,7 +128,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }): React.ReactE
         </label>
 
         <label className="block">
-          <span className="paper-label">Mot de passe</span>
+          <span className="paper-label">{t('auth.password')}</span>
           <input
             autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
             className="paper-field"
@@ -122,12 +139,12 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }): React.ReactE
             value={password}
           />
           {mode === 'register' && (
-            <span className="paper-dim mt-1.5 block text-[0.78rem]">Au moins 10 caractères.</span>
+            <span className="paper-dim mt-1.5 block text-[0.78rem]">{t('auth.passwordRule')}</span>
           )}
         </label>
 
         <button className="ink-button w-full px-5 py-3 text-[0.84rem]" disabled={busy} type="submit">
-          {busy ? 'Envoi…' : mode === 'login' ? 'Se connecter' : 'Créer le compte'}
+          {busy ? t('common.sending') : mode === 'login' ? t('auth.login') : t('auth.createAccountSubmit')}
         </button>
       </form>
 
@@ -140,7 +157,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }): React.ReactE
           {/* Une erreur nomme le problème et la sortie. Quand le serveur ne donne
               pas d'indication, on écrit celle qui vaut pour ce formulaire. */}
           <p className="paper-dim mt-1">
-            {error.hint ?? 'Corrigez le champ concerné, puis renvoyez le formulaire.'}
+            {error.hint ?? t('auth.errorHint')}
           </p>
         </div>
       )}
@@ -153,11 +170,11 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }): React.ReactE
             <>
               {' '}
               <Link className="ink-link" to={withNext('/login', next)}>
-                Se connecter
+                {t('auth.login')}
               </Link>{' '}
-              ou{' '}
+              {t('common.or')}{' '}
               <Link className="ink-link" to={next}>
-                retourner à la table en invité
+                {t('auth.backToTableAsGuest')}
               </Link>
               .
             </>

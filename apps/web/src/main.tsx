@@ -13,6 +13,7 @@ import { RoomPage } from './pages/Room.js';
 import { ForgotPasswordPage, ResetPasswordPage, VerifyEmailPage } from './pages/Tokens.js';
 import { LegalFooter } from './components/LegalFooter.js';
 import { registerServiceWorker, watchInstallPrompt } from './lib/pwa.js';
+import { usePrefs } from './store/prefs.js';
 
 function App(): React.ReactElement {
   return (
@@ -66,6 +67,22 @@ function App(): React.ReactElement {
 // retenue. Aucune carte n'y est mise en cache — voir `public/sw.js`.
 watchInstallPrompt();
 registerServiceWorker();
+
+/*
+ * La langue est une préférence de **compte**, et c'est ici qu'elle se lit.
+ *
+ * Avant cet appel, l'interface s'affichait dans ce que disait le miroir local —
+ * ou, à défaut, `navigator.language`. Quelqu'un qui règle sa langue sur une
+ * machine ne la retrouvait donc pas sur une autre, et rien ne le signalait.
+ *
+ * Hors de React, et avant le premier rendu : `hydrate` est idempotent (il se
+ * garde lui-même sur `hydrated`) et avale son échec. Un visiteur non connecté
+ * reçoit un 401 sur `/api/me`, reste sur l'estimation locale, et rien ne casse.
+ * L'appel est volontairement non attendu : faire patienter le premier rendu sur
+ * un aller-retour réseau se verrait, alors que la bascule de langue, elle, ne
+ * concerne qu'un compte dont la préférence diffère de son miroir local.
+ */
+void usePrefs.getState().hydrate();
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
