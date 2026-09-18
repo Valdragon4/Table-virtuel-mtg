@@ -28,6 +28,15 @@ interface GameRow {
   createdAt: string;
   lastActivityAt: string;
   players: number;
+  /**
+   * Un replay lisible existe pour cette table.
+   *
+   * Le serveur applique ici le **même** verrou que sur les routes du lecteur —
+   * enregistrement clos, donc partie finie. On ne propose donc jamais un lien
+   * qui mènerait à « il n'y a pas de replay ici », et surtout jamais sur une
+   * partie en cours.
+   */
+  hasReplay?: boolean;
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -196,6 +205,17 @@ export function Tables(): React.ReactElement {
                   <span className="typed text-[color:var(--site-floor-text)]">{game.code}</span>
                   <span>{MODE_LABELS[game.mode] ?? game.mode}</span>
                   <span className="ml-auto">{ago(game.lastActivityAt, t)}</span>
+                  {/* C'est ici qu'on revient chercher une partie finie : l'écran
+                      de fin de partie, lui, disparaît dès qu'on le quitte. */}
+                  {game.hasReplay && (
+                    <Link
+                      className="floor-link whitespace-nowrap"
+                      data-test="past-replay-link"
+                      to={`/rooms/${game.code}/replay`}
+                    >
+                      {t('replay.open')}
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>

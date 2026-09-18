@@ -165,9 +165,35 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
       if (live) row.status = live.state.status;
     }
 
-    const games = [...rows.values()].sort(
-      (a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime(),
+    /*
+     * Y a-t-il un replay à proposer ?
+     *
+     * La liste est le seul endroit où l'on retrouve une partie finie : sans
+     * cette information, « Revoir la partie » n'existerait que sur l'écran de
+     * fin, qui disparaît dès qu'on le quitte. On le dit donc ici.
+     *
+     * Le filtre est le **même verrou** que partout ailleurs — `closedAt` non nul
+     * — et non un simple « la table est terminée » : un enregistrement rouvert,
+     * tronqué avant sa fin ou jamais clos ne doit pas être annoncé comme
+     * lisible. Une requête, sur les seuls codes déjà en main.
+     */
+    const withReplay = new Set(
+      (
+        await prisma.gameReplay
+          .findMany({
+            // `GameReplay` désigne sa table par `roomId`, pas par son code : on
+            // passe donc par la relation plutôt que de faire une requête de plus
+            // pour traduire les codes en identifiants.
+            where: { room: { code: { in: [...rows.keys()] } }, closedAt: { not: null } },
+            select: { room: { select: { code: true } } },
+          })
+          .catch(() => [])
+      ).map((r) => r.room.code),
     );
+
+    const games = [...rows.values()]
+      .map((row) => ({ ...row, hasReplay: withReplay.has(row.code) }))
+      .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
     return reply.send({ games });
   });
 
