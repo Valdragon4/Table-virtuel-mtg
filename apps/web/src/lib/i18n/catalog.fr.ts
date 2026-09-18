@@ -96,7 +96,7 @@ export const fr = {
   /** L'option d'édition de substitution : un réglage d'affichage, pour vous seul. */
   'prefs.localizedPrinting': 'Forcer une édition disponible dans ma langue',
   'prefs.localizedPrintingHint':
-    'Quand l’impression choisie n’existe pas dans votre langue, affiche l’illustration d’une autre édition qui, elle, y existe. Ne change que ce que vous voyez : les autres joueurs voient toujours l’impression choisie.',
+    'Affiche l’illustration d’une autre édition quand l’impression choisie n’existe pas dans votre langue, ou quand Scryfall n’en publie qu’un scan flou — le rendu est alors le plus net disponible dans votre langue. Ne change que ce que vous voyez : les autres joueurs voient toujours l’impression choisie. Sans effet sur les terrains de base, qui gardent leur édition.',
   /** Repli d'illustration : la carte n'existe pas dans la langue choisie. */
   'card.imageFallback': 'Illustration anglaise : cette carte n’existe pas en {language}.',
 

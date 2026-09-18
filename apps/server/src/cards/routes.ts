@@ -4,6 +4,7 @@ import { languageSchema } from '@mtg/shared';
 import { prisma } from '../db.js';
 import { MAX_SEARCH_LIMIT, searchCards } from './search.js';
 import { loadPendingSubstitutes, prismaLocalizationStore } from './localization-store.js';
+import { prismaBulkLocalizationSource } from './localized-printings.js';
 import {
   fetchLocalizedElsewhere,
   fetchLocalizedPrinting,
@@ -47,6 +48,9 @@ const CATALOG_SELECT = {
   typeLine: true,
   imageUris: true,
   faces: true,
+  // Elle seule dit si le catalogue localisé, ingéré à une date donnée, a le
+  // droit de répondre pour cette carte. Voir `bulkAuthorityDate`.
+  releasedAt: true,
   illustrationId: true,
   frame: true,
   frameEffects: true,
@@ -146,6 +150,7 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
       store: prismaLocalizationStore,
       fetch: fetchLocalizedPrinting,
       fetchElsewhere: fetchLocalizedElsewhere,
+      bulk: prismaBulkLocalizationSource,
       loadPending: loadPendingSubstitutes,
     });
 
@@ -160,6 +165,14 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
       store: prismaLocalizationStore,
       fetch: fetchLocalizedPrinting,
       fetchElsewhere: fetchLocalizedElsewhere,
+      /*
+       * Le catalogue localisé passe **avant** le réseau, et ne consomme pas le
+       * plafond : une carte qu'il connaît est résolue dans la réponse même, en
+       * français, sans `pending` ni relance. Le réseau reste branché juste
+       * derrière pour ce qu'il ne connaît pas — une impression parue depuis la
+       * dernière ingestion, ou une base dont l'ingestion n'a pas encore tourné.
+       */
+      bulk: prismaBulkLocalizationSource,
     });
 
     /*
@@ -173,6 +186,7 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
       store: prismaLocalizationStore,
       fetch: fetchLocalizedPrinting,
       fetchElsewhere: fetchLocalizedElsewhere,
+      bulk: prismaBulkLocalizationSource,
     });
 
     return reply.send({ language: resolved.language, cards: resolved.cards });

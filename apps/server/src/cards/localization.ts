@@ -60,6 +60,16 @@ export interface CatalogCard {
    * `isBasicLandTypeLine`.
    */
   typeLine?: string | null;
+  /**
+   * La date de sortie de l'impression.
+   *
+   * Elle ne sert qu'à une chose, mais elle est décisive : savoir si le catalogue
+   * localisé ingéré en masse a **le droit** de répondre pour cette carte. Une
+   * impression parue après le bulk que nous avons chargé en est forcément
+   * absente, et son absence n'y veut alors rien dire — c'est le chemin
+   * paresseux qui doit reprendre la main. Voir `BulkLocalizationSource`.
+   */
+  releasedAt?: Date | string | null;
 
   /* ——— Les traits de l'impression choisie, pour la ressemblance ———————————
    *
@@ -243,6 +253,53 @@ export interface LocalizedCard {
 export interface LocalizationStore {
   load(scryfallIds: string[], language: Language): Promise<LocalizationRecord[]>;
   save(records: LocalizationRecord[]): Promise<void>;
+}
+
+/**
+ * Ce que le bulk localisé sait d'une carte : l'impression traduite de **son**
+ * édition, et **toutes** les impressions traduites de la carte.
+ *
+ * Les deux champs correspondent exactement aux deux appels réseau qu'ils
+ * remplacent — `GET /cards/{set}/{cn}/{lang}` et
+ * `GET /cards/search?q=oracleid:… lang:…` — et se lisent en aval par les mêmes
+ * fonctions. Ce n'est pas une coïncidence de forme : c'est ce qui rend les deux
+ * chemins interchangeables.
+ */
+export interface BulkAnswer {
+  /** L'impression traduite de cette édition-ci, ou `null` : c'est le 404. */
+  printing: ScryfallCard | null;
+  /** Les sœurs traduites, toutes éditions confondues. Vide = il n'y en a pas. */
+  candidates: readonly ScryfallCard[];
+}
+
+/**
+ * Le catalogue des impressions traduites, interrogé **en une fois pour tout un
+ * lot**.
+ *
+ * ——— Pourquoi un lot, et pas un appel par carte
+ *
+ * C'est tout l'intérêt du bulk. Le chemin paresseux est plafonné à vingt appels
+ * vivants par requête parce que chacun coûte 100 ms de file d'attente et qu'une
+ * vingtaine de `/cards/search` consécutifs déclenchent un 429. Deux requêtes SQL
+ * pour cent cartes ne coûtent ni l'un ni l'autre : il n'y a donc plus de
+ * plafond à opposer, plus de `pending` à publier, plus de relance à attendre
+ * côté client. Un appel par carte, même en base, aurait reconduit la forme du
+ * problème sans sa cause.
+ *
+ * ——— Une carte absente de la réponse n'est pas une carte sans traduction
+ *
+ * La `Map` rendue ne contient **que** les cartes pour lesquelles le bulk fait
+ * autorité. Une carte qui n'y est pas retombe sur le chemin réseau, plafond
+ * compris — c'est le repli, et il doit survivre : une impression parue après
+ * notre dernière ingestion n'est dans aucun bulk, et le joueur ne doit pas la
+ * voir en anglais pour autant.
+ *
+ * Confondre « absente du bulk » et « sans traduction » graverait un repli
+ * anglais définitif sur toutes les nouveautés. C'est la même erreur que
+ * mémoriser un 503 (§3.5) : une ignorance passagère écrite comme une réponse.
+ */
+export interface BulkLocalizationSource {
+  lookup(cards: CatalogCard[], language: Language): Promise<Map<string, BulkAnswer>>;
 }
 
 /**
@@ -443,56 +500,7 @@ export const fetchLocalizedElsewhere: LocalizedElsewhereFetcher = async (card, l
     const res = await scryfall.raw(url);
     const body = (await res.json()) as { data?: ScryfallCard[] };
     const candidates = (body.data ?? []).filter((c) => c.lang === SCRYFALL_LANG[language]);
-    if (candidates.length === 0) return null;
-
-    /*
-     * L'impression traduite **de cette édition-ci**, si elle est dans le lot.
-     * Chez Scryfall, une traduction porte la même édition et le même numéro de
-     * collection que l'original — c'est ce qui la rend reconnaissable sans
-     * appel supplémentaire.
-     *
-     * Elle sert à deux choses : dire si ce qu'on sert déjà est net, et — quand
-     * notre catalogue est trop ancien pour porter l'`illustration_id` — fournir
-     * les traits de l'impression choisie, puisque c'est la **même impression**
-     * dans une autre langue, donc la même œuvre et le même cadre.
-     */
-    const servie =
-      candidates.find(
-        (c) =>
-          c.set.toLowerCase() === card.setCode.toLowerCase() &&
-          c.collector_number === card.collectorNumber,
-      ) ?? null;
-
-    const duCatalogue = traitsOfCatalogCard(card);
-    const reference =
-      duCatalogue.illustrationId || !servie ? duCatalogue : traitsOfPrinting(servie);
-
-    const chosen = chooseSubstitute(candidates, {
-      reference,
-      ...(servie
-        ? {
-            servedImageStatus: (servie as { image_status?: string }).image_status ?? null,
-            servedScryfallId: servie.id,
-          }
-        : {}),
-    });
-    return {
-      /*
-       * Le nom se lit sur n'importe quelle impression traduite — il ne dépend
-       * pas de l'édition. On prend celle de cette édition-ci quand elle existe,
-       * sinon la substitution, sinon la première venue : même sans illustration
-       * affichable nulle part, le nom reste bon à prendre.
-       */
-      printedName: printedNameOf(servie ?? chosen ?? candidates[0]!),
-      substitute: chosen ? toSubstitute(chosen) : null,
-      ...(servie
-        ? {
-            servedImageStatus: (servie as { image_status?: string }).image_status ?? null,
-            servedHighresImage:
-              (servie as { highres_image?: boolean }).highres_image ?? false,
-          }
-        : {}),
-    };
+    return elsewhereFromCandidates(card, candidates);
   } catch (err) {
     // Aucune impression dans cette langue : Scryfall rend 404 sur une recherche
     // sans résultat. C'est une réponse, pas une panne.
@@ -500,6 +508,76 @@ export const fetchLocalizedElsewhere: LocalizedElsewhereFetcher = async (card, l
     throw err;
   }
 };
+
+/**
+ * Ce qu'un lot d'impressions traduites apprend sur une carte du catalogue.
+ *
+ * **C'est la décision, et elle ne connaît pas sa source.** Hier ces candidates
+ * arrivaient d'une recherche `/cards/search?q=oracleid:… lang:fr` ; elles
+ * peuvent aujourd'hui venir d'une jointure sur `LocalizedPrinting`, alimentée
+ * par le bulk `all_cards`. La règle de classement, elle, est la même fonction —
+ * pas une seconde implémentation qui lui ressemblerait. C'est la seule façon
+ * d'être certain que les deux chemins écrivent la **même** chose, plutôt que de
+ * l'espérer et de le découvrir faux sur une carte que personne ne regarde.
+ *
+ * Les candidates doivent déjà être filtrées sur la langue demandée : la
+ * recherche Scryfall le fait par `c.lang`, la base par sa colonne `language`.
+ */
+export function elsewhereFromCandidates(
+  card: CatalogCard,
+  candidates: readonly ScryfallCard[],
+): LocalizedElsewhere | null {
+  if (candidates.length === 0) return null;
+
+  /*
+   * L'impression traduite **de cette édition-ci**, si elle est dans le lot.
+   * Chez Scryfall, une traduction porte la même édition et le même numéro de
+   * collection que l'original — c'est ce qui la rend reconnaissable sans
+   * appel supplémentaire.
+   *
+   * Elle sert à deux choses : dire si ce qu'on sert déjà est net, et — quand
+   * notre catalogue est trop ancien pour porter l'`illustration_id` — fournir
+   * les traits de l'impression choisie, puisque c'est la **même impression**
+   * dans une autre langue, donc la même œuvre et le même cadre.
+   */
+  const servie =
+    candidates.find(
+      (c) =>
+        c.set.toLowerCase() === card.setCode.toLowerCase() &&
+        c.collector_number === card.collectorNumber,
+    ) ?? null;
+
+  const duCatalogue = traitsOfCatalogCard(card);
+  const reference =
+    duCatalogue.illustrationId || !servie ? duCatalogue : traitsOfPrinting(servie);
+
+  const chosen = chooseSubstitute(candidates, {
+    reference,
+    ...(servie
+      ? {
+          servedImageStatus: (servie as { image_status?: string }).image_status ?? null,
+          servedScryfallId: servie.id,
+        }
+      : {}),
+  });
+  return {
+    /*
+     * Le nom se lit sur n'importe quelle impression traduite — il ne dépend
+     * pas de l'édition. On prend celle de cette édition-ci quand elle existe,
+     * sinon la substitution, sinon la première venue : même sans illustration
+     * affichable nulle part, le nom reste bon à prendre.
+     */
+    printedName: printedNameOf(servie ?? chosen ?? candidates[0]!),
+    substitute: chosen ? toSubstitute(chosen) : null,
+    ...(servie
+      ? {
+          servedImageStatus: (servie as { image_status?: string }).image_status ?? null,
+          servedHighresImage:
+            (servie as { highres_image?: boolean }).highres_image ?? false,
+        }
+      : {}),
+  };
+}
 
 /**
  * Les statuts d'image qu'une substitution a le droit de porter.
@@ -771,7 +849,7 @@ export function toLocalizationRecord(
  * de chaque face quand Scryfall le donne. Sans cela, une carte française
  * recto-verso s'annonçait en anglais dès qu'on la retournait.
  */
-function localizedFaces(printing: ScryfallCard): Array<Record<string, unknown>> | null {
+export function localizedFaces(printing: ScryfallCard): Array<Record<string, unknown>> | null {
   const faces = compactFaces(printing);
   if (!faces) return null;
   return faces.map((face, i) => {
@@ -785,7 +863,7 @@ function localizedFaces(printing: ScryfallCard): Array<Record<string, unknown>> 
  * pose pas au premier niveau. On recompose alors « recto // verso », comme le
  * fait `name` pour les cartes anglaises.
  */
-function printedNameOf(printing: ScryfallCard): string {
+export function printedNameOf(printing: ScryfallCard): string {
   const top = (printing as { printed_name?: string }).printed_name;
   if (top) return top;
   const faces = (printing.card_faces ?? [])
@@ -894,6 +972,43 @@ function applyRecord(
   };
 }
 
+/**
+ * Une ligne déjà en base, complétée par ce qu'une **autre impression** vient
+ * d'apprendre.
+ *
+ * **Une seule implémentation, appelée par les deux chemins.** Le rattrapage
+ * réseau et le rattrapage par le bulk écrivent donc littéralement les mêmes
+ * colonnes, et non deux blocs jumeaux qui divergeraient à la première
+ * correction faite d'un seul côté. La source des candidates change ; ce qu'on
+ * en retient, non.
+ */
+function completerDepuisAilleurs(
+  known: LocalizationRecord,
+  ailleurs: LocalizedElsewhere | null,
+): LocalizationRecord {
+  return {
+    ...known,
+    // Le nom déjà connu ne se perd pas si la recherche n'en rend plus :
+    // il a été vrai une fois, il l'est encore.
+    printedName: ailleurs?.printedName ?? known.printedName,
+    substitute: ailleurs?.substitute ?? null,
+    /*
+     * La même recherche a relu l'impression **servie** : 109 lignes de la base
+     * datent d'avant la colonne `imageStatus` et ne savaient pas dire si ce
+     * qu'elles montrent est net. Corriger le statut ici ne coûte pas un appel
+     * de plus, et évite qu'elles repassent sans fin.
+     */
+    ...(ailleurs?.servedImageStatus !== undefined
+      ? {
+          imageStatus: ailleurs.servedImageStatus,
+          highresImage: ailleurs.servedHighresImage ?? known.highresImage,
+        }
+      : {}),
+    nameChecked: true,
+    substituteSearchVersion: SUBSTITUTE_SEARCH_VERSION,
+  };
+}
+
 export interface ResolveOptions {
   cards: CatalogCard[];
   language: Language;
@@ -906,6 +1021,13 @@ export interface ResolveOptions {
    * anglais complet, exactement comme avant.
    */
   fetchElsewhere?: LocalizedElsewhereFetcher;
+  /**
+   * Le catalogue des impressions traduites, quand il est disponible. Sans lui,
+   * la résolution se comporte exactement comme avant : réseau, plafond et
+   * `pending`. C'est volontairement facultatif — une base vierge dont
+   * l'ingestion n'a pas encore tourné doit rester utilisable.
+   */
+  bulk?: BulkLocalizationSource;
   maxLookups?: number;
 }
 
@@ -934,6 +1056,7 @@ export async function resolveLocalizedCards({
   store,
   fetch,
   fetchElsewhere,
+  bulk,
   maxLookups = MAX_LIVE_LOOKUPS_PER_REQUEST,
 }: ResolveOptions): Promise<ResolveResult> {
   // Le catalogue est anglais : demander l'anglais ne coûte ni base ni réseau.
@@ -954,6 +1077,31 @@ export async function resolveLocalizedCards({
     cached.set(record.scryfallId, record);
   }
 
+  /*
+   * ——— Le catalogue localisé, interrogé une fois pour tout le lot
+   *
+   * On ne demande que ce qui reste à faire : une carte déjà résolue et à jour
+   * n'a rien à y gagner, et la relire coûterait deux jointures pour rien. Le
+   * filtre est **exactement** celui qui déclencherait un appel réseau plus bas.
+   *
+   * Une panne de base ne se mémorise pas plus qu'une panne de Scryfall : on
+   * repart simplement sur le chemin paresseux, plafond compris.
+   */
+  let bulkAnswers = new Map<string, BulkAnswer>();
+  if (bulk) {
+    const aChercher = cards.filter((card) => {
+      const known = cached.get(card.scryfallId);
+      return !known || needsSubstituteSearch(known, card);
+    });
+    if (aChercher.length > 0) {
+      try {
+        bulkAnswers = await bulk.lookup(aChercher, language);
+      } catch {
+        bulkAnswers = new Map();
+      }
+    }
+  }
+
   const fresh: LocalizationRecord[] = [];
   const out: LocalizedCard[] = [];
   const unresolved: CatalogCard[] = [];
@@ -972,32 +1120,28 @@ export async function resolveLocalizedCards({
        * La condition ne se lit plus sur `nameChecked` : ce drapeau était déjà
        * `true` sur les lignes d'avant, et les fermait à jamais.
        */
+      /*
+       * Le rattrapage par le catalogue localisé : la même recherche, mais en
+       * base. Il passe **avant** le chemin réseau et ne consomme pas le
+       * plafond — c'est tout l'objet du bulk. Le compteur monte, donc la ligne
+       * ne repassera plus, exactement comme après une recherche Scryfall.
+       */
+      const enMasse = bulkAnswers.get(card.scryfallId);
+      if (needsSubstituteSearch(known, card) && enMasse) {
+        const ailleurs = elsewhereFromCandidates(card, enMasse.candidates);
+        const complete = completerDepuisAilleurs(known, ailleurs);
+        fresh.push(complete);
+        cached.set(card.scryfallId, complete);
+        out.push(applyRecord(card, complete));
+        continue;
+      }
+
       const aRattraper = needsSubstituteSearch(known, card) && Boolean(fetchElsewhere);
       if (aRattraper && fetchElsewhere && lookups < maxLookups) {
         lookups += 1;
         try {
           const ailleurs = await fetchElsewhere(card, language);
-          const complete: LocalizationRecord = {
-            ...known,
-            // Le nom déjà connu ne se perd pas si la recherche n'en rend plus :
-            // il a été vrai une fois, il l'est encore.
-            printedName: ailleurs?.printedName ?? known.printedName,
-            substitute: ailleurs?.substitute ?? null,
-            /*
-             * La même recherche a relu l'impression **servie** : 109 lignes de
-             * la base datent d'avant la colonne `imageStatus` et ne savaient pas
-             * dire si ce qu'elles montrent est net. Corriger le statut ici ne
-             * coûte pas un appel de plus, et évite qu'elles repassent sans fin.
-             */
-            ...(ailleurs?.servedImageStatus !== undefined
-              ? {
-                  imageStatus: ailleurs.servedImageStatus,
-                  highresImage: ailleurs.servedHighresImage ?? known.highresImage,
-                }
-              : {}),
-            nameChecked: true,
-            substituteSearchVersion: SUBSTITUTE_SEARCH_VERSION,
-          };
+          const complete = completerDepuisAilleurs(known, ailleurs);
           fresh.push(complete);
           cached.set(card.scryfallId, complete);
           out.push(applyRecord(card, complete));
@@ -1021,6 +1165,40 @@ export async function resolveLocalizedCards({
       out.push(applyRecord(card, known));
       continue;
     }
+
+    /*
+     * ——— Première résolution, sans réseau
+     *
+     * Le bulk connaît cette carte : il répond pour les **deux** appels que le
+     * chemin réseau aurait passés — l'impression traduite de cette édition, et
+     * ses sœurs. La condition `chercherAilleurs` est recopiée mot pour mot du
+     * chemin réseau, et ce n'est pas de la superstition : sans elle, une
+     * impression déjà nette recevrait ici une substitution que le réseau ne lui
+     * aurait jamais écrite, et les deux chemins produiraient deux lignes
+     * différentes pour la même carte selon l'ordre où elles ont été vues.
+     */
+    const enMasse = bulkAnswers.get(card.scryfallId);
+    if (enMasse) {
+      const terrainDeBase = isBasicLandTypeLine(card.typeLine);
+      const chercherAilleurs =
+        !terrainDeBase &&
+        (!enMasse.printing || imageStatusOf(enMasse.printing) !== SHARP_IMAGE_STATUS);
+      const ailleurs = chercherAilleurs
+        ? elsewhereFromCandidates(card, enMasse.candidates)
+        : null;
+      const record = toLocalizationRecord(
+        card.scryfallId,
+        language,
+        enMasse.printing,
+        ailleurs,
+        chercherAilleurs || terrainDeBase,
+      );
+      fresh.push(record);
+      cached.set(card.scryfallId, record);
+      out.push(applyRecord(card, record));
+      continue;
+    }
+
     if (lookups >= maxLookups) {
       out.push(asCatalog(card, language, true));
       unresolved.push(card);
@@ -1138,6 +1316,12 @@ export interface BackgroundDeps {
   store: LocalizationStore;
   fetch: LocalizedPrintingFetcher;
   fetchElsewhere?: LocalizedElsewhereFetcher;
+  /**
+   * Le catalogue localisé vaut aussi ici, et c'est ce qui vide la file de fond
+   * au lieu de l'étaler : une tranche que le bulk tranche entièrement ne passe
+   * plus une seconde dans le `RateLimitedFetcher`.
+   */
+  bulk?: BulkLocalizationSource;
 }
 
 /** Met en file ce qui n'a pas pu être résolu. Ne rend jamais d'erreur à l'appelant. */
@@ -1181,6 +1365,7 @@ async function drainBackground(deps: BackgroundDeps): Promise<void> {
           store: deps.store,
           fetch: deps.fetch,
           ...(deps.fetchElsewhere ? { fetchElsewhere: deps.fetchElsewhere } : {}),
+          ...(deps.bulk ? { bulk: deps.bulk } : {}),
           // Pas de plafond ici : personne n'attend au bout du fil. Le rythme est
           // tenu par le `RateLimitedFetcher`, pas par un compteur.
           maxLookups: Number.POSITIVE_INFINITY,

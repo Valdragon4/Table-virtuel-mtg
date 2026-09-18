@@ -80,7 +80,7 @@ export const en = defineTranslation({
   'prefs.languageError': 'The language could not be saved to your account.',
   'prefs.localizedPrinting': 'Force a printing available in my language',
   'prefs.localizedPrintingHint':
-    'When the chosen printing does not exist in your language, show the art of another printing that does. Only changes what you see: other players still see the chosen printing.',
+    'Shows the art of another printing when the chosen one does not exist in your language, or when Scryfall only publishes a blurry scan of it — you then get the sharpest render available in your language. Only changes what you see: other players still see the chosen printing. Basic lands are left alone and keep their printing.',
   'card.imageFallback': 'English art: this card does not exist in {language}.',
 
   // ═══ Écrans hors partie ═══════════════════════════════════════════════════

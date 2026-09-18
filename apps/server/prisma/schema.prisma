@@ -339,6 +339,114 @@ model CardLocalization {
   @@index([language, missing, substituteSearchVersion])
 }
 
+/// Le catalogue des impressions **traduites**, ingéré en masse.
+///
+/// ——— Pourquoi une table neuve et non des colonnes de plus sur `CardLocalization`
+///
+/// Les deux ne répondent pas à la même question et ne se lisent pas par la même
+/// clé. `CardLocalization` est la **réponse** : « pour la carte anglaise X, en
+/// français, que sert-on ? », indexée par `(scryfallId anglais, langue)`. Cette
+/// table-ci est la **matière première** : toutes les impressions françaises
+/// publiées par Scryfall, indexées par ce qui permet de les retrouver — l'édition
+/// et le numéro de collection pour l'impression exacte, l'`oracleId` pour ses
+/// sœurs quand il faut en substituer une. Une impression française n'a pas
+/// d'identifiant anglais à porter : elle ne pourrait donc pas entrer dans la clé
+/// primaire de `CardLocalization` sans la dénaturer.
+///
+/// Les garder séparées a une conséquence qui compte : la résolution paresseuse
+/// continue d'écrire dans `CardLocalization` exactement ce qu'elle y écrivait, et
+/// l'ingestion en masse n'efface ni ne réécrit une seule de ses lignes.
+///
+/// ——— L'invariant de droits, et c'est ici qu'il se joue
+///
+/// Le bulk `all_cards` **contient** le texte des règles, dans toutes les langues :
+/// `oracle_text`, `printed_text`, `flavor_text`, `printed_type_line`. Rien de tout
+/// cela n'entre ici. Le filtrage se fait **à l'ingestion**, colonne par colonne :
+/// on ne retient que des URL d'illustration, des noms imprimés et des métadonnées
+/// d'identification. Un test le vérifie explicitement
+/// (`apps/server/test/impressions-localisees.test.ts`).
+///
+/// ——— Sûreté du `db push`
+///
+/// Table entièrement neuve : `prisma db push --accept-data-loss` la crée sans
+/// toucher à quoi que ce soit d'existant. Aucune colonne n'est supprimée ni
+/// renommée ailleurs.
+model LocalizedPrinting {
+  /// L'identifiant de l'impression **traduite** chez Scryfall — jamais celui du
+  /// protocole de jeu, qui reste l'identifiant anglais du catalogue.
+  scryfallId      String   @id
+  /// La carte, toutes impressions et toutes langues confondues. C'est par lui
+  /// qu'on retrouve les sœurs traduites d'une impression, comme le faisait la
+  /// recherche `oracleid:… lang:fr`.
+  oracleId        String?
+  /// Code ISO 639-1 de `LANGUAGES`, pas le code Scryfall : la conversion est
+  /// faite à l'ingestion, par `SCRYFALL_LANG`.
+  language        String
+  /// Édition et numéro de collection : chez Scryfall une traduction porte les
+  /// **mêmes** que l'original, ce qui en fait la clé de l'impression exacte.
+  setCode         String
+  collectorNumber String
+  /// Le nom **à afficher**, déjà calculé par `printedNameOf()` au moment de
+  /// l'ingestion — donc « recto // verso » sur une carte à deux faces, que
+  /// Scryfall ne donne que face par face. Un nom, jamais un texte de règles.
+  ///
+  /// **Il est calculé à l'ingestion et non à la lecture**, par la même fonction
+  /// que le chemin réseau. C'est ce qui garantit que les deux chemins écrivent
+  /// la même chose : il n'y a qu'une seule implémentation, appelée à deux
+  /// moments différents.
+  printedName     String
+  /// Des URL, rien d'autre.
+  imageUris       Json?
+  /// Exactement ce que `localizedFaces()` produit : une image et un nom imprimé
+  /// par face, sans texte de règles. Calculé à l'ingestion, pour la raison
+  /// ci-dessus.
+  faces           Json?
+  /// `image_status` de Scryfall : `missing`, `placeholder`, `lowres`,
+  /// `highres_scan`. C'est lui qui décide si une substitution de **netteté** a
+  /// quelque chose à apporter.
+  imageStatus     String?
+  highresImage    Boolean  @default(false)
+  /// Les identifiants d'**œuvre**, dans l'ordre des faces — une liste et non un
+  /// scalaire, parce qu'une carte recto-verso en porte un par face et que
+  /// `illustrationIdsOf()` les compare tous. `Card` n'en retient qu'un parce
+  /// qu'elle est du côté de la **référence** (l'œuvre du recto, celle que le
+  /// joueur voit) ; ici on est du côté des **candidates**, et une candidate
+  /// compte dès qu'une de ses faces porte l'œuvre cherchée.
+  illustrationIds Json?
+  /// Les traits de ressemblance, lus par `chooseSubstitute` exactement comme sur
+  /// le chemin réseau. Nullables pour la même raison que sur `Card` : `null` veut
+  /// dire « on ne sait pas » et ne départage personne.
+  frame           String?
+  frameEffects    Json?
+  borderColor     String?
+  isFullArt       Boolean  @default(false)
+  isTextless      Boolean?
+  setType         String?
+  releasedAt      DateTime?
+  /// ——— Les entrées de `printingScore()`, et non son résultat
+  ///
+  /// `chooseSubstitute` départage ses candidates par `printingScore(c)`. Stocker
+  /// le **score** obligerait à croire qu'il a été calculé par la même version du
+  /// barème ; stocker ses **entrées** laisse la fonction le recalculer, et le
+  /// classement reste par construction identique à celui du chemin réseau —
+  /// y compris le jour où le barème changera.
+  isDigital       Boolean  @default(false)
+  isPromo         Boolean  @default(false)
+  isVariation     Boolean  @default(false)
+  /// `games` contient-il `paper` : une impression qui n'existe qu'en numérique
+  /// est lourdement pénalisée par le barème.
+  isPaper         Boolean  @default(true)
+  updatedAt       DateTime @default(now())
+
+  /// L'impression exacte : « la traduction de PIO·4 en français ». C'est la
+  /// requête qui remplace `GET /cards/{set}/{cn}/{lang}`.
+  @@index([language, setCode, collectorNumber])
+  /// Les candidates à la substitution : « toutes les impressions françaises de
+  /// cette carte ». C'est la requête qui remplace `/cards/search?q=oracleid:…`,
+  /// celle-là même qui déclenchait un 429 au bout d'une vingtaine d'appels.
+  @@index([language, oracleId])
+}
+
 model Playmat {
   id       String @id @default(uuid())
   userId   String

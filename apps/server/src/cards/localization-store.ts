@@ -167,6 +167,9 @@ const CATALOG_SELECT = {
   typeLine: true,
   imageUris: true,
   faces: true,
+  // Voir `bulkAuthorityDate` : sans la date de sortie, le catalogue localisé ne
+  // peut pas savoir s'il fait autorité sur cette carte, et s'abstient.
+  releasedAt: true,
   illustrationId: true,
   frame: true,
   frameEffects: true,
