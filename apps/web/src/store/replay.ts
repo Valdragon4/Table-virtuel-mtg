@@ -100,7 +100,11 @@ interface ReplayStore {
   error: 'NOT_FOUND' | 'NETWORK' | null;
   playing: boolean;
 
-  load: (handle: string, view: string) => Promise<void>;
+  /**
+   * Charge un replay au point de vue demandé, et se place au pas dont le `seq`
+   * ne dépasse pas `atSeq`. Omis, on repart du point zéro.
+   */
+  load: (handle: string, view: string, atSeq?: number | null) => Promise<void>;
   seek: (step: number) => void;
   stepForward: () => void;
   stepBack: () => void;
@@ -111,6 +115,51 @@ interface ReplayStore {
 /** Les points de reprise vivent hors du store : ce ne sont pas des données de rendu. */
 let checkpoints: Frozen[] = [];
 
+/**
+ * Le `seq` de l'instant affiché — **le seul repère qui traverse un changement
+ * de point de vue.**
+ *
+ * Pas le rang dans la liste : un rang ne désigne un instant que si les deux
+ * vues ont exactement les mêmes pas. C'est le cas aujourd'hui — le serveur sert
+ * un pas par `seq` quelle que soit la vue, un `NOTED` quand le siège était hors
+ * audience, parce que la séquence doit rester dense (docs/protocol.md §5) —
+ * mais c'est une propriété du serveur, pas du lecteur. Le jour où elle
+ * changerait, un rang désignerait silencieusement un autre moment de la partie.
+ * Le `seq`, lui, désigne le même fait de jeu dans toutes les vues, par
+ * définition.
+ *
+ * Au pas zéro, il n'y a pas encore de pas appliqué : c'est le `seq` du point de
+ * départ, celui du snapshot d'origine.
+ */
+export function currentSeq(state: Pick<ReplayStore, 'steps' | 'cursor' | 'head'>): number | null {
+  if (!state.head) return null;
+  return state.cursor > 0 ? (state.steps[state.cursor - 1]?.seq ?? null) : state.head.startSeq;
+}
+
+/**
+ * Le rang auquel se placer pour montrer la partie à l'instant `seq`.
+ *
+ * C'est le nombre de pas dont le `seq` **ne dépasse pas** la cible : le pas le
+ * plus proche en deçà, jamais au-delà. Si la vue demandée ne contient pas ce
+ * `seq` précis — elle n'a pas reçu ce qui ne la concernait pas —, on montre
+ * donc l'état de la partie tel que ce siège le connaissait à cet instant, ce
+ * qui est exactement la question posée. Repartir au début serait perdre ce
+ * qu'on était venu voir.
+ *
+ * Recherche dichotomique : les pas sont triés par `seq` croissant, sans trou.
+ */
+export function cursorForSeq(steps: ReplayStep[], seq: number | null | undefined): number {
+  if (seq === null || seq === undefined) return 0;
+  let low = 0;
+  let high = steps.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if ((steps[mid]?.seq ?? Number.POSITIVE_INFINITY) <= seq) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
 export const useReplay = create<ReplayStore>((set, get) => ({
   head: null,
   steps: [],
@@ -119,9 +168,17 @@ export const useReplay = create<ReplayStore>((set, get) => ({
   error: null,
   playing: false,
 
-  async load(handle, view) {
-    set({ loading: true, error: null, head: null, steps: [], cursor: 0, playing: false });
-    checkpoints = [];
+  async load(handle, view, atSeq) {
+    /*
+     * **On ne vide rien avant d'avoir de quoi remplacer.**
+     *
+     * Un changement de point de vue passe par ici. Effacer `head` et `steps`
+     * dès le départ faisait retomber la page sur son écran de chargement : la
+     * table disparaissait, puis revenait — et l'instant qu'on était en train
+     * de regarder avec elle. On garde donc l'ancien flux à l'écran jusqu'à ce
+     * que le nouveau soit prêt, et l'on bascule d'un coup.
+     */
+    set({ loading: true, error: null, playing: false });
     try {
       const query = view === 'ALL' ? '' : `?view=${encodeURIComponent(view)}`;
       const head = await api.get<ReplayHead>(`/api/replays/${encodeURIComponent(handle)}${query}`);
@@ -133,8 +190,12 @@ export const useReplay = create<ReplayStore>((set, get) => ({
         );
         steps.push(...page.frames);
       }
+      // Les points de reprise décrivent l'ancien flux : ils n'ont plus cours.
+      checkpoints = [];
       set({ head, steps, cursor: 0, loading: false });
       bootstrap(head);
+      const target = cursorForSeq(steps, atSeq);
+      if (target > 0) get().seek(target);
     } catch (error) {
       // Un 404 est la réponse normale à « ce replay n'existe pas *pour vous* » :
       // partie en cours, jeton révoqué, adresse inventée. La page dit la même

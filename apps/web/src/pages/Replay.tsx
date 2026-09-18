@@ -22,7 +22,7 @@ import { CardPreview } from '../components/CardPreview.js';
 import { LegalFooter } from '../components/LegalFooter.js';
 import { api } from '../lib/api.js';
 import { useGame } from '../store/game.js';
-import { useReplay } from '../store/replay.js';
+import { currentSeq, useReplay } from '../store/replay.js';
 import { useT } from '../lib/i18n/index.js';
 
 /** Cadence de la lecture automatique : lisible sans être interminable. */
@@ -52,6 +52,25 @@ export function ReplayPage(): React.ReactElement {
   const view = params.get('view') ?? 'ALL';
   const t = useT();
 
+  /*
+   * **L'instant courant vit dans l'adresse, et il y vit en `seq`.**
+   *
+   * Deux raisons, et la seconde est un cadeau. D'abord c'est ce qui survit au
+   * rechargement qu'impose un changement de point de vue : la vue se recalcule
+   * côté serveur, donc on repasse par `load`, et sans ancre on repartait du pas
+   * zéro — c'est-à-dire qu'on perdait exactement le moment qu'on voulait
+   * regarder autrement. Ensuite, un lien de replay devient de ce fait un lien
+   * **vers un instant précis** de la partie, ce qui est très exactement ce
+   * qu'on veut envoyer à quelqu'un.
+   *
+   * Il est lu dans une ref, et l'effet de chargement ne s'abonne pas à lui :
+   * sans cela, chaque pas franchi rechargerait tout le flux.
+   */
+  const at = params.get('at');
+  const atSeq = at === null ? null : Number.parseInt(at, 10);
+  const anchor = useRef<number | null>(null);
+  anchor.current = atSeq !== null && Number.isFinite(atSeq) ? atSeq : null;
+
   const [byRoom, setByRoom] = useState<RoomReplay | null>(null);
   const [roomFailed, setRoomFailed] = useState(false);
 
@@ -66,15 +85,6 @@ export function ReplayPage(): React.ReactElement {
   const playing = useReplay((s) => s.playing);
   const setPlaying = useReplay((s) => s.setPlaying);
 
-  /*
-   * Changer de point de vue **recharge le flux**.
-   *
-   * La projection est faite par le serveur, comme en partie : la visibilité
-   * est décidée à l'émission, jamais filtrée côté client. Un flux omniscient
-   * qu'on masquerait localement aurait mis dans le navigateur du lecteur des
-   * identités qu'il a demandé à ne pas voir — et surtout, il aurait fallu
-   * réécrire les règles de visibilité ici.
-   */
   useEffect(() => {
     if (!code) return;
     let alive = true;
@@ -95,13 +105,57 @@ export function ReplayPage(): React.ReactElement {
   // nous donner. Tant qu'on ne l'a pas, on ne charge rien.
   const resolved = handle || byRoom?.replayId || '';
 
+  /*
+   * Changer de point de vue **recharge le flux**, et c'est un choix.
+   *
+   * On pourrait imaginer garder le flux omniscient en mémoire et re-dériver la
+   * vue localement, sans aller-retour. Ce serait plus rapide, et ce serait une
+   * faute : les règles de visibilité vivent dans `projection.ts`, côté serveur,
+   * appuyées sur `GameObjectState` et `canSeeIdentity`. Les rejouer dans le
+   * navigateur voudrait dire soit en écrire une seconde implémentation — celle
+   * qui divergera, et le jour où elle diverge le replay montre à un siège une
+   * carte qu'il n'a jamais vue —, soit déménager l'état de partie du serveur
+   * dans `@mtg/shared`, ce qui est une autre décision que celle-ci.
+   *
+   * La bonne réponse n'était donc pas de supprimer le rechargement mais de le
+   * rendre invisible : la table reste à l'écran (voir `load`), et l'on revient
+   * au même `seq` grâce à `anchor`. `at` n'est délibérément pas dans les
+   * dépendances — il change à chaque pas, et l'y mettre rechargerait tout le
+   * flux à chaque flèche.
+   */
   useEffect(() => {
     if (!resolved) return;
-    void load(resolved, view);
-    return () => {
-      reset();
-    };
-  }, [resolved, view, load, reset]);
+    void load(resolved, view, anchor.current);
+  }, [resolved, view, load]);
+
+  /*
+   * Le nettoyage n'appartient **qu'au démontage**.
+   *
+   * Il était accroché à l'effet de chargement, donc il tournait aussi à chaque
+   * changement de point de vue : il vidait `head` et `steps` avant même que le
+   * nouveau flux ne soit demandé, la page retombait sur son écran de
+   * chargement, et la table s'éteignait puis se rallumait. Ici, elle reste
+   * allumée pendant toute la bascule.
+   */
+  useEffect(() => reset, [reset]);
+
+  /*
+   * L'adresse suit le pas courant, en remplaçant l'entrée d'historique plutôt
+   * qu'en en empilant une par pas — sans quoi le bouton « précédent » du
+   * navigateur remonterait le replay action par action.
+   */
+  const seqNow = useReplay(currentSeq);
+  useEffect(() => {
+    if (seqNow === null) return;
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.set('at', String(seqNow));
+        return next;
+      },
+      { replace: true },
+    );
+  }, [seqNow, setParams]);
 
   // La lecture automatique : un pas toutes les `PLAY_INTERVAL_MS`, et elle
   // s'arrête d'elle-même à la fin plutôt que de tourner dans le vide.
@@ -142,7 +196,14 @@ export function ReplayPage(): React.ReactElement {
   if (code && (roomFailed || byRoom?.available === false)) {
     return <Message title={t('replay.notFound')} body={t('replay.notFoundBody')} />;
   }
-  if (loading || (!resolved && code)) return <Message title={t('replay.loading')} />;
+  /*
+   * L'écran de chargement n'est **que** pour le premier chargement.
+   *
+   * Un changement de point de vue recharge lui aussi, mais la table d'avant est
+   * encore à l'écran et parfaitement lisible : la remplacer par « Chargement… »
+   * pour le temps d'un aller-retour ferait clignoter l'instant qu'on regarde.
+   */
+  if (!head && (loading || (!resolved && code))) return <Message title={t('replay.loading')} />;
 
   if (error === 'NOT_FOUND') {
     return <Message title={t('replay.notFound')} body={t('replay.notFoundBody')} />;
@@ -172,7 +233,19 @@ export function ReplayPage(): React.ReactElement {
         view={view}
         onView={(next) => {
           setPlaying(false);
-          setParams(next === 'ALL' ? {} : { view: next });
+          /*
+           * On change `view` et **on ne touche à rien d'autre** : `at` porte
+           * l'instant regardé, et l'écraser ici renverrait au début de la
+           * partie, ce que la bascule doit précisément éviter. L'ancienne
+           * écriture, `setParams({ view })`, remplaçait la totalité des
+           * paramètres.
+           */
+          setParams((previous) => {
+            const params = new URLSearchParams(previous);
+            if (next === 'ALL') params.delete('view');
+            else params.set('view', next);
+            return params;
+          });
         }}
       />
 

@@ -190,12 +190,60 @@ zéro demanderait sur une longue partie. Ils ne coûtent presque rien en mémoir
 fait un `new Map(...)`), si bien qu'un point de reprise n'est qu'un jeu de
 références vers des objets qui existent déjà.
 
-### Changer de point de vue
+### Changer de point de vue, sans changer d'instant
 
-Changer de point de vue **recharge le flux** depuis le serveur. La visibilité
-reste décidée à l'émission, jamais filtrée côté client : un flux omniscient
-qu'on masquerait localement aurait mis dans le navigateur du lecteur des
-identités qu'il a demandé à ne pas voir.
+La bascule n'a d'intérêt que **sur un moment donné** : on avance jusqu'à
+l'action intéressante, on passe sur la vue de l'adversaire pour comprendre ce
+qu'il savait à ce moment-là. Le lecteur reste donc **au même pas**.
+
+**Pourquoi un rechargement, et pas un recalcul local.** On pourrait garder le
+flux omniscient en mémoire et re-dériver la vue dans le navigateur, sans
+aller-retour. Ce serait plus rapide et ce serait une faute : les règles de
+visibilité vivent dans `apps/server/src/game/projection.ts`, appuyées sur
+`GameObjectState` et `canSeeIdentity`. Les rejouer côté client voudrait dire
+soit en écrire une **seconde implémentation** — celle qui divergera, et le jour
+où elle diverge le replay montre à un siège une carte qu'il n'a jamais vue —,
+soit déménager l'état de partie du serveur dans `@mtg/shared`, ce qui est une
+autre décision que celle-ci. C'est le même argument que pour `applyEvent`.
+
+La réponse n'était donc pas de supprimer le rechargement mais de le rendre
+**invisible**, ce qui tient en trois points :
+
+1. **L'ancre est un `seq`, pas un rang.** Un rang ne désigne le même instant que
+   si les deux vues ont exactement les mêmes pas. C'est le cas aujourd'hui — le
+   serveur sert un pas par `seq` quelle que soit la vue, un `NOTED` quand le
+   siège était hors audience, pour que la séquence reste dense
+   (`docs/protocol.md` §5) — mais c'est une propriété du **serveur**, pas du
+   lecteur. Le `seq`, lui, désigne le même fait de jeu dans toutes les vues par
+   définition.
+2. **Si le `seq` manque dans la vue demandée**, on se place au pas le plus proche
+   **en deçà** (`cursorForSeq`, recherche dichotomique) : l'état de la partie à
+   cet instant tel que ce siège le connaissait, ce qui est exactement la
+   question posée. Jamais un retour au début.
+3. **La table ne s'éteint pas.** `load` ne vide plus `head` ni `steps` avant
+   d'avoir de quoi les remplacer, et l'écran de chargement est réservé au
+   **premier** chargement. Le nettoyage du store n'est plus accroché à l'effet
+   de chargement — donc il ne tourne plus à chaque bascule — mais au seul
+   démontage de la page.
+
+Vérifié à l'œil, et pas seulement par un test : pendant toute la bascule, 82
+relevés successifs montrent la table présente, aucun écran de chargement, et la
+position immobile sur le même pas.
+
+### L'instant est dans l'adresse
+
+Le pas courant s'écrit dans l'URL en `?at=<seq>`, en remplaçant l'entrée
+d'historique plutôt qu'en en empilant une par pas. Il sert d'abord d'ancre à la
+bascule, et il donne par la même occasion une vraie qualité : **un lien de
+replay est un lien vers un instant précis de la partie**, ce qui est exactement
+ce qu'on veut envoyer à quelqu'un.
+
+`view` et `at` cohabitent : le sélecteur de point de vue modifie `view` et ne
+touche à rien d'autre. L'écriture précédente, `setParams({ view })`, remplaçait
+la totalité des paramètres — c'est elle qui effaçait l'ancre.
+
+L'effet de chargement ne s'abonne **pas** à `at` (il le lit dans une ref) :
+sinon chaque flèche rechargerait tout le flux.
 
 ---
 
