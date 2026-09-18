@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api.js';
 import { PaperShell } from '../components/PaperShell.js';
+import { useT } from '../lib/i18n/index.js';
 
 /** Un fait porté par la plaque : confirmé, refusé, en cours. */
 function Outcome({
@@ -31,6 +32,7 @@ function Outcome({
 }
 
 export function VerifyEmailPage(): React.ReactElement {
+  const t = useT();
   const [params] = useSearchParams();
   const token = params.get('token') ?? '';
   const [state, setState] = useState<'pending' | 'ok' | 'error'>('pending');
@@ -39,7 +41,7 @@ export function VerifyEmailPage(): React.ReactElement {
   useEffect(() => {
     if (!token) {
       setState('error');
-      setMessage('Lien incomplet : le jeton est absent.');
+      setMessage(t('token.missingToken'));
       return;
     }
     void api
@@ -47,26 +49,30 @@ export function VerifyEmailPage(): React.ReactElement {
       .then(() => setState('ok'))
       .catch((err: unknown) => {
         setState('error');
-        setMessage(err instanceof ApiError ? err.message : 'Vérification impossible.');
+        // Le message d'`ApiError` vient du serveur : il s'affiche tel quel.
+        setMessage(err instanceof ApiError ? err.message : t('token.verifyFailed'));
       });
+    // `t` n'est pas en dépendance : la vérification ne se rejoue pas parce que
+    // la langue a changé.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   return (
     <PaperShell
       aside={
         <Link className="floor-link" to="/">
-          Retour à l’accueil
+          {t('nav.backHome')}
         </Link>
       }
-      title="Confirmation de l’adresse email"
+      title={t('token.verifyTitle')}
     >
-      {state === 'pending' && <Outcome tone="wait">Vérification en cours…</Outcome>}
+      {state === 'pending' && <Outcome tone="wait">{t('token.verifying')}</Outcome>}
       {state === 'ok' && (
         <>
-          <Outcome tone="ok">Adresse confirmée. Votre compte est actif.</Outcome>
+          <Outcome tone="ok">{t('token.verified')}</Outcome>
           <p className="mt-5">
             <Link className="ink-link" to="/login">
-              Se connecter
+              {t('auth.login')}
             </Link>
           </p>
         </>
@@ -75,8 +81,7 @@ export function VerifyEmailPage(): React.ReactElement {
         <>
           <Outcome tone="bad">{message}</Outcome>
           <p className="paper-dim mt-4 text-[0.84rem] leading-relaxed">
-            Les liens expirent au bout de 24 heures et ne servent qu’une fois. Connectez-vous
-            puis demandez un nouvel envoi.
+            {t('token.verifyExpiredHint')}
           </p>
         </>
       )}
@@ -85,6 +90,7 @@ export function VerifyEmailPage(): React.ReactElement {
 }
 
 export function ResetPasswordPage(): React.ReactElement {
+  const t = useT();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const token = params.get('token') ?? '';
@@ -102,7 +108,7 @@ export function ResetPasswordPage(): React.ReactElement {
       setDone(true);
       window.setTimeout(() => navigate('/login'), 1500);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Réinitialisation impossible.');
+      setError(err instanceof ApiError ? err.message : t('token.resetFailed'));
     } finally {
       setBusy(false);
     }
@@ -112,20 +118,17 @@ export function ResetPasswordPage(): React.ReactElement {
     <PaperShell
       aside={
         <Link className="floor-link" to="/">
-          Retour à l’accueil
+          {t('nav.backHome')}
         </Link>
       }
-      title="Nouveau mot de passe"
+      title={t('token.resetTitle')}
     >
       {done ? (
-        <Outcome tone="ok">
-          Mot de passe changé. Toutes vos sessions ont été fermées ; redirection vers la
-          connexion…
-        </Outcome>
+        <Outcome tone="ok">{t('token.resetDone')}</Outcome>
       ) : (
         <form className="space-y-5" onSubmit={(event) => void submit(event)}>
           <label className="block">
-            <span className="paper-label">Mot de passe</span>
+            <span className="paper-label">{t('auth.password')}</span>
             <input
               autoComplete="new-password"
               autoFocus
@@ -136,16 +139,16 @@ export function ResetPasswordPage(): React.ReactElement {
               type="password"
               value={password}
             />
-            <span className="paper-dim mt-1.5 block text-[0.78rem]">Au moins 10 caractères.</span>
+            <span className="paper-dim mt-1.5 block text-[0.78rem]">{t('auth.passwordRule')}</span>
           </label>
           <button
             className="ink-button w-full px-5 py-3 text-[0.84rem]"
             disabled={busy || !token}
             type="submit"
           >
-            {busy ? 'Envoi…' : 'Changer le mot de passe'}
+            {busy ? t('common.sending') : t('token.resetSubmit')}
           </button>
-          {!token && <Outcome tone="bad">Lien incomplet : le jeton est absent.</Outcome>}
+          {!token && <Outcome tone="bad">{t('token.missingToken')}</Outcome>}
           {error && <Outcome tone="bad">{error}</Outcome>}
         </form>
       )}
@@ -155,6 +158,7 @@ export function ResetPasswordPage(): React.ReactElement {
 
 /** Demande de réinitialisation. La réponse est toujours la même, compte ou pas. */
 export function ForgotPasswordPage(): React.ReactElement {
+  const t = useT();
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
 
@@ -162,16 +166,13 @@ export function ForgotPasswordPage(): React.ReactElement {
     <PaperShell
       aside={
         <Link className="floor-link" to="/">
-          Retour à l’accueil
+          {t('nav.backHome')}
         </Link>
       }
-      title="Mot de passe oublié"
+      title={t('auth.forgotPassword')}
     >
       {sent ? (
-        <Outcome tone="ok">
-          Si un compte existe pour cette adresse, un lien de réinitialisation vient d’y être
-          envoyé. Il expire dans une heure.
-        </Outcome>
+        <Outcome tone="ok">{t('token.forgotSent')}</Outcome>
       ) : (
         <form
           className="space-y-5"
@@ -181,7 +182,7 @@ export function ForgotPasswordPage(): React.ReactElement {
           }}
         >
           <label className="block">
-            <span className="paper-label">Email</span>
+            <span className="paper-label">{t('auth.email')}</span>
             <input
               autoFocus
               className="paper-field"
@@ -192,7 +193,7 @@ export function ForgotPasswordPage(): React.ReactElement {
             />
           </label>
           <button className="ink-button w-full px-5 py-3 text-[0.84rem]" type="submit">
-            Envoyer le lien
+            {t('token.forgotSubmit')}
           </button>
         </form>
       )}

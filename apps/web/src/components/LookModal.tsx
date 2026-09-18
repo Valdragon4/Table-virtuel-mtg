@@ -23,7 +23,10 @@ import type { PublicCardView } from '@mtg/shared';
 import { useGame } from '../store/game.js';
 import { CardSprite } from './CardSprite.js';
 import { cardMeta, cardName, scryfallImage } from '../lib/cards.js';
-import { TYPE_FAMILIES, typeFamilyKey } from './ZonePanel.js';
+import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
+import { resolveCardImage, useT, type BoundT } from '../lib/i18n/index.js';
+import { useLanguage } from '../store/prefs.js';
+import { TYPE_FAMILIES, matchesCardQuery, typeFamilyKey } from './ZonePanel.js';
 
 export type Bucket = 'top' | 'bottom' | 'hand' | 'graveyard' | 'exile' | 'battlefield' | 'sideboard';
 
@@ -38,85 +41,89 @@ export interface BucketDef {
   beforeGameOnly?: boolean;
 }
 
-const BUCKET_DEFS: BucketDef[] = [
+/*
+ * Les destinations sont construites **à chaque rendu**, à partir de `t` : leurs
+ * libellés suivent la langue, là où une constante de module aurait gardé celle
+ * du premier chargement. La `key` reste la valeur du protocole (`RESOLVE_LOOK`)
+ * et ne bouge jamais.
+ */
+const bucketDefs = (t: BoundT): BucketDef[] => [
   {
     key: 'top',
-    label: 'Dans le deck (dessus)',
-    shortLabel: 'Deck',
+    label: t('consult.bucketTop'),
+    shortLabel: t('consult.bucketTopShort'),
     icon: '⬆️',
-    hint: 'Remet sur le dessus, dans l’ordre affiché',
+    hint: t('consult.bucketTopHint'),
     badgeBg: 'bg-slate-800 text-slate-300 border-slate-700',
     ringClass: 'ring-slate-700/60',
   },
   {
     key: 'hand',
-    label: 'En main',
-    shortLabel: 'Main',
+    label: t('consult.bucketHand'),
+    shortLabel: t('consult.bucketHandShort'),
     icon: '🖐️',
-    hint: 'Prend en main (tuteur classique)',
+    hint: t('consult.bucketHandHint'),
     badgeBg: 'bg-sky-950/90 text-sky-200 border-sky-500 shadow-sm shadow-sky-950/80 ring-1 ring-sky-500/50',
     ringClass: 'ring-2 ring-sky-400 bg-sky-950/30 shadow-md shadow-sky-950/40',
   },
   {
     key: 'battlefield',
-    label: 'Sur le champ',
-    shortLabel: 'Champ',
+    label: t('consult.bucketBattlefield'),
+    shortLabel: t('consult.bucketBattlefieldShort'),
     icon: '⚔️',
-    hint: 'Met directement sur le champ de bataille',
+    hint: t('consult.bucketBattlefieldHint'),
     badgeBg: 'bg-emerald-950/90 text-emerald-200 border-emerald-500 shadow-sm shadow-emerald-950/80 ring-1 ring-emerald-500/50',
     ringClass: 'ring-2 ring-emerald-400 bg-emerald-950/30 shadow-md shadow-emerald-950/40',
   },
   {
     key: 'graveyard',
-    label: 'Au cimetière',
-    shortLabel: 'Cimetière',
+    label: t('card.toGraveyard'),
+    shortLabel: t('zone.graveyard'),
     icon: '🪦',
-    hint: 'Met au cimetière (Entomb, etc.)',
+    hint: t('consult.bucketGraveyardHint'),
     badgeBg: 'bg-rose-950/90 text-rose-200 border-rose-500 shadow-sm shadow-rose-950/80 ring-1 ring-rose-500/50',
     ringClass: 'ring-2 ring-rose-400 bg-rose-950/30 shadow-md shadow-rose-950/40',
   },
   {
     key: 'exile',
-    label: 'En exil',
-    shortLabel: 'Exil',
+    label: t('consult.bucketExile'),
+    shortLabel: t('zone.exile'),
     icon: '🌌',
-    hint: 'Exile la carte',
+    hint: t('consult.bucketExileHint'),
     badgeBg: 'bg-purple-950/90 text-purple-200 border-purple-500 shadow-sm shadow-purple-950/80 ring-1 ring-purple-500/50',
     ringClass: 'ring-2 ring-purple-400 bg-purple-950/30 shadow-md shadow-purple-950/40',
   },
   {
     key: 'bottom',
-    label: 'Au dessous (fond)',
-    shortLabel: 'Dessous',
+    label: t('consult.bucketBottom'),
+    shortLabel: t('consult.bucketBottomShort'),
     icon: '⬇️',
-    hint: 'Renvoie au fond de la bibliothèque',
+    hint: t('consult.bucketBottomHint'),
     badgeBg: 'bg-amber-950/90 text-amber-200 border-amber-500 shadow-sm shadow-amber-950/80 ring-1 ring-amber-500/50',
     ringClass: 'ring-2 ring-amber-400 bg-amber-950/30 shadow-md shadow-amber-950/40',
   },
   {
     key: 'sideboard',
-    label: 'Réserve',
-    shortLabel: 'Réserve',
+    label: t('zone.sideboard'),
+    shortLabel: t('zone.sideboard'),
     icon: '📦',
-    hint: 'Met de côté, hors du deck (avant de lancer la partie)',
+    hint: t('consult.bucketSideboardHint'),
     badgeBg: 'bg-indigo-950/90 text-indigo-200 border-indigo-500 shadow-sm shadow-indigo-950/80 ring-1 ring-indigo-500/50',
     ringClass: 'ring-2 ring-indigo-400 bg-indigo-950/30 shadow-md shadow-indigo-950/40',
     beforeGameOnly: true,
   },
 ];
 
-const BUCKET_LABEL = Object.fromEntries(BUCKET_DEFS.map((b) => [b.key, b.shortLabel])) as Record<Bucket, string>;
-
 /** Au-delà de ce nombre, bascule en mode fouille riche avec filtres et grilles. */
 const LARGE_LOOK = 8;
 
 export type Sort = 'recu' | 'nom' | 'type' | 'cout';
 
-const SORTS: Array<{ key: Sort; label: string }> = [
-  { key: 'nom', label: 'Nom (A-Z)' },
-  { key: 'cout', label: 'Coût de mana (CMC)' },
-  { key: 'type', label: 'Type' },
-  { key: 'recu', label: 'Ordre reçu' },
+const sorts = (t: BoundT): Array<{ key: Sort; label: string }> => [
+  { key: 'nom', label: t('consult.sortName') },
+  { key: 'cout', label: t('consult.sortCost') },
+  { key: 'type', label: t('consult.sortType') },
+  { key: 'recu', label: t('consult.sortReceived') },
 ];
 
 /** Valeur numérique grossière d'un coût de mana pour le tri. */
@@ -136,6 +143,14 @@ export function LookModal(): React.ReactElement | null {
   const send = useGame((s) => s.send);
   const hoverPreview = useGame((s) => s.hoverPreview);
   const started = useGame((s) => s.room?.status === 'PLAYING');
+  const t = useT();
+  const language = useLanguage();
+  // Le panneau d'inspection lit le cache de façon synchrone : sans ce tic, la
+  // carte inspectée resterait en anglais jusqu'au prochain rendu venu d'ailleurs.
+  // Il sert aussi de dépendance au filtre, qui interroge désormais le nom
+  // imprimé : sans lui, la liste retenue resterait celle du premier rendu,
+  // calculée quand aucune traduction n'était encore arrivée.
+  const localizationTick = useLocalizationTick();
   const [buckets, setBuckets] = useState<Record<string, Bucket>>({});
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState('');
@@ -197,6 +212,13 @@ export function LookModal(): React.ReactElement | null {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [pending, activeMenuCardId, inspectedCardId, hoverPreview]);
 
+  // Dès qu'un menu ou un panneau d'inspection est ouvert, dissiper immédiatement la preview
+  useEffect(() => {
+    if (activeMenuCardId !== null || inspectedCardId !== null) {
+      hoverPreview(null);
+    }
+  }, [activeMenuCardId, inspectedCardId, hoverPreview]);
+
   const cards = pending?.cards ?? [];
   const large = cards.length > LARGE_LOOK;
   const isSearch = pending?.mode === 'SEARCH';
@@ -218,15 +240,24 @@ export function LookModal(): React.ReactElement | null {
   }, [cards]);
 
   const visible = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
     let kept = cards;
 
-    // Filtre textuel
-    if (needle) {
+    /*
+     * Filtre textuel : les **deux** noms de la carte, plus ce qui était déjà
+     * interrogé. Fouiller sa bibliothèque est justement le moment où l'on tape
+     * le nom qu'on a sous les yeux — et il est français depuis qu'on affiche le
+     * nom imprimé —, autant que celui d'une liste de deck, qui est anglais.
+     *
+     * Les morceaux restent **séparés** : chacun est comparé pour lui-même,
+     * plutôt que recollés en une seule chaîne où une saisie pouvait courir d'un
+     * nom à la ligne de type suivante et retenir une carte que personne
+     * n'aurait su expliquer.
+     */
+    if (filter.trim()) {
       kept = kept.filter((card) => {
         const meta = cardMeta(card.scryfallId);
-        const haystack = `${meta?.name ?? ''} ${meta?.typeLine ?? ''} ${meta?.manaCost ?? ''}`.toLowerCase();
-        return haystack.includes(needle);
+        const printed = localizedCardName(localizedCard(card.scryfallId, language), meta?.name);
+        return matchesCardQuery(filter, meta?.name, printed, meta?.typeLine, meta?.manaCost);
       });
     }
 
@@ -243,6 +274,9 @@ export function LookModal(): React.ReactElement | null {
 
     if (!isSearch || sort === 'recu') return kept;
 
+    // Le tri, lui, reste sur le nom du catalogue : c'est la clé, elle ne bouge
+    // pas avec la langue. Ordonner sur le nom imprimé ferait sauter les cartes
+    // sous les doigts du joueur à mesure que les lots de résolution rentrent.
     const key = (card: (typeof kept)[number]): string | number => {
       const meta = cardMeta(card.scryfallId);
       if (sort === 'nom') return meta?.name ?? '';
@@ -256,11 +290,14 @@ export function LookModal(): React.ReactElement | null {
       if (typeof ka === 'number' && typeof kb === 'number') return ka - kb;
       return String(ka).localeCompare(String(kb), 'fr');
     });
-  }, [cards, filter, activeType, sort, isSearch]);
+    // `localizationTick` n'est pas lu dans le corps : il n'est là que pour
+    // refaire le calcul quand un lot de noms imprimés rentre.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, filter, activeType, sort, isSearch, language, localizationTick]);
 
   if (!pending) return null;
 
-  const offered = BUCKET_DEFS.filter((b) => !b.beforeGameOnly || started === false);
+  const offered = bucketDefs(t).filter((b) => !b.beforeGameOnly || started === false);
 
   const assign = (ids: Iterable<string>, bucket: Bucket): void => {
     setBuckets((current) => {
@@ -309,6 +346,24 @@ export function LookModal(): React.ReactElement | null {
 
   const inspectedCard = inspectedCardId ? cards.find((c) => c.id === inspectedCardId) : null;
   const inspectedMeta = inspectedCard ? cardMeta(inspectedCard.scryfallId) : null;
+  const inspectedLocalized = inspectedCard
+    ? localizedCard(inspectedCard.scryfallId, language)
+    : undefined;
+  /*
+   * Le recto suffit ici : l'inspecteur ne retourne pas la carte. Le repli sur
+   * le motif du CDN garde le comportement d'avant si la résolution ne rend rien
+   * pour cette face — le joueur ne doit jamais voir un cadre vide.
+   */
+  const inspectedSrc =
+    inspectedCard && inspectedMeta
+      ? (resolveCardImage({
+          card: inspectedMeta,
+          localized: inspectedLocalized,
+          language,
+          face: 0,
+        }).url ?? scryfallImage(inspectedCard.scryfallId, 'large'))
+      : null;
+  const inspectedName = localizedCardName(inspectedLocalized, inspectedMeta?.name) ?? '';
 
   const cardScale =
     cardDensity === 'comfortable' ? 1.15 : cardDensity === 'standard' ? 0.92 : 0.72;
@@ -347,19 +402,17 @@ export function LookModal(): React.ReactElement | null {
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-bold text-slate-100 tracking-tight">
                     {isReveal
-                      ? `Révélation de la bibliothèque — ${cards.length} carte${cards.length > 1 ? 's' : ''}`
+                      ? t('consult.titleReveal', { count: cards.length })
                       : isSearch
-                        ? 'Fouille de la bibliothèque'
-                        : `Consultation — ${cards.length} carte${cards.length > 1 ? 's' : ''}`}
+                        ? t('consult.titleSearch')
+                        : t('consult.titleLook', { count: cards.length })}
                   </h2>
                   <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs font-semibold text-slate-300">
-                    {cards.length} carte{cards.length > 1 ? 's' : ''}
+                    {t('card.count', { count: cards.length })}
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  {isReveal
-                    ? 'Révélé à toute la table · Choisissez la destination de chaque carte'
-                    : 'Visible de vous seul · Double-clic sur une carte pour la prendre en main'}
+                  {isReveal ? t('consult.subtitleReveal') : t('consult.subtitleLook')}
                 </p>
               </div>
             </div>
@@ -374,10 +427,10 @@ export function LookModal(): React.ReactElement | null {
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                   onClick={() => setCardDensity('comfortable')}
-                  title="Cartes grandes et lisibles"
+                  title={t('consult.densityLargeHint')}
                   type="button"
                 >
-                  Grand
+                  {t('consult.densityLarge')}
                 </button>
                 <button
                   className={`rounded px-2.5 py-1 font-semibold transition-all ${
@@ -386,10 +439,10 @@ export function LookModal(): React.ReactElement | null {
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                   onClick={() => setCardDensity('standard')}
-                  title="Taille standard"
+                  title={t('consult.densityNormalHint')}
                   type="button"
                 >
-                  Normal
+                  {t('consult.densityNormal')}
                 </button>
                 <button
                   className={`rounded px-2.5 py-1 font-semibold transition-all ${
@@ -398,10 +451,10 @@ export function LookModal(): React.ReactElement | null {
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                   onClick={() => setCardDensity('compact')}
-                  title="Vue compacte d’ensemble"
+                  title={t('consult.densityCompactHint')}
                   type="button"
                 >
-                  Compact
+                  {t('consult.densityCompact')}
                 </button>
               </div>
 
@@ -412,7 +465,7 @@ export function LookModal(): React.ReactElement | null {
                     ref={filterRef}
                     className="w-full rounded-lg border border-slate-700 bg-slate-900/90 pl-8 pr-7 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 outline-none ring-1 ring-transparent focus:ring-2 focus:ring-sky-500 transition-all"
                     data-test="look-filter"
-                    placeholder="Filtrer par nom, type, texte…"
+                    placeholder={t('consult.filterPlaceholder')}
                     value={filter}
                     onChange={(event) => setFilter(event.target.value)}
                   />
@@ -420,7 +473,7 @@ export function LookModal(): React.ReactElement | null {
                     <button
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-200"
                       onClick={() => setFilter('')}
-                      title="Effacer"
+                      title={t('common.clear')}
                       type="button"
                     >
                       ✕
@@ -431,14 +484,16 @@ export function LookModal(): React.ReactElement | null {
 
               {isSearch && (
                 <div className="flex items-center gap-1.5 text-xs text-slate-300 shrink-0">
-                  <span className="text-slate-400 font-medium hidden sm:inline">Trier :</span>
+                  <span className="text-slate-400 font-medium hidden sm:inline">
+                    {t('consult.sortLabel')}
+                  </span>
                   <select
                     className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:ring-1 focus:ring-sky-500"
                     data-test="look-sort"
                     value={sort}
                     onChange={(event) => setSort(event.target.value as Sort)}
                   >
-                    {SORTS.map((option) => (
+                    {sorts(t).map((option) => (
                       <option key={option.key} value={option.key}>
                         {option.label}
                       </option>
@@ -450,7 +505,7 @@ export function LookModal(): React.ReactElement | null {
               <button
                 className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-sm transition-colors ml-1"
                 onClick={() => resolve(false)}
-                title="Fermer (Échap)"
+                title={t('common.closeEsc')}
                 type="button"
               >
                 ✕
@@ -470,7 +525,7 @@ export function LookModal(): React.ReactElement | null {
                 onClick={() => setActiveType(null)}
                 type="button"
               >
-                Tout ({cards.length})
+                {t('consult.allCount', { count: cards.length })}
               </button>
               {TYPE_FAMILIES.map((family) => {
                 const count = typeCounts.get(family.key) ?? 0;
@@ -487,7 +542,7 @@ export function LookModal(): React.ReactElement | null {
                     onClick={() => setActiveType(active ? null : family.key)}
                     type="button"
                   >
-                    <span>{family.label}</span>
+                    <span>{t(family.labelKey)}</span>
                     <span className="text-[10px] opacity-75 tabular-nums">({count})</span>
                   </button>
                 );
@@ -501,7 +556,7 @@ export function LookModal(): React.ReactElement | null {
           <div className="flex flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-5 py-2 shrink-0 animate-fadeIn">
             <span className="text-xs font-semibold text-amber-200 flex items-center gap-1.5">
               <span>✨</span>
-              <span>{picked.size} sélectionnée(s) :</span>
+              <span>{t('consult.selectedCount', { count: picked.size })}</span>
             </span>
             <div className="flex flex-wrap gap-1.5 items-center">
               {offered
@@ -533,10 +588,10 @@ export function LookModal(): React.ReactElement | null {
               <button
                 className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-700 transition-colors"
                 onClick={() => assign(picked, 'top')}
-                title="Remettre dans le deck"
+                title={t('consult.backToDeckTitle')}
                 type="button"
               >
-                ⬆️ Dans le deck
+                ⬆️ {t('consult.backToDeck')}
               </button>
             </div>
             <div className="ml-auto flex items-center gap-2">
@@ -545,14 +600,14 @@ export function LookModal(): React.ReactElement | null {
                 onClick={() => setPicked(new Set(visible.map((c) => c.id)))}
                 type="button"
               >
-                Tout sélectionner ({visible.length})
+                {t('consult.selectAll', { count: visible.length })}
               </button>
               <button
                 className="text-xs text-slate-400 hover:text-rose-300 ml-2"
                 onClick={() => setPicked(new Set())}
                 type="button"
               >
-                ✕ Désélectionner
+                ✕ {t('consult.deselect')}
               </button>
             </div>
           </div>
@@ -575,20 +630,33 @@ export function LookModal(): React.ReactElement | null {
                   compact={large}
                   scale={densityConfig.scale}
                   menuOpen={activeMenuCardId === card.id}
+                  hasAnyMenuOpen={activeMenuCardId !== null || inspectedCardId !== null}
                   offered={offered}
                   onAssign={(b) => assign([card.id], b)}
-                  onCloseMenu={() => setActiveMenuCardId(null)}
-                  onInspect={() => setInspectedCardId(card.id)}
-                  onOpenMenu={() => setActiveMenuCardId(card.id)}
+                  onCloseMenu={() => {
+                    hoverPreview(null);
+                    setActiveMenuCardId(null);
+                  }}
+                  onInspect={() => {
+                    hoverPreview(null);
+                    setInspectedCardId(card.id);
+                  }}
+                  onOpenMenu={() => {
+                    hoverPreview(null);
+                    setActiveMenuCardId(card.id);
+                  }}
                   onPick={(additive) => toggle(card.id, additive)}
-                  onToggleMenu={() => setActiveMenuCardId((curr) => (curr === card.id ? null : card.id))}
+                  onToggleMenu={() => {
+                    hoverPreview(null);
+                    setActiveMenuCardId((curr) => (curr === card.id ? null : card.id));
+                  }}
                   picked={picked.has(card.id)}
                 />
               ))}
               {visible.length === 0 && (
                 <div className="col-span-full py-16 text-center text-slate-400 space-y-2">
                   <p className="text-2xl">🔍</p>
-                  <p className="text-sm">Aucune carte ne correspond à ces critères.</p>
+                  <p className="text-sm">{t('consult.noMatch')}</p>
                   <button
                     className="text-xs text-sky-400 hover:underline"
                     onClick={() => {
@@ -597,7 +665,7 @@ export function LookModal(): React.ReactElement | null {
                     }}
                     type="button"
                   >
-                    Réinitialiser les filtres
+                    {t('consult.resetFilters')}
                   </button>
                 </div>
               )}
@@ -608,7 +676,9 @@ export function LookModal(): React.ReactElement | null {
           {inspectedCard && inspectedMeta && (
             <aside className="hidden lg:flex w-80 sm:w-96 flex-col border-l border-white/10 bg-slate-900/95 p-4 shrink-0 overflow-y-auto scrollbar-thin shadow-2xl">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">Détails de la carte</span>
+                <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                  {t('consult.details')}
+                </span>
                 <button
                   className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200 text-xs"
                   onClick={() => setInspectedCardId(null)}
@@ -620,27 +690,32 @@ export function LookModal(): React.ReactElement | null {
 
               <div className="my-3 rounded-xl overflow-hidden shadow-2xl border border-white/15 bg-slate-950">
                 <img
-                  alt={inspectedMeta.name}
+                  alt={inspectedName}
                   className="w-full object-cover"
-                  src={scryfallImage(inspectedCard.scryfallId, 'large')}
+                  /* Directement depuis le CDN Scryfall : rien n'est copié chez nous. */
+                  src={inspectedSrc ?? scryfallImage(inspectedCard.scryfallId, 'large')}
                 />
               </div>
 
               <div className="space-y-2.5 text-xs">
                 <div>
-                  <h3 className="font-bold text-sm text-slate-100">{inspectedMeta.name}</h3>
+                  {/* Le nom imprimé, pas celui du catalogue : une illustration
+                      française sous un titre anglais n'a pas de sens. */}
+                  <h3 className="font-bold text-sm text-slate-100">
+                    {inspectedName || inspectedMeta.name}
+                  </h3>
                   <p className="text-sky-300 font-medium text-[11px]">{inspectedMeta.typeLine}</p>
                 </div>
 
                 {inspectedMeta.manaCost && (
                   <p className="rounded-lg bg-slate-950/80 px-2.5 py-1.5 text-slate-300 text-[11px] leading-relaxed border border-slate-800 flex items-center justify-between">
-                    <span className="text-slate-400">Coût de mana :</span>
+                    <span className="text-slate-400">{t('consult.manaCost')}</span>
                     <span className="font-mono font-bold text-amber-300">{inspectedMeta.manaCost}</span>
                   </p>
                 )}
                 {inspectedMeta.power !== undefined && inspectedMeta.toughness !== undefined && (
                   <p className="rounded-lg bg-slate-950/80 px-2.5 py-1.5 text-slate-300 text-[11px] leading-relaxed border border-slate-800 flex items-center justify-between">
-                    <span className="text-slate-400">Force / Endurance :</span>
+                    <span className="text-slate-400">{t('consult.powerToughness')}</span>
                     <span className="font-mono font-bold text-slate-200">
                       {inspectedMeta.power}/{inspectedMeta.toughness}
                     </span>
@@ -649,7 +724,7 @@ export function LookModal(): React.ReactElement | null {
 
                 <div className="pt-2.5 border-t border-slate-800 space-y-1.5">
                   <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                    Action rapide :
+                    {t('consult.quickAction')}
                   </span>
                   <div className="grid grid-cols-2 gap-1.5">
                     <button
@@ -657,28 +732,28 @@ export function LookModal(): React.ReactElement | null {
                       onClick={() => assign([inspectedCard.id], 'hand')}
                       type="button"
                     >
-                      🖐️ En main
+                      🖐️ {t('consult.bucketHand')}
                     </button>
                     <button
                       className="rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 px-2 text-xs font-semibold text-white shadow-sm transition-colors"
                       onClick={() => assign([inspectedCard.id], 'battlefield')}
                       type="button"
                     >
-                      ⚔️ Sur le champ
+                      ⚔️ {t('consult.bucketBattlefield')}
                     </button>
                     <button
                       className="rounded-lg bg-rose-700 hover:bg-rose-600 py-1.5 px-2 text-xs font-semibold text-white shadow-sm transition-colors"
                       onClick={() => assign([inspectedCard.id], 'graveyard')}
                       type="button"
                     >
-                      🪦 Cimetière
+                      🪦 {t('zone.graveyard')}
                     </button>
                     <button
                       className="rounded-lg bg-purple-600 hover:bg-purple-500 py-1.5 px-2 text-xs font-semibold text-white shadow-sm transition-colors"
                       onClick={() => assign([inspectedCard.id], 'exile')}
                       type="button"
                     >
-                      🌌 Exil
+                      🌌 {t('zone.exile')}
                     </button>
                   </div>
                 </div>
@@ -690,39 +765,39 @@ export function LookModal(): React.ReactElement | null {
         {/* Pied de page : Synthèse des choix & Validation */}
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-slate-900/80 px-5 py-3.5 shrink-0">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-slate-400 font-medium mr-1">Synthèse :</span>
+            <span className="text-slate-400 font-medium mr-1">{t('consult.summary')}</span>
             {handCount > 0 && (
               <span className="rounded-full bg-sky-950/90 text-sky-200 border border-sky-600/50 px-2.5 py-0.5 font-semibold">
-                🖐️ {handCount} en main
+                🖐️ {t('consult.sumHand', { count: handCount })}
               </span>
             )}
             {bfCount > 0 && (
               <span className="rounded-full bg-emerald-950/90 text-emerald-200 border border-emerald-600/50 px-2.5 py-0.5 font-semibold">
-                ⚔️ {bfCount} sur le champ
+                ⚔️ {t('consult.sumBattlefield', { count: bfCount })}
               </span>
             )}
             {gyCount > 0 && (
               <span className="rounded-full bg-rose-950/90 text-rose-200 border border-rose-600/50 px-2.5 py-0.5 font-semibold">
-                🪦 {gyCount} au cimetière
+                🪦 {t('consult.sumGraveyard', { count: gyCount })}
               </span>
             )}
             {exCount > 0 && (
               <span className="rounded-full bg-purple-950/90 text-purple-200 border border-purple-600/50 px-2.5 py-0.5 font-semibold">
-                🌌 {exCount} en exil
+                🌌 {t('consult.sumExile', { count: exCount })}
               </span>
             )}
             {botCount > 0 && (
               <span className="rounded-full bg-amber-950/90 text-amber-200 border border-amber-600/50 px-2.5 py-0.5 font-semibold">
-                ⬇️ {botCount} au fond
+                ⬇️ {t('consult.sumBottom', { count: botCount })}
               </span>
             )}
             {sbCount > 0 && (
               <span className="rounded-full bg-indigo-950/90 text-indigo-200 border border-indigo-600/50 px-2.5 py-0.5 font-semibold">
-                📦 {sbCount} en réserve
+                📦 {t('consult.sumSideboard', { count: sbCount })}
               </span>
             )}
             <span className="rounded-full bg-slate-800 text-slate-400 px-2 py-0.5">
-              📚 {topCount} dans le deck
+              📚 {t('consult.sumDeck', { count: topCount })}
             </span>
           </div>
 
@@ -732,7 +807,7 @@ export function LookModal(): React.ReactElement | null {
               onClick={() => resolve(false)}
               type="button"
             >
-              Annuler
+              {t('common.cancel')}
             </button>
             {isSearch || isReveal ? (
               <>
@@ -742,7 +817,7 @@ export function LookModal(): React.ReactElement | null {
                   onClick={() => resolve(false)}
                   type="button"
                 >
-                  Valider sans mélanger
+                  {t('consult.submitNoShuffle')}
                 </button>
                 <button
                   className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-sky-950/50 hover:from-sky-500 hover:to-indigo-500 active:scale-[0.98] transition-all"
@@ -751,7 +826,7 @@ export function LookModal(): React.ReactElement | null {
                   type="button"
                 >
                   <span>🔀</span>
-                  <span>Valider et mélanger</span>
+                  <span>{t('consult.submitShuffle')}</span>
                 </button>
               </>
             ) : (
@@ -761,7 +836,7 @@ export function LookModal(): React.ReactElement | null {
                 onClick={() => resolve(false)}
                 type="button"
               >
-                Valider
+                {t('common.validate')}
               </button>
             )}
           </div>
@@ -779,6 +854,7 @@ function LookCardItem({
   scale,
   picked,
   menuOpen,
+  hasAnyMenuOpen,
   offered,
   onPick,
   onAssign,
@@ -794,6 +870,7 @@ function LookCardItem({
   scale: number;
   picked: boolean;
   menuOpen: boolean;
+  hasAnyMenuOpen: boolean;
   onPick: (additive: boolean) => void;
   onAssign: (bucket: Bucket) => void;
   onInspect: () => void;
@@ -804,9 +881,19 @@ function LookCardItem({
   const hoverPreview = useGame((s) => s.hoverPreview);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const language = useLanguage();
+  const t = useT();
+  useLocalizationTick();
   const meta = cardMeta(card.scryfallId);
-  const name = meta?.name ?? cardName(card.scryfallId);
-  const bucketDef = BUCKET_DEFS.find((b) => b.key === bucket) ?? (BUCKET_DEFS[0] as BucketDef);
+  // Le nom imprimé français quand il existe, sinon celui du catalogue. Le nom
+  // anglais reste la clé de recherche et de tri : seul l'affichage change.
+  const name =
+    localizedCardName(localizedCard(card.scryfallId, language), meta?.name) ??
+    cardName(card.scryfallId);
+  // `offered` peut ne pas contenir la destination courante (la réserve
+  // disparaît une fois la partie lancée) : on relit donc la table complète.
+  const allBuckets = bucketDefs(t);
+  const bucketDef = allBuckets.find((b) => b.key === bucket) ?? (allBuckets[0] as BucketDef);
   const isAssigned = bucket !== 'top';
 
   useEffect(() => {
@@ -837,10 +924,9 @@ function LookCardItem({
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
+        hoverPreview(null);
         onOpenMenu();
       }}
-      onMouseEnter={() => hoverPreview(card.scryfallId ?? null)}
-      onMouseLeave={() => hoverPreview(null)}
     >
       {/* Badge de destination actuel si assigné */}
       {isAssigned && (
@@ -857,7 +943,7 @@ function LookCardItem({
               e.stopPropagation();
               onAssign('top');
             }}
-            title="Annuler (laisser dans le deck)"
+            title={t('consult.cancelAssignment')}
             type="button"
           >
             ✕
@@ -874,7 +960,13 @@ function LookCardItem({
           // Raccourci joueur : double-clic bascule directement en main (tuteur habituel)
           onAssign(bucket === 'hand' ? 'top' : 'hand');
         }}
-        title={`${name} — Double-clic : prendre en main. Clic droit : menu d’actions.`}
+        onMouseEnter={() => {
+          if (!menuOpen && !hasAnyMenuOpen) {
+            hoverPreview(card.scryfallId ?? null);
+          }
+        }}
+        onMouseLeave={() => hoverPreview(null)}
+        title={t('consult.cardTitleHint', { name })}
       >
         <CardSprite card={card} scale={scale} />
 
@@ -883,9 +975,10 @@ function LookCardItem({
           className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/80 text-xs text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-sky-600 hover:text-white border border-white/20 transition-all shadow"
           onClick={(e) => {
             e.stopPropagation();
+            hoverPreview(null);
             onInspect();
           }}
-          title="Inspecter la carte en grand"
+          title={t('consult.inspect')}
           type="button"
         >
           🔍
@@ -902,7 +995,7 @@ function LookCardItem({
               onPick(false);
             }}
             className="h-3.5 w-3.5 rounded accent-amber-500 cursor-pointer shrink-0"
-            title="Sélectionner pour action groupée"
+            title={t('consult.pickForBulk')}
           />
           <span className="truncate text-xs font-semibold text-slate-100 leading-tight" title={name}>
             {name}
@@ -927,10 +1020,10 @@ function LookCardItem({
             e.stopPropagation();
             onAssign(bucket === 'hand' ? 'top' : 'hand');
           }}
-          title="Prendre en main (tuteur)"
+          title={t('consult.quickHand')}
           type="button"
         >
-          🖐️ Main
+          🖐️ {t('consult.bucketHandShort')}
         </button>
         <button
           className={`flex-1 rounded py-0.5 text-[10px] font-bold transition-all ${
@@ -942,10 +1035,10 @@ function LookCardItem({
             e.stopPropagation();
             onAssign(bucket === 'battlefield' ? 'top' : 'battlefield');
           }}
-          title="Mettre sur le champ de bataille"
+          title={t('consult.quickBattlefield')}
           type="button"
         >
-          ⚔️ Champ
+          ⚔️ {t('consult.bucketBattlefieldShort')}
         </button>
         <button
           ref={btnRef}
@@ -956,9 +1049,11 @@ function LookCardItem({
           }`}
           onClick={(e) => {
             e.stopPropagation();
+            hoverPreview(null);
             onToggleMenu();
           }}
-          title="Plus d'actions (Cimetière, Exil, Dessous…)"
+          onMouseEnter={() => hoverPreview(null)}
+          title={t('consult.moreActions')}
           type="button"
         >
           •••
@@ -971,10 +1066,24 @@ function LookCardItem({
           ref={menuRef}
           className="absolute right-0 bottom-8 z-30 min-w-48 rounded-xl border border-slate-700/90 bg-slate-900/98 p-1.5 shadow-2xl shadow-black/90 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
+          onMouseEnter={(e) => {
+            e.stopPropagation();
+            hoverPreview(null);
+          }}
+          onPointerEnter={(e) => {
+            e.stopPropagation();
+            hoverPreview(null);
+          }}
+          onMouseMove={(e) => {
+            e.stopPropagation();
+            hoverPreview(null);
+          }}
         >
           <div className="flex items-center justify-between border-b border-slate-800 px-2 py-1 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-            <span>Déplacer vers :</span>
-            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-[9px] text-slate-400">Échap</kbd>
+            <span>{t('consult.moveTo')}</span>
+            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-[9px] text-slate-400">
+              {t('keys.esc')}
+            </kbd>
           </div>
           <div className="pt-1 space-y-0.5">
             {offered.map((b) => (
@@ -989,6 +1098,7 @@ function LookCardItem({
                 title={b.hint}
                 onClick={(e) => {
                   e.stopPropagation();
+                  hoverPreview(null);
                   onAssign(b.key);
                   onCloseMenu();
                 }}

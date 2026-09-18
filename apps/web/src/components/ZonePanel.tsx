@@ -37,16 +37,19 @@ import type { CardView, SeatId, ZoneKind, ZoneRef } from '@mtg/shared';
 import { useGame, zoneKey } from '../store/game.js';
 import { CardSprite, useCardMetaTick } from './CardSprite.js';
 import { cardMeta, cardName } from '../lib/cards.js';
+import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
+import { useLanguage } from '../store/prefs.js';
 import { startCardDrag } from './DragLayer.js';
-import { askNumber } from './Dialog.js';
+import { askNumber, foldForSearch } from './Dialog.js';
+import { useT, type BoundT, type CatalogKey } from '../lib/i18n/index.js';
 
-const TABS: Array<{ kind: ZoneKind; label: string; mineOnly: boolean }> = [
-  { kind: 'GRAVEYARD', label: 'Cimetière', mineOnly: false },
-  { kind: 'EXILE', label: 'Exil', mineOnly: false },
-  { kind: 'COMMAND', label: 'Commandement', mineOnly: false },
-  { kind: 'LIBRARY', label: 'Bibliothèque', mineOnly: true },
-  { kind: 'SIDEBOARD', label: 'Réserve', mineOnly: true },
-];
+const TABS = [
+  { kind: 'GRAVEYARD', labelKey: 'zone.graveyard', mineOnly: false },
+  { kind: 'EXILE', labelKey: 'zone.exile', mineOnly: false },
+  { kind: 'COMMAND', labelKey: 'zone.command', mineOnly: false },
+  { kind: 'LIBRARY', labelKey: 'zone.library', mineOnly: true },
+  { kind: 'SIDEBOARD', labelKey: 'zone.sideboard', mineOnly: true },
+] as const satisfies ReadonlyArray<{ kind: ZoneKind; labelKey: CatalogKey; mineOnly: boolean }>;
 
 /** Largeur du panneau, partagée avec la mise en page qui doit lui céder la place. */
 export const ZONE_PANEL_WIDTH = 330;
@@ -56,8 +59,9 @@ export const ZONE_PANEL_WIDTH = 330;
  *
  * Le mot-clé est en **anglais** parce que la ligne de type vient de Scryfall et
  * n'existe qu'en anglais dans notre index (`CardMeta.typeLine`, du genre
- * `Legendary Creature — Human Wizard`) ; le libellé, lui, est en français,
- * comme tout ce que l'utilisateur lit.
+ * `Legendary Creature — Human Wizard`) ; le libellé, lui, passe par le
+ * catalogue, comme tout ce que l'utilisateur lit. La clé de classement (`key`)
+ * ne bouge donc jamais avec la langue — c'est elle que porte `data-family`.
  *
  * **Règle de classement : une carte compte dans *chaque* famille qu'elle
  * porte.** Un `Artifact Creature` **est** un artefact **et** une créature — ce
@@ -78,15 +82,15 @@ export const ZONE_PANEL_WIDTH = 330;
  * de sorte que filtrer sur « artefact » montre les créatures-artefacts, et
  * qu'une pastille annonçant 7 ne puisse jamais en afficher 6.
  */
-export const TYPE_FAMILIES: ReadonlyArray<{ key: string; label: string; keyword: string }> = [
-  { key: 'creature', label: 'Créatures', keyword: 'creature' },
-  { key: 'planeswalker', label: 'Planeswalkers', keyword: 'planeswalker' },
-  { key: 'land', label: 'Terrains', keyword: 'land' },
-  { key: 'artifact', label: 'Artefacts', keyword: 'artifact' },
-  { key: 'enchantment', label: 'Enchantements', keyword: 'enchantment' },
-  { key: 'instant', label: 'Éphémères', keyword: 'instant' },
-  { key: 'sorcery', label: 'Rituels', keyword: 'sorcery' },
-];
+export const TYPE_FAMILIES = [
+  { key: 'creature', labelKey: 'type.creature', keyword: 'creature' },
+  { key: 'planeswalker', labelKey: 'type.planeswalker', keyword: 'planeswalker' },
+  { key: 'land', labelKey: 'type.land', keyword: 'land' },
+  { key: 'artifact', labelKey: 'type.artifact', keyword: 'artifact' },
+  { key: 'enchantment', labelKey: 'type.enchantment', keyword: 'enchantment' },
+  { key: 'instant', labelKey: 'type.instant', keyword: 'instant' },
+  { key: 'sorcery', labelKey: 'type.sorcery', keyword: 'sorcery' },
+] as const satisfies ReadonlyArray<{ key: string; labelKey: CatalogKey; keyword: string }>;
 
 /** Familles d'une ligne de type Scryfall, ou `null` si elle n'en porte aucune. */
 export function typeFamilyKey(typeLine: string): string[] | null {
@@ -103,6 +107,42 @@ export function typeFamilyKey(typeLine: string): string[] | null {
     .toLowerCase();
   const found = TYPE_FAMILIES.filter((family) => types.includes(family.keyword)).map((f) => f.key);
   return found.length > 0 ? found : null;
+}
+
+/**
+ * Le filtre par nom répond aux **deux** noms de la carte.
+ *
+ * Le joueur a sous les yeux « Anneau solaire » et devant lui, peut-être, la
+ * carte physique où il lit « Sol Ring » ; les listes de deck, elles, circulent
+ * en anglais. Chercher dans un seul des deux noms condamne donc forcément une
+ * des trois situations — et depuis que presque tout un deck rentre traduit,
+ * c'est le nom **affiché** qui ne répondait plus, celui-là même qu'on recopie.
+ *
+ * Ce qui n'a pas bougé : le nom du catalogue reste la **clé** partout ailleurs
+ * — tri, regroupement, envoi au serveur. Élargir le filtre n'est pas élargir
+ * l'ordre : trier sur le nom imprimé ferait sauter les lignes sous les doigts
+ * du joueur à mesure que les lots de résolution rentrent.
+ *
+ * La résolution étant asynchrone, `printed` vaut couramment le nom anglais, ou
+ * rien du tout : on cherche dans ce qui est **disponible**, et une traduction
+ * qui manque ne peut donc que faire répondre moins, jamais vider la liste ni
+ * lever.
+ *
+ * Le repli de comparaison est celui de `Dialog` — minuscules, sans accents,
+ * sans ponctuation — et pas une seconde variante : « anneau » et « ANNEAU »
+ * doivent trouver « Anneau solaire » ici exactement comme « cimetiere » trouve
+ * « cimetière » là-bas, et deux normalisations qui divergent d'un caractère
+ * sont un défaut qu'on ne voit qu'en production.
+ */
+export function matchesCardQuery(
+  query: string,
+  ...names: Array<string | null | undefined>
+): boolean {
+  const needle = foldForSearch(query);
+  // Une saisie vide — ou faite de la seule ponctuation que le repli efface —
+  // ne filtre rien : c'est la zone entière qu'on demande.
+  if (needle === '') return true;
+  return names.some((name) => (name ? foldForSearch(name).includes(needle) : false));
 }
 
 /**
@@ -135,7 +175,10 @@ interface ZoneChip {
  * liste filtrée ne peuvent donc pas diverger, ce qui serait le premier bug
  * qu'on écrirait en recalculant l'appartenance au moment de filtrer.
  */
-function classifyZone(cards: CardView[]): { buckets: Map<string, string[]>; chips: ZoneChip[] } {
+function classifyZone(
+  cards: CardView[],
+  t: BoundT,
+): { buckets: Map<string, string[]>; chips: ZoneChip[] } {
   const buckets = new Map<string, string[]>();
   const counts = new Map<string, number>();
 
@@ -155,18 +198,19 @@ function classifyZone(cards: CardView[]): { buckets: Map<string, string[]>; chip
   for (const family of TYPE_FAMILIES) {
     const count = counts.get(family.key) ?? 0;
     if (count > 0) {
+      const label = t(family.labelKey);
       chips.push({
         key: family.key,
-        label: family.label,
+        label,
         count,
-        hint: `${count} ${family.label.toLowerCase()} dans cette zone`,
+        hint: t('zonePanel.chipHint', { count, family: label.toLowerCase() }),
       });
     }
   }
   const tail: Array<[string, string, string]> = [
-    [OTHER, 'Autres', 'Types hors des grandes familles (bataille, donjon…)'],
-    [HIDDEN, 'Face cachée', "Vous n'en voyez pas l'identité : leur type n'est pas compté"],
-    [UNKNOWN, 'Type inconnu', 'Fiche pas encore chargée : ces cartes ne sont comptées nulle part ailleurs'],
+    [OTHER, t('type.other'), t('zonePanel.hintOther')],
+    [HIDDEN, t('type.faceDown'), t('zonePanel.hintHidden')],
+    [UNKNOWN, t('type.unknown'), t('zonePanel.hintUnknown')],
   ];
   for (const [key, label, hint] of tail) {
     const count = counts.get(key) ?? 0;
@@ -200,6 +244,7 @@ function TypeSummary({
   active: string | null;
   onPick: (key: string | null) => void;
 }): React.ReactElement | null {
+  const t = useT();
   if (total === 0) return null;
 
   return (
@@ -228,14 +273,10 @@ function TypeSummary({
         data-test="zone-total"
         data-active={active === null}
         onClick={() => onPick(null)}
-        title={
-          active === null
-            ? 'Toute la zone est affichée'
-            : 'Retirer le filtre et réafficher toute la zone'
-        }
+        title={active === null ? t('zonePanel.allShown') : t('zonePanel.clearFilter')}
         type="button"
       >
-        Tout · {total} carte{total > 1 ? 's' : ''}
+        {t('zonePanel.total', { count: total })}
       </button>
       {chips.map((chip) => {
         const on = active === chip.key;
@@ -256,7 +297,10 @@ function TypeSummary({
             // Le clic sur la pastille allumée l'éteint : le geste qui a filtré
             // défait le filtre, sans qu'il faille viser « Tout ».
             onClick={() => onPick(on ? null : chip.key)}
-            title={`${chip.hint} · ${on ? 'cliquer pour tout réafficher' : "cliquer pour n'afficher que celles-là"}`}
+            title={t('zonePanel.chipTitle', {
+              hint: chip.hint,
+              action: on ? t('zonePanel.chipShowAll') : t('zonePanel.chipShowOnly'),
+            })}
             type="button"
           >
             {chip.label} <span className="font-semibold">{chip.count}</span>
@@ -273,6 +317,7 @@ export function ZonePanel({
   /** Prévient la page : les panneaux flottants de droite doivent se décaler. */
   onOpenChange: (open: boolean) => void;
 }): React.ReactElement | null {
+  const t = useT();
   const cards = useGame((s) => s.cards);
   const seats = useGame((s) => s.seats);
   const counts = useGame((s) => s.zoneCounts);
@@ -287,6 +332,14 @@ export function ZonePanel({
   // et le filtre porterait sur un classement périmé. Il est ici, et non dans la
   // synthèse, depuis que le classement sert aussi à filtrer la liste.
   useCardMetaTick();
+  /*
+   * Même réveil pour les résolutions localisées : elles arrivent par lots, et
+   * sans abonnement l'étiquette sous la vignette resterait en anglais jusqu'au
+   * prochain rendu venu d'ailleurs. L'illustration, elle, est l'affaire de
+   * `CardSprite`, qui est déjà branché.
+   */
+  useLocalizationTick();
+  const language = useLanguage();
 
   /**
    * Dos personnalisé de chaque siège, indexé par identifiant.
@@ -376,7 +429,7 @@ export function ZonePanel({
     .sort((a, b) => a.sortIndex - b.sortIndex);
 
   const zoneId = zoneKey({ seat: open.seat, kind: open.kind });
-  const { buckets, chips } = classifyZone(contents);
+  const { buckets, chips } = classifyZone(contents, t);
   /** Le filtre ne vaut que pour la zone qui l'a vu naître (cf. `typeFilter`). */
   const family = typeFilter?.zone === zoneId ? typeFilter.key : null;
 
@@ -387,7 +440,15 @@ export function ZonePanel({
     if (family !== null && !(buckets.get(card.id) ?? []).includes(family)) return false;
     if (!query.trim()) return true;
     if (card.faceDown !== false) return false;
-    return cardName(card.scryfallId).toLowerCase().includes(query.trim().toLowerCase());
+    // Les deux noms, et dans cet ordre sans importance : le nom du catalogue
+    // parce que c'est celui des listes de deck et de la carte physique, le nom
+    // imprimé parce que c'est celui que le panneau affiche juste dessous.
+    const catalogue = cardName(card.scryfallId);
+    return matchesCardQuery(
+      query,
+      catalogue,
+      localizedCardName(localizedCard(card.scryfallId, language), catalogue),
+    );
   });
 
   /**
@@ -443,13 +504,14 @@ export function ZonePanel({
       <header className="border-b border-edge px-3 py-2">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-sm font-medium text-slate-200">
-            Zones · <span style={{ color: seat?.color }}>{seat?.displayName ?? '?'}</span>
+            {t('zonePanel.title')} ·{' '}
+            <span style={{ color: seat?.color }}>{seat?.displayName ?? '?'}</span>
           </span>
           <button
             className="text-slate-500 hover:text-slate-200"
             data-test="zone-panel-close"
             onClick={() => setOpen(null)}
-            title="Fermer (Échap)"
+            title={t('common.closeEsc')}
           >
             ✕
           </button>
@@ -476,7 +538,7 @@ export function ZonePanel({
                 anchor.current = null;
               }}
             >
-              {tab.label}{' '}
+              {t(tab.labelKey)}{' '}
               <span className="opacity-60">
                 {counts.get(zoneKey({ seat: open.seat, kind: tab.kind })) ?? 0}
               </span>
@@ -487,7 +549,7 @@ export function ZonePanel({
         <input
           className="mt-2 w-full rounded border border-edge bg-table px-2 py-1 text-sm text-slate-200"
           data-test="zone-search"
-          placeholder="Filtrer par nom…"
+          placeholder={t('zonePanel.searchPlaceholder')}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -524,7 +586,7 @@ export function ZonePanel({
           <div className="scrollbar-thin grid flex-1 grid-cols-3 content-start gap-2 overflow-y-auto p-2">
             {visible.length === 0 && (
               <p className="col-span-3 py-4 text-center text-xs text-slate-500">
-                {contents.length === 0 ? 'Pile vide.' : 'Aucune carte ne correspond.'}
+                {contents.length === 0 ? t('zonePanel.emptyPile') : t('search.noMatch')}
               </p>
             )}
             {visible.map((card) => (
@@ -563,7 +625,17 @@ export function ZonePanel({
                   selected={selection.has(card.id)}
                 />
                 <p className="mt-0.5 truncate text-[10px] text-slate-500">
-                  {card.faceDown === false ? cardName(card.scryfallId) : 'Face cachée'}
+                  {/*
+                    Le nom **affiché** passe par le nom imprimé ; celui du
+                    catalogue reste la clé, et la recherche ci-dessus répond
+                    aux deux, sans quoi l'un des deux serait introuvable.
+                  */}
+                  {card.faceDown === false
+                    ? (localizedCardName(
+                        localizedCard(card.scryfallId, language),
+                        cardName(card.scryfallId),
+                      ) ?? cardName(card.scryfallId))
+                    : t('card.faceDownShort')}
                 </p>
               </div>
             ))}
@@ -579,23 +651,22 @@ export function ZonePanel({
                 data-test="zone-filter-note"
               >
                 {unreachable
-                  .map(
-                    (chip) =>
-                      `${chip.count} carte${chip.count > 1 ? 's' : ''} ` +
-                      (chip.key === HIDDEN ? 'face cachée' : 'de type inconnu'),
+                  .map((chip) =>
+                    chip.key === HIDDEN
+                      ? t('zonePanel.unreachableHidden', { count: chip.count })
+                      : t('zonePanel.unreachableUnknown', { count: chip.count }),
                   )
-                  .join(' et ')}{' '}
-                hors de ce filtre : vous n'en connaissez pas le type. Leur pastille les affiche.
+                  .join(` ${t('zonePanel.unreachableJoin')} `)}{' '}
+                {t('zonePanel.unreachableNote')}
               </p>
             )}
           </div>
 
           <footer className="border-t border-edge px-3 py-2 text-[11px] text-slate-500">
-            {visible.length} / {contents.length} carte(s)
-            {selection.size > 0 && ` · ${selection.size} sélectionnée(s)`}
+            {t('zonePanel.footerCount', { visible: visible.length, total: contents.length })}
+            {selection.size > 0 && ` ${t('zonePanel.footerSelected', { count: selection.size })}`}
             <br />
-            Clic pour sélectionner, Ctrl+clic pour ajouter, Maj+clic pour une plage.
-            Clic droit pour le menu, glisser vers la table pour déplacer.
+            {t('zonePanel.footerHelp')}
           </footer>
         </>
       )}
@@ -611,6 +682,7 @@ export function ZonePanel({
  * table — c'est une règle sociale du produit, pas une limite à contourner.
  */
 function LibraryTab({ count, mine, seat }: { count: number; mine: boolean; seat: string }): React.ReactElement {
+  const t = useT();
   const send = useGame((s) => s.send);
   const zone: ZoneRef = { seat, kind: 'LIBRARY' };
 
@@ -622,15 +694,14 @@ function LibraryTab({ count, mine, seat }: { count: number; mine: boolean; seat:
   return (
     <div className="flex-1 space-y-3 p-3 text-sm">
       <p className="text-slate-300">
-        <span className="text-2xl font-semibold text-slate-100">{count}</span> carte(s).
+        <span className="text-2xl font-semibold text-slate-100">{count}</span>{' '}
+        {t('zonePanel.libraryCount')}
       </p>
       {mine ? (
         <>
           <p className="rounded-lg border border-amber-700/50 bg-amber-950/40 p-2.5 text-xs text-amber-200 leading-relaxed">
-            Le contenu d'une bibliothèque n'est pas connu du client, pas même du vôtre.
-            L'ouvrir démarre une <strong>consultation</strong>, et les autres joueurs en sont
-            informés dans le journal. L'ordre qui vous sera montré est brassé : ce n'est pas
-            l'ordre réel de votre bibliothèque.
+            {t('zonePanel.libraryWarn1')} <strong>{t('zonePanel.libraryWarnWord')}</strong>
+            {t('zonePanel.libraryWarn2')}
           </p>
           <button
             className="flex items-center justify-center gap-2 w-full rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold text-white shadow-md hover:bg-sky-500 active:scale-[0.99] transition-all"
@@ -639,14 +710,14 @@ function LibraryTab({ count, mine, seat }: { count: number; mine: boolean; seat:
             type="button"
           >
             <span>🔍</span>
-            <span>Fouiller la bibliothèque</span>
+            <span>{t('zoneMenu.searchLibrary')}</span>
           </button>
           <button
             className="flex items-center justify-center gap-2 w-full rounded-lg border border-edge/90 bg-slate-800/80 px-3 py-2 text-sm text-slate-200 hover:border-slate-500 hover:bg-slate-700/80 transition-all"
             onClick={() => {
               void askNumber({
-                title: 'Regarder le dessus de la bibliothèque',
-                label: 'Nombre de cartes à regarder',
+                title: t('zonePanel.peekTitle'),
+                label: t('zonePanel.peekLabel'),
                 initial: 3,
                 quick: [1, 2, 3, 5, 7, 10],
               }).then((n) => {
@@ -656,7 +727,7 @@ function LibraryTab({ count, mine, seat }: { count: number; mine: boolean; seat:
             type="button"
           >
             <span>👁️</span>
-            <span>Regarder le dessus…</span>
+            <span>{t('zonePanel.peekButton')}</span>
           </button>
           <button
             className="flex items-center justify-center gap-2 w-full rounded-lg border border-edge/90 bg-slate-800/80 px-3 py-2 text-sm text-slate-200 hover:border-slate-500 hover:bg-slate-700/80 transition-all"
@@ -664,14 +735,11 @@ function LibraryTab({ count, mine, seat }: { count: number; mine: boolean; seat:
             type="button"
           >
             <span>🔀</span>
-            <span>Mélanger</span>
+            <span>{t('common.shuffle')}</span>
           </button>
         </>
       ) : (
-        <p className="text-xs text-slate-500">
-          Seul son propriétaire peut consulter cette bibliothèque, et il ne peut pas le faire
-          discrètement.
-        </p>
+        <p className="text-xs text-slate-500">{t('zonePanel.libraryOthers')}</p>
       )}
     </div>
   );

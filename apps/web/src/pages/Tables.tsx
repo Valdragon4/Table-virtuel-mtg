@@ -15,6 +15,8 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api.js';
 import { LegalFooter } from '../components/LegalFooter.js';
 import { Wordmark } from '../components/Mark.js';
+import { AccountBar } from '../components/AccountBar.js';
+import { useT, type BoundT } from '../lib/i18n/index.js';
 
 interface GameRow {
   code: string;
@@ -34,24 +36,29 @@ const MODE_LABELS: Record<string, string> = {
   DRAFT: 'Draft',
 };
 
-const STATUS_LABELS: Record<GameRow['status'], string> = {
-  LOBBY: 'Salon',
-  PLAYING: 'Partie en cours',
-  ENDED: 'Terminée',
-};
+/**
+ * Les clés, pas les phrases : ces tables sont au niveau du module, et `useT`
+ * ne s'appelle que dans un composant.
+ */
+const STATUS_KEYS = {
+  LOBBY: 'table.statusLobby',
+  PLAYING: 'table.statusPlaying',
+  ENDED: 'table.statusEnded',
+} as const satisfies Record<GameRow['status'], string>;
 
 /** « il y a 3 h », plutôt qu'une date à décoder. */
-function ago(iso: string): string {
+function ago(iso: string, t: BoundT): string {
   const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
-  if (minutes < 1) return "à l'instant";
-  if (minutes < 60) return `il y a ${minutes} min`;
+  if (minutes < 1) return t('time.justNow');
+  if (minutes < 60) return t('time.minutesAgo', { value: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `il y a ${hours} h`;
+  if (hours < 24) return t('time.hoursAgo', { value: hours });
   const days = Math.round(hours / 24);
-  return `il y a ${days} j`;
+  return t('time.daysAgo', { value: days });
 }
 
 export function Tables(): React.ReactElement {
+  const t = useT();
   const [games, setGames] = useState<GameRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyCode, setBusyCode] = useState<string | null>(null);
@@ -62,8 +69,12 @@ export function Tables(): React.ReactElement {
       setGames(data.games);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) setGames([]);
-      else setError(err instanceof ApiError ? err.message : 'Chargement impossible.');
+      // Le message d'`ApiError` vient du serveur : il s'affiche tel quel.
+      else setError(err instanceof ApiError ? err.message : t('common.loadFailed'));
     }
+    // `t` n'est pas en dépendance à dessein : changer de langue ne doit pas
+    // relancer le chargement de la liste.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -73,8 +84,8 @@ export function Tables(): React.ReactElement {
   async function leave(game: GameRow): Promise<void> {
     const warning =
       game.status === 'PLAYING'
-        ? `Quitter la table ${game.code} pendant la partie ? Cela vaut concession : votre jeu quitte le terrain et la partie continue sans vous.`
-        : `Quitter la table ${game.code} ? Votre place et votre deck y sont libérés.`;
+        ? t('table.leaveWhilePlayingConfirmCode', { code: game.code })
+        : t('table.leaveConfirmCode', { code: game.code });
     if (!window.confirm(warning)) return;
     setBusyCode(game.code);
     setError(null);
@@ -82,14 +93,14 @@ export function Tables(): React.ReactElement {
       await api.post(`/api/rooms/${game.code}/leave`, { force: game.status === 'PLAYING' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Départ impossible.');
+      setError(err instanceof ApiError ? err.message : t('table.leaveFailed'));
     } finally {
       setBusyCode(null);
     }
   }
 
   async function close(game: GameRow): Promise<void> {
-    if (!window.confirm(`Clore la table ${game.code} pour tout le monde ? La partie s'arrête pour tous les joueurs.`)) {
+    if (!window.confirm(t('table.closeConfirmCode', { code: game.code }))) {
       return;
     }
     setBusyCode(game.code);
@@ -98,7 +109,7 @@ export function Tables(): React.ReactElement {
       await api.post(`/api/rooms/${game.code}/close`);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Clôture impossible.');
+      setError(err instanceof ApiError ? err.message : t('table.closeFailed'));
     } finally {
       setBusyCode(null);
     }
@@ -118,18 +129,18 @@ export function Tables(): React.ReactElement {
             className="text-[color:var(--site-floor-dim)] hover:text-[color:var(--site-floor-text)]"
             to="/decks"
           >
-            Mes decks
+            {t('nav.myDecks')}
           </Link>
+          <AccountBar />
         </nav>
       </header>
 
       <main className="mx-auto w-full max-w-[56rem] flex-1 px-5 pb-16 pt-2 sm:px-8">
         <h1 className="sign text-[2rem] leading-none text-[color:var(--site-floor-text)]">
-          Mes tables
+          {t('nav.myTables')}
         </h1>
         <p className="mt-3 max-w-[42rem] text-[0.9rem] leading-relaxed text-[color:var(--site-floor-dim)]">
-          Les parties où vous avez une place. Revenir ne coûte rien : votre siège,
-          votre main et votre bibliothèque vous attendent.
+          {t('tables.intro')}
         </p>
 
         {error && (
@@ -142,18 +153,18 @@ export function Tables(): React.ReactElement {
         )}
 
         {games === null ? (
-          <p className="mt-8 text-[0.9rem] text-[color:var(--site-floor-dim)]">Chargement…</p>
+          <p className="mt-8 text-[0.9rem] text-[color:var(--site-floor-dim)]">{t('common.loading')}</p>
         ) : current.length === 0 ? (
           <div className="cut-shadow mt-8">
             <div className="paper paper-cut p-6">
               <p className="text-[0.95rem] text-[color:var(--site-ink)]">
-                Aucune table en cours.
+                {t('tables.emptyTitle')}
               </p>
               <p className="mt-2 text-[0.85rem] text-[color:var(--site-ink-soft)]">
-                Ouvrez-en une depuis l'accueil, ou collez le lien que l'on vous a envoyé.
+                {t('tables.emptyDetail')}
               </p>
               <Link className="ink-button mt-4 inline-block px-5 py-2.5 text-[0.78rem]" to="/">
-                Ouvrir une table
+                {t('home.openTable')}
               </Link>
             </div>
           </div>
@@ -174,7 +185,7 @@ export function Tables(): React.ReactElement {
         {past.length > 0 && (
           <>
             <h2 className="sign mt-12 text-[1.2rem] text-[color:var(--site-floor-text)]">
-              Tables closes
+              {t('tables.closedHeading')}
             </h2>
             <ul className="mt-4 grid gap-2 text-[0.85rem]" data-test="tables-past">
               {past.map((game) => (
@@ -184,7 +195,7 @@ export function Tables(): React.ReactElement {
                 >
                   <span className="typed text-[color:var(--site-floor-text)]">{game.code}</span>
                   <span>{MODE_LABELS[game.mode] ?? game.mode}</span>
-                  <span className="ml-auto">{ago(game.lastActivityAt)}</span>
+                  <span className="ml-auto">{ago(game.lastActivityAt, t)}</span>
                 </li>
               ))}
             </ul>
@@ -208,6 +219,7 @@ function TableCard({
   onLeave: () => void;
   onClose: () => void;
 }): React.ReactElement {
+  const t = useT();
   return (
     <li className="cut-shadow">
       <div className="paper paper-cut p-5" data-test={`table-${game.code}`}>
@@ -215,10 +227,10 @@ function TableCard({
           <span className="sign text-[1.35rem] leading-none text-[color:var(--site-ink)]">
             {game.code}
           </span>
-          <span className="stamped">{STATUS_LABELS[game.status]}</span>
-          {game.isHost && <span className="stamped">Hôte</span>}
+          <span className="stamped">{t(STATUS_KEYS[game.status])}</span>
+          {game.isHost && <span className="stamped">{t('table.host')}</span>}
           <span className="ml-auto text-[0.8rem] text-[color:var(--site-ink-soft)]">
-            {ago(game.lastActivityAt)}
+            {ago(game.lastActivityAt, t)}
           </span>
         </div>
 
@@ -226,9 +238,11 @@ function TableCard({
           {[
             MODE_LABELS[game.mode] ?? game.mode,
             game.seatIndex !== null
-              ? `votre siège nº${game.seatIndex + 1}`
-              : 'vous n’y êtes pas encore assis',
-            game.players > 0 ? `${game.players} joueur${game.players > 1 ? 's' : ''} à table` : null,
+              ? t('table.yourSeat', { index: game.seatIndex + 1 })
+              : t('table.notSeated'),
+            // La coupure du pluriel n'est pas la même dans les deux langues :
+            // c'est `count` qui choisit, jamais un `n > 1`.
+            game.players > 0 ? t('table.playersAtTable', { count: game.players }) : null,
           ]
             .filter(Boolean)
             .join(' · ')}
@@ -236,7 +250,7 @@ function TableCard({
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Link className="ink-button px-5 py-2.5 text-[0.78rem]" to={`/rooms/${game.code}`}>
-            {game.seatIndex === null ? 'Rejoindre' : 'Revenir à la table'}
+            {game.seatIndex === null ? t('table.join') : t('table.returnTo')}
           </Link>
           {game.seatIndex !== null && (
             <button
@@ -245,7 +259,7 @@ function TableCard({
               onClick={onLeave}
               type="button"
             >
-              Quitter la table
+              {t('table.leave')}
             </button>
           )}
           {game.isHost && (
@@ -259,7 +273,7 @@ function TableCard({
               }}
               type="button"
             >
-              Clore la table
+              {t('table.close')}
             </button>
           )}
         </div>

@@ -10,18 +10,26 @@
 import { useState } from 'react';
 import { useGame } from '../store/game.js';
 import { useCloseOnEscape } from '../lib/overlay.js';
+import { useT } from '../lib/i18n/index.js';
 
-/** Les compteurs qu'on pose réellement à une table, dans l'ordre de fréquence. */
+/**
+ * Les compteurs qu'on pose réellement à une table, dans l'ordre de fréquence.
+ *
+ * `kind` est la **valeur de protocole** : c'est elle qui part au serveur et qui
+ * revient dans le bandeau de siège. Elle ne se traduit donc pas, à la différence
+ * du libellé, qui n'est qu'un affichage et vit dans le catalogue.
+ */
 const COMMON = [
-  { kind: 'poison', label: 'Poison', color: '#84cc16' },
-  { kind: 'énergie', label: 'Énergie', color: '#38bdf8' },
-  { kind: 'expérience', label: 'Expérience', color: '#f59e0b' },
-  { kind: 'rad', label: 'Radiation', color: '#22c55e' },
-  { kind: 'ticket', label: 'Ticket', color: '#e879f9' },
-  { kind: 'ville', label: "L'Initiative / Ville", color: '#fbbf24' },
-];
+  { kind: 'poison', labelKey: 'playerCounter.poison', color: '#84cc16' },
+  { kind: 'énergie', labelKey: 'playerCounter.energy', color: '#38bdf8' },
+  { kind: 'expérience', labelKey: 'playerCounter.experience', color: '#f59e0b' },
+  { kind: 'rad', labelKey: 'playerCounter.rad', color: '#22c55e' },
+  { kind: 'ticket', labelKey: 'playerCounter.ticket', color: '#e879f9' },
+  { kind: 'ville', labelKey: 'playerCounter.city', color: '#fbbf24' },
+] as const;
 
 export function CountersPanel({ onClose }: { onClose: () => void }): React.ReactElement | null {
+  const t = useT();
   const mySeat = useGame((s) => s.mySeat);
   const seats = useGame((s) => s.seats);
   const send = useGame((s) => s.send);
@@ -49,7 +57,7 @@ export function CountersPanel({ onClose }: { onClose: () => void }): React.React
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
-          <h2 className="font-medium">Compteurs de joueur</h2>
+          <h2 className="font-medium">{t('playerCounter.title')}</h2>
           <button className="text-slate-500 hover:text-slate-200" onClick={onClose}>
             ✕
           </button>
@@ -74,7 +82,9 @@ export function CountersPanel({ onClose }: { onClose: () => void }): React.React
                       className="h-2.5 w-2.5 shrink-0 rounded-full"
                       style={{ background: known?.color ?? '#94a3b8' }}
                     />
-                    <span className="flex-1 truncate text-sm">{known?.label ?? kind}</span>
+                    <span className="flex-1 truncate text-sm">
+                      {known ? t(known.labelKey) : kind}
+                    </span>
                     <button
                       className="h-7 w-7 rounded bg-slate-800 text-lg leading-none hover:bg-slate-700"
                       onClick={() => set(kind, value - 1)}
@@ -92,20 +102,20 @@ export function CountersPanel({ onClose }: { onClose: () => void }): React.React
                       className="ml-1 rounded px-2 py-1 text-xs text-rose-300 hover:bg-rose-950/60"
                       data-test="player-counter-remove"
                       onClick={() => set(kind, 0)}
-                      title="Retirer ce compteur"
+                      title={t('playerCounter.removeTitle')}
                     >
-                      Retirer
+                      {t('common.remove')}
                     </button>
                   </li>
                 );
               })}
             </ul>
           ) : (
-            <p className="text-sm text-slate-500">Aucun compteur. Ajoutez-en un ci-dessous.</p>
+            <p className="text-sm text-slate-500">{t('playerCounter.none')}</p>
           )}
 
           <div>
-            <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">Ajouter</p>
+            <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">{t('common.add')}</p>
             <div className="flex flex-wrap gap-2">
               {COMMON.filter((c) => !existing.has(c.kind)).map((counter) => (
                 <button
@@ -117,7 +127,7 @@ export function CountersPanel({ onClose }: { onClose: () => void }): React.React
                     className="mr-2 inline-block h-2 w-2 rounded-full align-middle"
                     style={{ background: counter.color }}
                   />
-                  {counter.label}
+                  {t(counter.labelKey)}
                 </button>
               ))}
             </div>
@@ -136,7 +146,7 @@ export function CountersPanel({ onClose }: { onClose: () => void }): React.React
             <input
               className="flex-1 rounded border border-edge bg-table px-3 py-2 text-sm"
               maxLength={64}
-              placeholder="Compteur personnalisé…"
+              placeholder={t('playerCounter.customPlaceholder')}
               value={custom}
               onChange={(event) => setCustom(event.target.value)}
             />
@@ -145,13 +155,13 @@ export function CountersPanel({ onClose }: { onClose: () => void }): React.React
               disabled={custom.trim().length === 0}
               type="submit"
             >
-              Ajouter
+              {t('common.add')}
             </button>
           </form>
         </div>
 
         <footer className="border-t border-edge px-4 py-2 text-xs text-slate-500">
-          Les compteurs sont visibles de toute la table. Les remettre à zéro les retire.
+          {t('playerCounter.footer')}
         </footer>
       </div>
     </div>

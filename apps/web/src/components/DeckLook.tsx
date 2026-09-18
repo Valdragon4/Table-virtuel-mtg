@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import type { DeckSummary } from '@mtg/shared';
 import { api, ApiError } from '../lib/api.js';
+import { useT } from '../lib/i18n/index.js';
 import { CardBack } from './CardBack.js';
 
 export function DeckLook({
@@ -24,6 +25,7 @@ export function DeckLook({
   onClose: () => void;
   onSaved: () => void;
 }): React.ReactElement {
+  const t = useT();
   const [playmatUrl, setPlaymatUrl] = useState(deck.playmatUrl ?? '');
   const [cardBackUrl, setCardBackUrl] = useState(deck.cardBackUrl ?? '');
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +43,9 @@ export function DeckLook({
       });
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Enregistrement impossible.');
+      // Le message d'`ApiError` vient du serveur : il s'affiche tel quel, il
+      // n'y a rien à traduire ici.
+      setError(err instanceof ApiError ? err.message : t('common.saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -51,8 +55,8 @@ export function DeckLook({
     <div className="dark-panel mt-4 w-full rounded p-5" data-test="deck-look">
       <div className="grid gap-4 md:grid-cols-2">
         <Field
-          label="Tapis de jeu"
-          hint="URL d'une image. Elle est chargée par votre navigateur, jamais par notre serveur."
+          label={t('look.playmat')}
+          hint={t('look.playmatHint')}
           placeholder="https://exemple.org/tapis.jpg"
           value={playmatUrl}
           onChange={setPlaymatUrl}
@@ -60,7 +64,7 @@ export function DeckLook({
           <div className="mt-2 h-24 overflow-hidden rounded border border-[color:var(--site-floor-rule)] bg-[color:var(--site-floor)]">
             {playmatUrl.trim() ? (
               <img
-                alt="Aperçu du tapis"
+                alt={t('look.playmatPreview')}
                 className="h-full w-full object-cover"
                 src={playmatUrl}
                 onError={(event) => {
@@ -72,15 +76,15 @@ export function DeckLook({
               />
             ) : (
               <p className="flex h-full items-center justify-center text-[0.75rem] text-[color:var(--site-floor-dim)]">
-                Tapis par défaut
+                {t('look.playmatDefault')}
               </p>
             )}
           </div>
         </Field>
 
         <Field
-          label="Dos de carte"
-          hint="Laissez vide pour le dos par défaut."
+          label={t('look.cardBack')}
+          hint={t('look.cardBackHint')}
           placeholder="https://exemple.org/dos.jpg"
           value={cardBackUrl}
           onChange={setCardBackUrl}
@@ -106,13 +110,13 @@ export function DeckLook({
           onClick={() => void save()}
           type="button"
         >
-          {busy ? 'Envoi…' : 'Enregistrer'}
+          {busy ? t('common.sending') : t('common.save')}
         </button>
         <button className="floor-button px-4 py-2.5 text-[0.72rem]" onClick={onClose} type="button">
-          Annuler
+          {t('common.cancel')}
         </button>
         <p className="ml-auto text-[0.78rem] text-[color:var(--site-floor-dim)]">
-          Appliqué à votre zone au chargement du deck.
+          {t('look.appliedOnLoad')}
         </p>
       </div>
     </div>

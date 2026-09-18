@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useGame } from '../store/game.js';
 import { useMenuPlacement } from '../lib/menu.js';
+import { useT } from '../lib/i18n/index.js';
 
 /**
  * Dernières saisies, gardées le temps de la session.
@@ -53,6 +54,7 @@ export function TableMenu({
   onCreateToken: (at: { x: number; y: number }) => void;
   onOpenCounters: () => void;
 }): React.ReactElement | null {
+  const t = useT();
   const send = useGame((s) => s.send);
   const mySeat = useGame((s) => s.mySeat);
   const { ref, style } = useMenuPlacement(target.x, target.y);
@@ -81,11 +83,11 @@ export function TableMenu({
 
   const entries: Array<{ label: string; run: () => void; separatorBefore?: boolean; keepOpen?: boolean }> = [
     {
-      label: 'Créer un jeton…',
+      label: t('card.createToken'),
       run: () => onCreateToken(spot),
     },
     {
-      label: 'Poser une étiquette ici…',
+      label: t('tableMenu.placeLabel'),
       keepOpen: true,
       run: () => {
         setDraft(lastEntry.label);
@@ -100,7 +102,7 @@ export function TableMenu({
        * compteur, « 1/1 » pour une force et une endurance réglables chacune de
        * son côté.
        */
-      label: 'Poser un marqueur ici…',
+      label: t('tableMenu.placeMarker'),
       keepOpen: true,
       run: () => {
         setDraft(lastEntry.counter);
@@ -109,16 +111,20 @@ export function TableMenu({
       },
     },
     {
-      label: 'Compteurs de joueur…',
+      label: t('tableMenu.playerCounters'),
       run: () => onOpenCounters(),
     },
-    { label: 'Piocher une carte', separatorBefore: true, run: () => send({ type: 'DRAW', count: 1 }) },
-    { label: 'Tout dégager', run: () => send({ type: 'UNTAP_ALL' }) },
     {
-      label: 'Mélanger la bibliothèque',
+      label: t('tableMenu.drawCard'),
+      separatorBefore: true,
+      run: () => send({ type: 'DRAW', count: 1 }),
+    },
+    { label: t('tableMenu.untapAll'), run: () => send({ type: 'UNTAP_ALL' }) },
+    {
+      label: t('tableMenu.shuffleLibrary'),
       run: () => send({ type: 'SHUFFLE', zone: { seat: mySeat, kind: 'LIBRARY' } }),
     },
-    { label: 'Passer le tour', run: () => send({ type: 'END_TURN' }) },
+    { label: t('toolbar.passTurn'), run: () => send({ type: 'END_TURN' }) },
   ];
 
   const closeRef = useRef(onClose);
@@ -181,7 +187,9 @@ export function TableMenu({
             }}
           >
             <label className="text-[11px] uppercase tracking-wide text-slate-500" htmlFor="table-menu-entry">
-              {form === 'COUNTER' ? 'Nom du marqueur (facultatif)' : 'Texte de l’étiquette'}
+              {form === 'COUNTER'
+                ? t('tableMenu.markerNameOptional')
+                : t('tableMenu.labelText')}
             </label>
             <input
               autoFocus
@@ -201,7 +209,7 @@ export function TableMenu({
                   className="text-[11px] uppercase tracking-wide text-slate-500"
                   htmlFor="table-menu-value"
                 >
-                  Valeur
+                  {t('common.value')}
                 </label>
                 <input
                   className="rounded bg-slate-800 px-2 py-1 text-sm text-slate-100 outline-none ring-1 ring-slate-600 focus:ring-sky-600"
@@ -212,16 +220,18 @@ export function TableMenu({
                   onKeyDown={(event) => {
                     if (event.key === 'Escape') onClose();
                   }}
-                  placeholder="1/1, 3, ou rien"
+                  placeholder={t('tableMenu.valuePlaceholder')}
                   value={value}
                 />
                 {/* On dit ce que chaque forme donne : sans cela, « laisser vide »
-                    ne vient à l'idée de personne. */}
+                    ne vient à l'idée de personne. Les trois exemples en gras —
+                    « 1/1 », « 3 » — sont des **valeurs**, pas des libellés :
+                    seules les phrases qui les commentent sont traduites. */}
                 <p className="text-[11px] leading-snug text-slate-500">
-                  <strong className="text-slate-400">1/1</strong> : force et endurance, chacune
-                  réglable de son côté. <strong className="text-slate-400">3</strong> : un compteur
-                  à un chiffre. <strong className="text-slate-400">Vide</strong> : un mot-clé, sans
-                  nombre à côté.
+                  <strong className="text-slate-400">1/1</strong> {t('tableMenu.helpPair')}{' '}
+                  <strong className="text-slate-400">3</strong> {t('tableMenu.helpNumber')}{' '}
+                  <strong className="text-slate-400">{t('common.empty')}</strong>{' '}
+                  {t('tableMenu.helpKeyword')}
                 </p>
               </>
             )}
@@ -232,10 +242,10 @@ export function TableMenu({
                 onClick={onClose}
                 type="button"
               >
-                Annuler
+                {t('common.cancel')}
               </button>
               <button className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white" type="submit">
-                Poser
+                {t('common.place')}
               </button>
             </div>
           </form>

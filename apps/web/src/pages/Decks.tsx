@@ -15,8 +15,13 @@ import { DeckLook } from '../components/DeckLook.js';
 import { ImportReportView } from '../components/ImportReportView.js';
 import { LegalFooter } from '../components/LegalFooter.js';
 import { Wordmark } from '../components/Mark.js';
+import { AccountBar } from '../components/AccountBar.js';
+import { useT } from '../lib/i18n/index.js';
+import { useLanguage } from '../store/prefs.js';
 
 export function DecksPage(): React.ReactElement {
+  const t = useT();
+  const language = useLanguage();
   const [decks, setDecks] = useState<DeckSummary[] | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
   const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
@@ -53,8 +58,10 @@ export function DecksPage(): React.ReactElement {
       setText('');
       await refresh();
     } catch (err) {
+      // `ApiError` porte un message et une indication rédigés par le serveur :
+      // ils s'affichent tels quels, il n'y a rien à traduire ici.
       if (err instanceof ApiError) setError({ message: err.message, hint: err.hint });
-      else setError({ message: 'Import impossible.' });
+      else setError({ message: t('deck.importFailed') });
     } finally {
       setBusy(false);
     }
@@ -85,24 +92,24 @@ export function DecksPage(): React.ReactElement {
             className="sign-sm text-[0.72rem] text-[color:var(--site-floor-dim)] hover:text-[color:var(--site-floor-text)]"
             to="/tables"
           >
-            Mes tables
+            {t('nav.myTables')}
           </Link>
           <Link
             className="sign-sm text-[0.72rem] text-[color:var(--site-floor-dim)] hover:text-[color:var(--site-floor-text)]"
             to="/"
           >
-            Retour à l’accueil
+            {t('nav.backHome')}
           </Link>
+          <AccountBar />
         </nav>
       </header>
 
       <main className="mx-auto max-w-[72rem] px-5 pb-16 sm:px-8">
         <h1 className="sign text-[clamp(2rem,5vw,3rem)] text-[color:var(--site-floor-text)]">
-          Mes decks
+          {t('nav.myDecks')}
         </h1>
         <p className="mt-3 max-w-[58ch] text-[0.95rem] leading-relaxed text-[color:var(--site-floor-dim)]">
-          Ce que vous gardez ici vous suit d’une table à l’autre. Rien n’y est obligatoire :
-          une liste collée directement au salon d’une table fonctionne tout aussi bien.
+          {t('decks.intro')}
         </p>
 
         {/* Les deux chemins d'import. Ils sont de même rang : le collage n'est
@@ -110,12 +117,10 @@ export function DecksPage(): React.ReactElement {
         <section className="mt-9 grid gap-5 md:grid-cols-2">
           <div className="cut-shadow">
             <div className="paper paper-cut flex h-full flex-col p-6">
-              <h2 className="sign-sm text-[0.78rem]">Importer depuis une URL</h2>
+              <h2 className="sign-sm text-[0.78rem]">{t('deck.importFromUrl')}</h2>
               <div className="rule-ink mt-3 flex flex-1 flex-col pt-5">
                 <p className="paper-dim mb-4 text-[0.83rem] leading-relaxed">
-                  Archidekt est pris en charge directement. Pour Moxfield, passez par le
-                  collage : leur API n’est pas ouverte aux applications tierces, et nous ne
-                  la contournons pas.
+                  {t('deck.moxfieldNote')}
                 </p>
                 <input
                   className="paper-field typed mb-4 text-[0.85rem]"
@@ -129,7 +134,7 @@ export function DecksPage(): React.ReactElement {
                   onClick={() => void runImport({ url })}
                   type="button"
                 >
-                  {busy ? 'Import…' : 'Importer'}
+                  {busy ? t('deck.importing') : t('deck.import')}
                 </button>
               </div>
             </div>
@@ -137,12 +142,15 @@ export function DecksPage(): React.ReactElement {
 
           <div className="cut-shadow">
             <div className="paper paper-cut flex h-full flex-col p-6">
-              <h2 className="sign-sm text-[0.78rem]">Coller une liste</h2>
+              <h2 className="sign-sm text-[0.78rem]">{t('deck.pasteList')}</h2>
               <div className="rule-ink mt-3 flex flex-1 flex-col pt-5">
                 <p className="paper-dim mb-4 text-[0.83rem] leading-relaxed">
-                  Un export Moxfield, MTGO, TappedOut, ou une liste tapée à la main. Les
-                  sections <span className="typed">Commander</span> et{' '}
-                  <span className="typed">Sideboard</span> sont reconnues.
+                  {/* « Commander » et « Sideboard » sont les sections que le
+                      parseur reconnaît : elles restent en anglais des deux
+                      côtés, et seule la phrase autour se traduit. */}
+                  {t('deck.pasteListNoteBefore')} <span className="typed">Commander</span>{' '}
+                  {t('deck.pasteListNoteAnd')} <span className="typed">Sideboard</span>{' '}
+                  {t('deck.pasteListNoteAfter')}
                 </p>
                 <textarea
                   className="scrollbar-thin paper-field typed mb-4 h-28 resize-none text-[0.8rem] leading-relaxed"
@@ -156,7 +164,7 @@ export function DecksPage(): React.ReactElement {
                   onClick={() => void runImport({ text })}
                   type="button"
                 >
-                  {busy ? 'Import…' : 'Importer la liste collée'}
+                  {busy ? t('deck.importing') : t('deck.importPasted')}
                 </button>
               </div>
             </div>
@@ -180,16 +188,17 @@ export function DecksPage(): React.ReactElement {
 
         <section className="mt-12">
           <h2 className="sign rule-stamp pt-6 text-[1.4rem] text-[color:var(--site-floor-text)]">
-            Decks enregistrés
+            {t('decks.savedHeading')}
           </h2>
 
           {decks === null && (
-            <p className="mt-5 text-[0.9rem] text-[color:var(--site-floor-dim)]">Chargement…</p>
+            <p className="mt-5 text-[0.9rem] text-[color:var(--site-floor-dim)]">
+              {t('common.loading')}
+            </p>
           )}
           {decks?.length === 0 && (
             <p className="mt-5 max-w-[56ch] text-[0.92rem] leading-relaxed text-[color:var(--site-floor-dim)]">
-              Aucun deck pour l’instant. Importez-en un ci-dessus — ou jouez sans compte, en
-              collant une liste directement au salon d’une table.
+              {t('decks.empty')}
             </p>
           )}
 
@@ -202,12 +211,21 @@ export function DecksPage(): React.ReactElement {
                       {deck.name}
                     </p>
                     <p className="mt-1 text-[0.82rem] text-[color:var(--site-floor-dim)]">
-                      <span className="typed">{deck.cardCount}</span> cartes ·{' '}
+                      <span className="typed">{deck.cardCount}</span>{' '}
+                      {t('card.countWord', { count: deck.cardCount })} ·{' '}
                       {deck.source.toLowerCase()}
+                      {/* Les noms de commandant viennent du catalogue Scryfall :
+                          ils ne passent pas par le catalogue de libellés. */}
                       {deck.commanders.length > 0 &&
                         ` · ${deck.commanders.map((c) => c.name).join(' & ')}`}
+                      {/* La date suit la langue choisie, et non un `'fr-FR'` figé :
+                          « 09/18/2026 » sous un texte français, ou « 18/09/2026 »
+                          sous un texte anglais, se lit de travers dans les deux
+                          sens — et une date mal lue à un jour près se remarque. */}
                       {deck.lastSyncedAt &&
-                        ` · synchronisé le ${new Date(deck.lastSyncedAt).toLocaleDateString('fr-FR')}`}
+                        ` · ${t('deck.syncedOn', {
+                          date: new Date(deck.lastSyncedAt).toLocaleDateString(language),
+                        })}`}
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
@@ -217,7 +235,7 @@ export function DecksPage(): React.ReactElement {
                       onClick={() => setEditing(deck.id)}
                       type="button"
                     >
-                      Modifier
+                      {t('common.edit')}
                     </button>
                     <button
                       className="floor-button px-3 py-1.5 text-[0.7rem]"
@@ -225,7 +243,7 @@ export function DecksPage(): React.ReactElement {
                       onClick={() => setStyling(styling === deck.id ? null : deck.id)}
                       type="button"
                     >
-                      Apparence
+                      {t('deck.look')}
                     </button>
                     {deck.sourceUrl && (
                       <button
@@ -234,7 +252,7 @@ export function DecksPage(): React.ReactElement {
                         onClick={() => void resync(deck.id)}
                         type="button"
                       >
-                        Resynchroniser
+                        {t('deck.resync')}
                       </button>
                     )}
                     <button
@@ -242,7 +260,7 @@ export function DecksPage(): React.ReactElement {
                       onClick={() => void api.del(`/api/decks/${deck.id}`).then(refresh)}
                       type="button"
                     >
-                      Supprimer
+                      {t('common.delete')}
                     </button>
                   </div>
                 </div>

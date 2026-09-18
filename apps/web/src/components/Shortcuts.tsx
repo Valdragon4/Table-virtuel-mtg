@@ -22,65 +22,74 @@ import type { CardView, Intent, ObjectId, ZoneKind } from '@mtg/shared';
 import { useGame } from '../store/game.js';
 import { useCloseOnEscape } from '../lib/overlay.js';
 import { tapIntent } from '../lib/tap.js';
+import { useT, type BoundT } from '../lib/i18n/index.js';
 
 interface Binding {
   keys: string;
   label: string;
 }
 
+/*
+ * Les tables de raccourcis sont des **fonctions** de `t`, et non des constantes
+ * de module : leurs libellés changent avec la langue, et une constante figée à
+ * l'import garderait la langue du premier chargement. Les lettres (`P`, `L`,
+ * `Ctrl + Z`) ne se traduisent pas — ce sont les touches physiques ; seuls les
+ * noms de touches nommées (`Entrée`, `Échap`, `Suppr`…) en sont.
+ */
+
 /** Raccourcis agissant sur la carte survolée (ou, à défaut, la sélection). */
-const HAND_BINDINGS: Binding[] = [
-  { keys: 'P', label: 'Jouer' },
-  { keys: 'M', label: 'Jouer face cachée' },
-  { keys: 'S', label: 'Mettre sur la pile' },
-  { keys: 'G', label: 'Défausser' },
-  { keys: 'E', label: 'Exiler' },
-  { keys: 'L', label: 'Dessus de la bibliothèque' },
-  { keys: 'B', label: 'Dessous de la bibliothèque' },
+const handBindings = (t: BoundT): Binding[] => [
+  { keys: 'P', label: t('card.play') },
+  { keys: 'M', label: t('card.playFaceDown') },
+  { keys: 'S', label: t('card.toStack') },
+  { keys: 'G', label: t('card.discard') },
+  { keys: 'E', label: t('card.exile') },
+  { keys: 'L', label: t('zone.libraryTop') },
+  { keys: 'B', label: t('zone.libraryBottom') },
 ];
 
-const PERMANENT_BINDINGS: Binding[] = [
-  { keys: 'T', label: 'Engager / dégager' },
-  { keys: 'F', label: 'Transformer (recto-verso)' },
-  { keys: 'M', label: 'Retourner face cachée / visible' },
-  { keys: 'C', label: 'Copier en jeton' },
-  { keys: '+ / −', label: 'Marqueur +1/+1' },
-  { keys: 'H', label: 'Vers la main' },
-  { keys: 'G / Suppr', label: 'Au cimetière' },
-  { keys: 'E', label: 'Exiler' },
-  { keys: 'L / B', label: 'Dessus / dessous de la bibliothèque' },
+const permanentBindings = (t: BoundT): Binding[] => [
+  { keys: 'T', label: t('shortcut.tapUntap') },
+  { keys: 'F', label: t('card.transform') },
+  { keys: 'M', label: t('shortcut.flipFace') },
+  { keys: 'C', label: t('card.copyAsToken') },
+  { keys: '+ / −', label: t('shortcut.plusCounter') },
+  { keys: 'H', label: t('card.toHand') },
+  { keys: `G / ${t('keys.delete')}`, label: t('card.toGraveyard') },
+  { keys: 'E', label: t('card.exile') },
+  { keys: 'L / B', label: t('shortcut.libraryTopBottom') },
 ];
 
-const PILE_BINDINGS: Binding[] = [
-  { keys: 'P', label: 'Sur le champ de bataille' },
-  { keys: 'H', label: 'Vers la main' },
-  { keys: 'G / E', label: 'Au cimetière / exiler' },
-  { keys: 'L / B', label: 'Dessus / dessous de la bibliothèque' },
+const pileBindings = (t: BoundT): Binding[] => [
+  { keys: 'P', label: t('card.toBattlefield') },
+  { keys: 'H', label: t('card.toHand') },
+  { keys: 'G / E', label: t('shortcut.graveyardOrExile') },
+  { keys: 'L / B', label: t('shortcut.libraryTopBottom') },
 ];
 
 /** Raccourcis agissant quand aucune carte n'est survolée. */
-const GLOBAL_BINDINGS: Binding[] = [
-  { keys: 'D', label: 'Piocher une carte' },
-  { keys: 'U', label: 'Tout dégager' },
-  { keys: 'S', label: 'Mélanger la bibliothèque' },
-  { keys: 'E', label: 'Passer le tour' },
-  { keys: 'Y', label: 'Scry 1' },
-  { keys: 'Ctrl + Z', label: 'Annuler sa dernière action (10 s)' },
-  { keys: 'Entrée', label: 'Écrire un message' },
-  { keys: 'Échap', label: 'Vider la sélection, fermer un menu' },
-  { keys: '?', label: 'Cette aide' },
+const globalBindings = (t: BoundT): Binding[] => [
+  { keys: 'D', label: t('tableMenu.drawCard') },
+  { keys: 'U', label: t('tableMenu.untapAll') },
+  { keys: 'S', label: t('tableMenu.shuffleLibrary') },
+  { keys: 'E', label: t('toolbar.passTurn') },
+  { keys: 'Y', label: t('zoneMenu.scry1') },
+  { keys: 'Ctrl + Z', label: t('toolbar.undo') },
+  { keys: t('keys.enter'), label: t('shortcut.writeMessage') },
+  { keys: t('keys.esc'), label: t('shortcut.clearSelection') },
+  { keys: '?', label: t('shortcut.thisHelp') },
 ];
 
-const POINTER_BINDINGS: Binding[] = [
-  { keys: 'Molette', label: 'Zoomer' },
-  { keys: 'Glisser', label: 'Lasso, depuis le fond : sélectionne vos permanents' },
-  { keys: 'Alt + Glisser', label: 'Lasso incluant les permanents adverses' },
-  { keys: 'Clic droit glissé', label: 'Déplacer la table' },
-  { keys: 'Clic milieu', label: "Déplacer la table, depuis n'importe où" },
-  { keys: 'Ctrl + Clic', label: 'Ajouter ou retirer de la sélection' },
-  { keys: 'Glisser une carte', label: 'La déposer dans une autre zone' },
-  { keys: 'Double-clic', label: 'Engager / dégager' },
-  { keys: 'Clic droit', label: 'Menu de la carte, de la pile ou de la table' },
+const pointerBindings = (t: BoundT): Binding[] => [
+  { keys: t('keys.wheel'), label: t('shortcut.zoom') },
+  { keys: t('keys.drag'), label: t('shortcut.lasso') },
+  { keys: t('keys.altDrag'), label: t('shortcut.lassoAll') },
+  { keys: t('keys.rightDrag'), label: t('shortcut.panTable') },
+  { keys: t('keys.middleClick'), label: t('shortcut.panTableAnywhere') },
+  { keys: t('keys.ctrlClick'), label: t('shortcut.toggleSelection') },
+  { keys: t('keys.dragCard'), label: t('shortcut.dropInZone') },
+  { keys: t('keys.doubleClick'), label: t('shortcut.tapUntap') },
+  { keys: t('keys.rightClick'), label: t('shortcut.contextMenu') },
 ];
 
 export function useShortcuts(onHelp: () => void): void {
@@ -272,6 +281,7 @@ function contextualIntents(rawKey: string, focus: CardView, targets: ObjectId[])
  * en anglais, le reste en français.
  */
 export function ShortcutsHelp({ onClose }: { onClose: () => void }): React.ReactElement {
+  const t = useT();
   useCloseOnEscape(onClose);
 
   return (
@@ -280,7 +290,7 @@ export function ShortcutsHelp({ onClose }: { onClose: () => void }): React.React
       onClick={onClose}
     >
       <div
-        aria-label="Raccourcis clavier"
+        aria-label={t('toolbar.shortcuts')}
         aria-modal
         className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-edge bg-[#151c28] shadow-2xl shadow-black/70"
         onClick={(event) => event.stopPropagation()}
@@ -289,17 +299,19 @@ export function ShortcutsHelp({ onClose }: { onClose: () => void }): React.React
         <header className="flex items-start gap-4 border-b border-edge bg-panel/70 px-6 py-4">
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-semibold tracking-tight text-slate-100">
-              Raccourcis clavier
+              {t('toolbar.shortcuts')}
             </h2>
             <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
-              Une touche agit d'abord sur la carte{' '}
-              <span className="font-medium text-amber-200/90">sous le curseur</span>, sinon sur la{' '}
-              <span className="font-medium text-sky-300/90">sélection</span>, sinon sur la{' '}
-              <span className="font-medium text-slate-200">table</span>.
+              {t('shortcut.ruleLead')}{' '}
+              <span className="font-medium text-amber-200/90">{t('shortcut.ruleUnderCursor')}</span>
+              {t('shortcut.ruleOtherwise')}{' '}
+              <span className="font-medium text-sky-300/90">{t('shortcut.ruleSelection')}</span>
+              {t('shortcut.ruleOtherwise')}{' '}
+              <span className="font-medium text-slate-200">{t('shortcut.ruleTable')}</span>.
             </p>
           </div>
           <button
-            aria-label="Fermer"
+            aria-label={t('common.close')}
             className="-mr-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-edge text-slate-400 transition hover:border-slate-500 hover:bg-white/5 hover:text-slate-100"
             onClick={onClose}
             type="button"
@@ -316,32 +328,26 @@ export function ShortcutsHelp({ onClose }: { onClose: () => void }): React.React
         </header>
 
         <div className="scrollbar-thin flex-1 overflow-y-auto px-6 py-5">
-          <Group
-            hint="La carte sous le pointeur l'emporte sur la sélection. Pendant un glisser-déposer, le survol est ignoré."
-            title="Au survol d'une carte"
-          >
+          <Group hint={t('shortcut.groupHoverHint')} title={t('shortcut.groupHover')}>
             <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
-              <Section bindings={HAND_BINDINGS} title="En main" />
-              <Section bindings={PERMANENT_BINDINGS} title="Permanent en jeu" />
-              <Section bindings={PILE_BINDINGS} title="Cimetière, exil, commandement" />
+              <Section bindings={handBindings(t)} title={t('shortcut.sectionHand')} />
+              <Section bindings={permanentBindings(t)} title={t('shortcut.sectionPermanent')} />
+              <Section bindings={pileBindings(t)} title={t('shortcut.sectionPile')} />
             </div>
           </Group>
 
-          <Group
-            hint="Ces touches s'appliquent quand aucune carte n'est survolée ni sélectionnée."
-            title="Table et souris"
-          >
+          <Group hint={t('shortcut.groupTableHint')} title={t('shortcut.groupTable')}>
             <div className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
-              <Section bindings={GLOBAL_BINDINGS} title="Actions globales" />
-              <Section bindings={POINTER_BINDINGS} title="Souris" />
+              <Section bindings={globalBindings(t)} title={t('shortcut.sectionGlobal')} />
+              <Section bindings={pointerBindings(t)} title={t('shortcut.sectionMouse')} />
             </div>
           </Group>
         </div>
 
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-edge bg-panel/50 px-6 py-3 text-[11px] text-slate-500">
-          <span>Échap, ou un clic hors du panneau, referme cette aide.</span>
+          <span>{t('shortcut.footerClose')}</span>
           <span className="flex items-center gap-1.5">
-            <kbd className="kbd">?</kbd> la rouvre à tout moment.
+            <kbd className="kbd">?</kbd> {t('shortcut.footerReopen')}
           </span>
         </footer>
       </div>

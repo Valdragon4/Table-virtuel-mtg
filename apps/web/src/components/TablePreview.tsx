@@ -21,8 +21,12 @@
  * et les trois panneaux se posent l'un sous l'autre.
  */
 import { useEffect, useState } from 'react';
+import type { Language } from '@mtg/shared';
 import { api } from '../lib/api.js';
 import { scryfallImage } from '../lib/cards.js';
+import { localizedCard, useLocalizationTick } from '../lib/cardLocalization.js';
+import { resolveCardImage } from '../lib/i18n/index.js';
+import { useLanguage } from '../store/prefs.js';
 
 interface Hit {
   scryfallId: string;
@@ -54,6 +58,19 @@ async function lookup(query: string): Promise<Hit | null> {
 }
 
 export function TablePreview(): React.ReactElement {
+  /*
+   * La vitrine montre les cartes **dans la langue du visiteur**, comme la vraie
+   * table : c'est la promesse de la page, et une table qu'on annonce en français
+   * n'a pas à s'illustrer en anglais. La préférence est lisible sans compte —
+   * `usePrefs` part du stockage local, puis de la langue du navigateur — et la
+   * route de résolution est publique, donc rien n'exige d'être connecté.
+   *
+   * Ce qui ne bouge pas : le journal de la scène, qui est un texte écrit à la
+   * main et non un vrai journal. Y glisser « Forêt » au milieu d'une phrase
+   * anglaise donnerait un faux pire que celui qu'on a.
+   */
+  useLocalizationTick();
+  const language = useLanguage();
   const [cards, setCards] = useState<Record<string, Hit | null>>({});
 
   useEffect(() => {
@@ -134,14 +151,24 @@ export function TablePreview(): React.ReactElement {
 
           <div className="flex items-end gap-[2%]">
             {TOP.map((entry) => (
-              <MiniCard card={cards[entry.query] ?? null} key={entry.query} tapped={entry.tapped} />
+              <MiniCard
+                card={cards[entry.query] ?? null}
+                key={entry.query}
+                language={language}
+                tapped={entry.tapped}
+              />
             ))}
             <PestToken />
           </div>
 
           <div className="mt-[2.5%] flex items-end gap-[2%]">
             {BOTTOM.map((entry) => (
-              <MiniCard card={cards[entry.query] ?? null} key={entry.query} tapped={entry.tapped} />
+              <MiniCard
+                card={cards[entry.query] ?? null}
+                key={entry.query}
+                language={language}
+                tapped={entry.tapped}
+              />
             ))}
           </div>
         </div>
@@ -210,7 +237,30 @@ function Scenery(): React.ReactElement {
  * Un permanent. Tapé, il pivote de 90° — et sa boîte s'élargit d'autant, sinon
  * il déborderait sur son voisin au lieu d'occuper sa propre place.
  */
-function MiniCard({ card, tapped }: { card: Hit | null; tapped: boolean }): React.ReactElement {
+function MiniCard({
+  card,
+  language,
+  tapped,
+}: {
+  card: Hit | null;
+  language: Language;
+  tapped: boolean;
+}): React.ReactElement {
+  /*
+   * On ne manipule que des **URL**, comme partout : la résolution rend l'adresse
+   * de la face française chez Scryfall, et le navigateur du visiteur va la
+   * chercher lui-même. Rien n'est préchargé, rien n'est mis en cache — un cache
+   * serait une copie. Et si elle ne rend rien, le motif du CDN reprend la main,
+   * donc la vignette ne peut pas devenir un trou.
+   */
+  const src = card
+    ? (resolveCardImage({
+        card: { scryfallId: card.scryfallId },
+        localized: localizedCard(card.scryfallId, language),
+        language,
+        version: 'small',
+      }).url ?? scryfallImage(card.scryfallId, 'small'))
+    : null;
   return (
     <div className="flex w-[15%] shrink-0 items-center justify-center" style={{ aspectRatio: '63 / 88' }}>
       <div
@@ -221,13 +271,13 @@ function MiniCard({ card, tapped }: { card: Hit | null; tapped: boolean }): Reac
             : { width: '100%', aspectRatio: '63 / 88' }
         }
       >
-        {card ? (
+        {src ? (
           <img
             alt=""
             className="h-full w-full object-cover"
             decoding="async"
             loading="lazy"
-            src={scryfallImage(card.scryfallId, 'small')}
+            src={src}
           />
         ) : (
           <CardBack />

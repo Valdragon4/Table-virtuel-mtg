@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react';
 import { api, type CardMeta } from '../lib/api.js';
 import { scryfallImage } from '../lib/cards.js';
+import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
+import { resolveCardImage } from '../lib/i18n/index.js';
 import { useGame } from '../store/game.js';
+import { useLanguage } from '../store/prefs.js';
 import { useCloseOnEscape } from '../lib/overlay.js';
 
-/** Recherche de jeton ou de carte, servie par la base locale — jamais par Scryfall. */
+/**
+ * Recherche de jeton ou de carte, servie par la base locale — jamais par Scryfall.
+ *
+ * **Ce qu'on tape interroge le catalogue anglais.** `/api/cards/search` ne
+ * connaît que les noms du bulk que nous ingérons : la saisie part telle quelle,
+ * sans être traduite ni repliée. Seul l'**affichage** du résultat passe au nom
+ * imprimé — traduire la clé de recherche rendrait « Spirit » introuvable.
+ */
 /** Les couleurs d'un jeton, dites en français comme à une table. */
 const COLOR_NAMES: Record<string, string> = {
   W: 'blanc',
@@ -34,6 +44,8 @@ export function TokenSearch({
   const send = useGame((s) => s.send);
   const hoverPreview = useGame((s) => s.hoverPreview);
   useCloseOnEscape(onClose);
+  useLocalizationTick();
+  const language = useLanguage();
   const [query, setQuery] = useState('');
   const [tokensOnly, setTokensOnly] = useState(true);
   const [results, setResults] = useState<CardMeta[]>([]);
@@ -95,7 +107,13 @@ export function TokenSearch({
         </div>
 
         <div className="scrollbar-thin grid max-h-[55vh] grid-cols-4 gap-3 overflow-y-auto p-3 sm:grid-cols-5">
-          {results.map((card) => (
+          {results.map((card) => {
+            const localized = localizedCard(card.scryfallId, language);
+            const src =
+              resolveCardImage({ card, localized, language, version: 'small' }).url ??
+              scryfallImage(card.scryfallId, 'small');
+            const shownName = localizedCardName(localized, card.name) ?? card.name;
+            return (
             <button
               key={card.scryfallId}
               className="group text-left"
@@ -121,17 +139,17 @@ export function TokenSearch({
               }}
             >
               <img
-                alt={card.name}
+                alt={shownName}
                 className="w-full rounded ring-1 ring-transparent transition group-hover:ring-sky-500"
                 loading="lazy"
-                src={scryfallImage(card.scryfallId, 'small')}
+                src={src}
               />
               {/*
                 Le nom seul ne suffit pas à choisir : il existe seize « Spirit »
                 différents. On affiche donc ce qui les sépare — la taille et la
                 couleur — sans quoi l'utilisateur doit deviner à la vignette.
               */}
-              <p className="mt-1 truncate text-[11px] text-slate-300">{card.name}</p>
+              <p className="mt-1 truncate text-[11px] text-slate-300">{shownName}</p>
               <p className="truncate text-[10px] text-slate-500">
                 {[
                   card.power !== null && card.toughness !== null
@@ -143,7 +161,8 @@ export function TokenSearch({
                   .join(' · ')}
               </p>
             </button>
-          ))}
+            );
+          })}
           {query.trim().length >= 2 && results.length === 0 && (
             <p className="col-span-full py-6 text-center text-sm text-slate-500">Aucun résultat.</p>
           )}

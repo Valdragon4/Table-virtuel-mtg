@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 import { cardMeta, scryfallImage } from '../lib/cards.js';
+import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
+import { resolveCardImage, useT } from '../lib/i18n/index.js';
+import { useLanguage } from '../store/prefs.js';
 import { useGame } from '../store/game.js';
 
 /**
@@ -11,6 +14,13 @@ import { useGame } from '../store/game.js';
  * direct sans bloquer leur interaction avec le reste de la table.
  */
 export function PublicRevealModal(): React.ReactElement | null {
+  // Les résolutions arrivent par lots, après le premier rendu : sans cet
+  // abonnement, une carte révélée resterait en anglais jusqu'au prochain rendu
+  // venu d'ailleurs — et ici « ailleurs » peut ne jamais arriver, le bandeau
+  // étant immobile tant que le joueur d'en face choisit ses destinations.
+  useLocalizationTick();
+  const t = useT();
+  const language = useLanguage();
   const publicReveal = useGame((s) => s.publicReveal);
   const mySeat = useGame((s) => s.mySeat);
   const seats = useGame((s) => s.seats);
@@ -45,7 +55,7 @@ export function PublicRevealModal(): React.ReactElement | null {
   }
 
   const seat = seats.find((s) => s.id === publicReveal.seat);
-  const seatName = seat?.displayName || 'Un adversaire';
+  const seatName = seat?.displayName || t('reveal.someone');
   const seatColor = seat?.color || '#38bdf8';
   const count = publicReveal.cards.length;
 
@@ -59,9 +69,9 @@ export function PublicRevealModal(): React.ReactElement | null {
           type="button"
         >
           <span className="animate-pulse">✨</span>
-          <span>{seatName} révèle {count} carte{count > 1 ? 's' : ''}</span>
+          <span>{t('reveal.reopen', { who: seatName, count })}</span>
           <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] text-sky-300">
-            Agrandir
+            {t('common.expand')}
           </span>
         </button>
       </div>
@@ -86,12 +96,10 @@ export function PublicRevealModal(): React.ReactElement | null {
               <h2 className="flex items-center gap-2 text-sm font-bold text-slate-100">
                 <span>{seatName}</span>
                 <span className="text-xs font-normal text-slate-400">
-                  révèle {count} carte{count > 1 ? 's' : ''} du dessus de sa bibliothèque
+                  {t('reveal.headline', { count })}
                 </span>
               </h2>
-              <p className="text-[11px] text-slate-400">
-                Survolez une carte pour l'agrandir. Le joueur sélectionne actuellement les destinations.
-              </p>
+              <p className="text-[11px] text-slate-400">{t('reveal.hint')}</p>
             </div>
           </div>
           <button
@@ -101,7 +109,7 @@ export function PublicRevealModal(): React.ReactElement | null {
               hoverPreview(null);
               setMinimized(true);
             }}
-            title="Minimiser"
+            title={t('common.minimize')}
             type="button"
           >
             ✕
@@ -111,6 +119,22 @@ export function PublicRevealModal(): React.ReactElement | null {
         <div className="mt-4 flex flex-wrap justify-center gap-3 overflow-y-auto max-h-[60vh] p-1">
           {publicReveal.cards.map((card) => {
             const meta = cardMeta(card.scryfallId);
+            const localized = localizedCard(card.scryfallId, language);
+            /*
+             * Le repli est invisible, ici comme sur la table : une carte jamais
+             * imprimée en français montre l'anglais, sans pastille ni trou. Et
+             * si la résolution ne rend pas d'URL, on redescend sur le motif du
+             * CDN — c'est ce que ce bandeau affichait avant ce chantier, rien
+             * ne peut donc disparaître.
+             */
+            const imageSrc =
+              resolveCardImage({
+                card: meta ?? { scryfallId: card.scryfallId },
+                localized,
+                language,
+                version: 'normal',
+              }).url ?? scryfallImage(card.scryfallId, 'normal');
+            const shownName = localizedCardName(localized, meta?.name);
             return (
               <div
                 key={card.id}
@@ -121,15 +145,15 @@ export function PublicRevealModal(): React.ReactElement | null {
               >
                 <div className="h-44 w-32 overflow-hidden rounded-lg shadow-md transition-transform group-hover:scale-[1.03]">
                   <img
-                    alt={meta?.name || 'Carte révélée'}
+                    alt={shownName || t('reveal.altCard')}
                     className="h-full w-full object-cover"
                     loading="lazy"
-                    src={scryfallImage(card.scryfallId, 'normal')}
+                    src={imageSrc}
                   />
                 </div>
                 <div className="mt-2 w-32 text-center">
                   <div className="truncate text-xs font-semibold text-slate-200">
-                    {meta?.name || 'Chargement…'}
+                    {shownName || t('common.loading')}
                   </div>
                   {meta?.typeLine && (
                     <div className="truncate text-[10px] text-slate-400">

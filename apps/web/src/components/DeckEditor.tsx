@@ -15,6 +15,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DeckZone, ImportReport } from '@mtg/shared';
 import { api, ApiError, type CardMeta } from '../lib/api.js';
 import { scryfallImage } from '../lib/cards.js';
+import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
+import { resolveCardImage, useT } from '../lib/i18n/index.js';
+import { useLanguage } from '../store/prefs.js';
 import { useCloseOnEscape } from '../lib/overlay.js';
 import { ImportReportView } from './ImportReportView.js';
 
@@ -68,6 +71,7 @@ export function DeckEditor({
   onSaved: () => void;
 }): React.ReactElement {
   useCloseOnEscape(onClose);
+  const t = useT();
 
   const [view, setView] = useState<EditorView | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
@@ -91,8 +95,13 @@ export function DeckEditor({
         setRawText(v.text);
       })
       .catch((err: unknown) => {
-        setError({ message: err instanceof ApiError ? err.message : 'Deck illisible.' });
+        // Le message d'`ApiError` vient du serveur et s'affiche tel quel ; seul
+        // le repli est à nous.
+        setError({ message: err instanceof ApiError ? err.message : t('deck.unreadable') });
       });
+    // `t` n'est volontairement pas en dépendance : changer de langue ne doit pas
+    // relancer le chargement du deck.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deckId]);
 
   const patch = useCallback((key: string, change: Partial<Row>) => {
@@ -166,7 +175,7 @@ export function DeckEditor({
       } else if (err instanceof ApiError) {
         setError({ message: err.message, hint: err.hint });
       } else {
-        setError({ message: 'Enregistrement impossible.' });
+        setError({ message: t('common.saveFailed') });
       }
     } finally {
       setBusy(false);
@@ -188,7 +197,7 @@ export function DeckEditor({
       >
         <header className="flex flex-wrap items-center gap-3 border-b border-[color:var(--site-floor-rule)] px-5 py-4">
           <input
-            aria-label="Nom du deck"
+            aria-label={t('deck.nameLabel')}
             className="dark-field sign-sm min-w-0 flex-1 basis-[12rem] rounded px-3 py-2 text-[0.85rem]"
             value={name}
             onChange={(event) => {
@@ -207,7 +216,7 @@ export function DeckEditor({
               // La liste texte n'est rendue que par le serveur : changer de mode
               // repart donc du dernier état enregistré. On prévient plutôt que
               // de laisser filer des modifications en silence.
-              if (dirty && !window.confirm('Changer de mode abandonne les modifications non enregistrées. Continuer ?')) {
+              if (dirty && !window.confirm(t('deck.modeSwitchConfirm'))) {
                 return;
               }
               if (view) {
@@ -220,27 +229,27 @@ export function DeckEditor({
               setRawMode((m) => !m);
             }}
           >
-            {rawMode ? 'Mode liste' : 'Mode texte'}
+            {rawMode ? t('deck.modeList') : t('deck.modeText')}
           </button>
           <button className="floor-button rounded px-2.5 py-1.5 text-[0.68rem]" onClick={onClose}>
-            Fermer
+            {t('common.close')}
           </button>
         </header>
 
         {view?.synced && (
           <p className="border-b border-amber-700/50 bg-amber-950/40 px-5 py-2.5 text-[0.78rem] text-amber-200">
-            Ce deck est synchronisé depuis {view.source.toLowerCase()}. L'enregistrer le détachera de
-            sa source : vos corrections seront conservées, mais la resynchronisation ne sera plus
-            proposée.
+            {t('deck.syncedWarning', { source: view.source.toLowerCase() })}
           </p>
         )}
 
         <div className="scrollbar-thin flex-1 overflow-y-auto p-5">
-          {view === null && !error && <p className="text-[0.88rem] text-[color:var(--site-floor-dim)]">Chargement…</p>}
+          {view === null && !error && (
+            <p className="text-[0.88rem] text-[color:var(--site-floor-dim)]">{t('common.loading')}</p>
+          )}
 
           {view !== null && rawMode && (
             <textarea
-              aria-label="Liste du deck"
+              aria-label={t('deck.listLabel')}
               className="scrollbar-thin dark-field typed h-96 w-full resize-none rounded px-3 py-2 text-[0.8rem] leading-relaxed"
               value={rawText}
               onChange={(event) => {
@@ -260,7 +269,11 @@ export function DeckEditor({
                     <h3 className="sign-sm mb-2.5 text-[0.68rem] text-[color:var(--site-stamp-pale)]">
                       {ZONE_LABEL[zone]} <span className="font-normal">({counts[zone]})</span>
                     </h3>
-                    {inZone.length === 0 && <p className="text-[0.78rem] text-[color:var(--site-floor-dim)]">Vide.</p>}
+                    {inZone.length === 0 && (
+                      <p className="text-[0.78rem] text-[color:var(--site-floor-dim)]">
+                        {t('deck.emptyZone')}
+                      </p>
+                    )}
                     <ul className="space-y-1">
                       {inZone.map((row) => (
                         <CardRow key={row.key} row={row} onChange={patch} onRemove={remove} />
@@ -290,14 +303,18 @@ export function DeckEditor({
         )}
 
         <footer className="flex items-center justify-end gap-2 border-t border-[color:var(--site-floor-rule)] px-5 py-4">
-          {dirty && <span className="sign-sm mr-auto text-[0.68rem] text-amber-300">Modifications non enregistrées</span>}
+          {dirty && (
+            <span className="sign-sm mr-auto text-[0.68rem] text-amber-300">
+              {t('deck.unsavedChanges')}
+            </span>
+          )}
           {detachAsked ? (
             <button
               className="floor-button rounded px-4 py-2.5 text-[0.72rem]"
               disabled={busy}
               onClick={() => void save(true)}
             >
-              Détacher de la source et enregistrer
+              {t('deck.detachAndSave')}
             </button>
           ) : (
             <button
@@ -306,7 +323,7 @@ export function DeckEditor({
               disabled={busy || view === null}
               onClick={() => void save(false)}
             >
-              Enregistrer
+              {t('common.save')}
             </button>
           )}
         </footer>
@@ -315,7 +332,16 @@ export function DeckEditor({
   );
 }
 
-/** Une carte de la liste : quantité, zone, édition, foil, retrait. */
+/**
+ * Une carte de la liste : quantité, zone, édition, foil, retrait.
+ *
+ * **`row.name` ne bouge pas.** C'est le nom du **catalogue**, anglais, et c'est
+ * lui que `save()` envoie à `PUT /api/decks/:id/cards`, où le parseur du serveur
+ * le résout. Le traduire ferait échouer l'import de toutes les cartes du deck.
+ * Seule l'étiquette lue à l'écran passe au nom imprimé. Même règle pour
+ * `row.scryfallId` : l'impression française a un identifiant différent, qui ne
+ * sort jamais de `resolveCardImage`.
+ */
 function CardRow({
   row,
   onChange,
@@ -326,6 +352,11 @@ function CardRow({
   onRemove: (key: string) => void;
 }): React.ReactElement {
   const [pickingEdition, setPickingEdition] = useState(false);
+  useLocalizationTick();
+  const t = useT();
+  const language = useLanguage();
+  const localized = localizedCard(row.scryfallId, language);
+  const shownName = localizedCardName(localized, row.name) ?? row.name;
 
   return (
     <li className="rounded border border-[color:var(--site-floor-rule)] bg-[color:var(--site-floor)]/70 px-2.5 py-2">
@@ -334,11 +365,18 @@ function CardRow({
           alt=""
           className="h-10 w-7 shrink-0 rounded-sm object-cover"
           loading="lazy"
-          src={scryfallImage(row.scryfallId, 'small')}
+          src={
+            resolveCardImage({
+              card: { scryfallId: row.scryfallId },
+              localized,
+              language,
+              version: 'small',
+            }).url ?? scryfallImage(row.scryfallId, 'small')
+          }
         />
 
         <div className="min-w-0 flex-1 basis-[10rem]">
-          <p className="truncate text-[0.9rem]">{row.name}</p>
+          <p className="truncate text-[0.9rem]">{shownName}</p>
           <p className="typed truncate text-[0.7rem] text-[color:var(--site-floor-dim)]">
             {row.setCode?.toUpperCase() ?? '—'} {row.collectorNumber ?? ''} · {row.typeLine}
           </p>
@@ -346,7 +384,7 @@ function CardRow({
 
         <div className="flex w-full flex-wrap items-center gap-1 sm:w-auto sm:shrink-0 sm:flex-nowrap">
           <button
-            aria-label={`Retirer un exemplaire de ${row.name}`}
+            aria-label={t('deck.removeOne', { name: shownName })}
             className="floor-button h-6 w-6 rounded text-[0.72rem]"
             disabled={row.quantity <= 1}
             onClick={() => onChange(row.key, { quantity: row.quantity - 1 })}
@@ -354,7 +392,7 @@ function CardRow({
             −
           </button>
           <input
-            aria-label={`Quantité de ${row.name}`}
+            aria-label={t('deck.quantityOf', { name: shownName })}
             className="dark-field typed w-12 rounded px-1 py-0.5 text-center text-[0.75rem]"
             max={1000}
             min={1}
@@ -365,7 +403,7 @@ function CardRow({
             }
           />
           <button
-            aria-label={`Ajouter un exemplaire de ${row.name}`}
+            aria-label={t('deck.addOne', { name: shownName })}
             className="floor-button h-6 w-6 rounded text-[0.72rem]"
             onClick={() => onChange(row.key, { quantity: row.quantity + 1 })}
           >
@@ -373,7 +411,7 @@ function CardRow({
           </button>
 
           <select
-            aria-label={`Zone de ${row.name}`}
+            aria-label={t('deck.zoneOf', { name: shownName })}
             className="dark-field dark-select rounded py-1 pl-2 text-[0.72rem]"
             value={row.zone}
             onChange={(event) => onChange(row.key, { zone: event.target.value as DeckZone })}
@@ -389,7 +427,7 @@ function CardRow({
             aria-pressed={row.isFoil}
             className="floor-toggle rounded px-2.5 py-1.5 text-[0.68rem]"
             onClick={() => onChange(row.key, { isFoil: !row.isFoil })}
-            title={row.isFoil ? 'Impression foil' : 'Impression normale'}
+            title={row.isFoil ? t('printing.foil') : t('printing.normal')}
             type="button"
           >
             Foil
@@ -399,11 +437,11 @@ function CardRow({
             className="floor-button rounded px-2.5 py-1.5 text-[0.68rem]"
             onClick={() => setPickingEdition((p) => !p)}
           >
-            Édition
+            {t('printing.edition')}
           </button>
 
           <button
-            aria-label={`Retirer ${row.name}`}
+            aria-label={t('deck.remove', { name: shownName })}
             className="floor-button floor-button-danger rounded px-2.5 py-1.5 text-[0.68rem]"
             onClick={() => onRemove(row.key)}
           >
@@ -439,6 +477,9 @@ function EditionPicker({
   onPick: (printing: CardMeta) => void;
 }): React.ReactElement {
   const [printings, setPrintings] = useState<CardMeta[] | null>(null);
+  useLocalizationTick();
+  const t = useT();
+  const language = useLanguage();
 
   useEffect(() => {
     void api
@@ -449,35 +490,63 @@ function EditionPicker({
 
   return (
     <div className="scrollbar-thin mt-2 flex max-h-40 gap-2 overflow-x-auto border-t border-[color:var(--site-floor-rule)] pt-2.5">
-      {printings === null && <p className="typed text-[0.76rem] text-[color:var(--site-floor-dim)]">Chargement des impressions…</p>}
-      {printings?.length === 0 && <p className="typed text-[0.76rem] text-[color:var(--site-floor-dim)]">Aucune autre impression.</p>}
-      {printings?.map((printing) => (
+      {printings === null && (
+        <p className="typed text-[0.76rem] text-[color:var(--site-floor-dim)]">
+          {t('printing.loading')}
+        </p>
+      )}
+      {printings?.length === 0 && (
+        <p className="typed text-[0.76rem] text-[color:var(--site-floor-dim)]">
+          {t('printing.noOther')}
+        </p>
+      )}
+      {printings?.map((printing) => {
+        const localized = localizedCard(printing.scryfallId, language);
+        // `onPick(printing)` remonte l'impression **du catalogue** telle quelle :
+        // c'est son identifiant et son nom anglais qui iront au serveur. Seule
+        // la vignette montrée peut être la française.
+        const src =
+          resolveCardImage({ card: printing, localized, language, version: 'small' }).url ??
+          scryfallImage(printing.scryfallId, 'small');
+        const shownName = localizedCardName(localized, printing.name) ?? printing.name;
+        return (
         <button
           key={printing.scryfallId}
           className={`shrink-0 text-left ${printing.scryfallId === scryfallId ? 'ring-2 ring-[color:var(--site-stamp)]' : ''}`}
           onClick={() => onPick(printing)}
         >
           <img
-            alt={`${printing.name} (${printing.setCode})`}
+            alt={t('printing.label', { name: shownName, setCode: printing.setCode })}
             className="h-24 w-auto rounded"
             loading="lazy"
-            src={scryfallImage(printing.scryfallId, 'small')}
+            src={src}
           />
           <p className="typed mt-1 truncate text-[0.66rem] uppercase text-[color:var(--site-floor-dim)]">
             {printing.setCode} · {printing.collectorNumber}
           </p>
         </button>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
-/** Ajout d'une carte par recherche sur la base locale. */
+/**
+ * Ajout d'une carte par recherche sur la base locale.
+ *
+ * **Ce qu'on tape interroge le catalogue anglais**, qui est le seul que nous
+ * ingérons : la saisie part telle quelle vers `/api/cards/search`. Le résultat
+ * s'*affiche* sous son nom imprimé, mais c'est bien `card.name` — anglais — qui
+ * entre dans la liste et qui sera renvoyé au serveur à l'enregistrement.
+ */
 function AddCard({ onAdd }: { onAdd: (card: CardMeta, zone: DeckZone) => void }): React.ReactElement {
   const [query, setQuery] = useState('');
   const [zone, setZone] = useState<DeckZone>('MAIN');
   const [results, setResults] = useState<CardMeta[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  useLocalizationTick();
+  const t = useT();
+  const language = useLanguage();
 
   useEffect(() => {
     if (query.trim().length < 2) {
@@ -495,19 +564,21 @@ function AddCard({ onAdd }: { onAdd: (card: CardMeta, zone: DeckZone) => void })
 
   return (
     <section className="rounded border border-[color:var(--site-floor-rule)] bg-[color:var(--site-floor)]/60 p-4">
-      <h3 className="sign-sm mb-2.5 text-[0.68rem] text-[color:var(--site-stamp-pale)]">Ajouter une carte</h3>
+      <h3 className="sign-sm mb-2.5 text-[0.68rem] text-[color:var(--site-stamp-pale)]">
+        {t('deck.addCard')}
+      </h3>
       <div className="flex gap-2">
         <input
           ref={inputRef}
-          aria-label="Chercher une carte"
+          aria-label={t('deck.searchCard')}
           className="dark-field flex-1 rounded px-3 py-2 text-[0.85rem]"
           data-testid="deck-editor-search"
-          placeholder="Nom de la carte…"
+          placeholder={t('deck.cardNamePlaceholder')}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
         <select
-          aria-label="Zone d'ajout"
+          aria-label={t('deck.addZone')}
           className="dark-field dark-select rounded py-2 pl-2.5 text-[0.75rem]"
           value={zone}
           onChange={(event) => setZone(event.target.value as DeckZone)}
@@ -522,7 +593,13 @@ function AddCard({ onAdd }: { onAdd: (card: CardMeta, zone: DeckZone) => void })
 
       {results.length > 0 && (
         <ul className="scrollbar-thin mt-2 max-h-48 space-y-1 overflow-y-auto">
-          {results.map((card) => (
+          {results.map((card) => {
+            const localized = localizedCard(card.scryfallId, language);
+            const src =
+              resolveCardImage({ card, localized, language, version: 'small' }).url ??
+              scryfallImage(card.scryfallId, 'small');
+            const shownName = localizedCardName(localized, card.name) ?? card.name;
+            return (
             <li key={card.scryfallId}>
               <button
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[color:var(--site-floor-lift)]"
@@ -538,13 +615,14 @@ function AddCard({ onAdd }: { onAdd: (card: CardMeta, zone: DeckZone) => void })
                   alt=""
                   className="h-8 w-6 shrink-0 rounded-sm object-cover"
                   loading="lazy"
-                  src={scryfallImage(card.scryfallId, 'small')}
+                  src={src}
                 />
-                <span className="min-w-0 flex-1 truncate text-[0.88rem]">{card.name}</span>
+                <span className="min-w-0 flex-1 truncate text-[0.88rem]">{shownName}</span>
                 <span className="typed shrink-0 text-[0.7rem] uppercase text-[color:var(--site-floor-dim)]">{card.setCode}</span>
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>

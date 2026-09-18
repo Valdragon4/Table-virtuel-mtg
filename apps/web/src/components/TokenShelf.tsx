@@ -9,6 +9,9 @@
 import { useEffect, useState } from 'react';
 import { useGame } from '../store/game.js';
 import { scryfallImage } from '../lib/cards.js';
+import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
+import { resolveCardImage } from '../lib/i18n/index.js';
+import { useLanguage } from '../store/prefs.js';
 import { findDropTarget } from '../lib/drag.js';
 import { loadShelf, saveShelf, type ShelfToken } from '../lib/shelf.js';
 
@@ -36,6 +39,13 @@ export function TokenShelf({ onSearch }: { onSearch: () => void }): React.ReactE
   const viewScale = useGame((s) => s.viewScale);
   const [items, setItems] = useState<ShelfToken[] | null>(null);
   const [open, setOpen] = useState(true);
+  /*
+   * L'étagère ne garde qu'un identifiant et le nom du catalogue — c'est lui qui
+   * distingue deux impressions dans le stockage, et il n'a pas à bouger avec la
+   * langue. Seuls la vignette et l'infobulle passent au français.
+   */
+  useLocalizationTick();
+  const language = useLanguage();
 
   useEffect(() => {
     let alive = true;
@@ -126,6 +136,7 @@ export function TokenShelf({ onSearch }: { onSearch: () => void }): React.ReactE
         <button
           className="rounded-md bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-white px-2 py-0.5 text-xs font-bold border border-slate-700 transition-colors"
           onClick={onSearch}
+          data-test="token-search"
           title="Chercher un jeton (+)"
         >
           +
@@ -139,7 +150,17 @@ export function TokenShelf({ onSearch }: { onSearch: () => void }): React.ReactE
               Vide. Clic droit sur un jeton en jeu pour l'y ranger.
             </p>
           )}
-          {items.map((token, index) => (
+          {items.map((token, index) => {
+            const localized = localizedCard(token.scryfallId, language);
+            const src =
+              resolveCardImage({
+                card: { scryfallId: token.scryfallId },
+                localized,
+                language,
+                version: 'normal',
+              }).url ?? scryfallImage(token.scryfallId, 'normal');
+            const shownName = localizedCardName(localized, token.name) ?? token.name;
+            return (
             <div key={token.scryfallId} className="group relative">
               <button
                 className="block w-full overflow-hidden rounded-lg ring-1 ring-white/10 hover:ring-2 hover:ring-sky-400 shadow-md transition-all active:scale-95"
@@ -150,15 +171,16 @@ export function TokenShelf({ onSearch }: { onSearch: () => void }): React.ReactE
                 onPointerEnter={() => hoverPreview(token.scryfallId)}
                 onPointerLeave={() => hoverPreview(null)}
                 onPointerDown={(event) => onItemPointerDown(token, event)}
-                title={`${token.name} — cliquer pour en créer un, glisser pour le placer`}
+                title={`${shownName} — cliquer pour en créer un, glisser pour le placer`}
                 type="button"
               >
                 <img
-                  alt={token.name}
+                  alt={shownName}
                   className="block w-full object-cover"
                   draggable={false}
-                  /* Image du CDN Scryfall, comme partout : jamais via notre serveur. */
-                  src={scryfallImage(token.scryfallId, 'normal')}
+                  /* URL Scryfall, comme partout : jamais via notre serveur, et
+                     rien n'est préchargé ni mis en cache ici. */
+                  src={src}
                 />
               </button>
               <button
@@ -194,7 +216,8 @@ export function TokenShelf({ onSearch }: { onSearch: () => void }): React.ReactE
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

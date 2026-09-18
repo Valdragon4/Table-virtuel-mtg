@@ -23,8 +23,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGame } from '../store/game.js';
+import { useT } from '../lib/i18n/index.js';
 
 export function LeaveTable(): React.ReactElement {
+  const t = useT();
   const navigate = useNavigate();
   const send = useGame((s) => s.send);
   const mySeat = useGame((s) => s.mySeat);
@@ -50,8 +52,8 @@ export function LeaveTable(): React.ReactElement {
 
   function leaveForGood(): void {
     const warning = playing
-      ? 'Quitter la partie ? Cela vaut concession : votre jeu quitte le terrain et la partie continue sans vous.'
-      : 'Quitter la table ? Votre place et votre deck y sont libérés.';
+      ? t('table.leaveWhilePlayingConfirm')
+      : t('table.leaveConfirm');
     if (!window.confirm(warning)) return;
     // `force` est le consentement : sans lui, le serveur refuse tant que la
     // partie tourne. On ne le pose qu'après cette confirmation.
@@ -77,7 +79,7 @@ export function LeaveTable(): React.ReactElement {
   }
 
   function closeRoom(): void {
-    if (!window.confirm('Clore la table pour tout le monde ? La partie s’arrête pour tous les joueurs.')) {
+    if (!window.confirm(t('table.closeConfirm'))) {
       return;
     }
     send({ type: 'CLOSE_ROOM' });
@@ -91,17 +93,17 @@ export function LeaveTable(): React.ReactElement {
           className="px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-200 hover:bg-slate-800 hover:text-white transition-colors"
           data-test="leave-now"
           onClick={goHome}
-          title="Revenir à l’accueil. Votre siège reste tenu : main, bibliothèque et terrain vous attendent."
+          title={t('table.leaveNowHint')}
           type="button"
         >
-          Quitter
+          {t('table.leaveNow')}
         </button>
         <button
-          aria-label="Autres façons de quitter"
+          aria-label={t('table.leaveMore')}
           className="border-l border-slate-700 px-2 py-1.5 text-xs sm:text-sm text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
           data-test="leave-more"
           onClick={() => setOpen((value) => !value)}
-          title="Quitter pour de bon, ou clore la table"
+          title={t('table.leaveMoreHint')}
           type="button"
         >
           ▾
@@ -121,17 +123,17 @@ export function LeaveTable(): React.ReactElement {
               danger
               detail={
                 playing
-                  ? 'Vaut concession : votre jeu quitte le terrain.'
-                  : 'Votre place et votre deck sont libérés.'
+                  ? t('table.leaveForGoodPlayingDetail')
+                  : t('table.leaveForGoodDetail')
               }
-              label="Quitter la table pour de bon"
+              label={t('table.leaveForGood')}
               onClick={leaveForGood}
             />
             {isHost && (
               <Entry
                 danger
-                detail="La partie s’arrête pour tous les joueurs."
-                label="Clore la table"
+                detail={t('table.closeDetail')}
+                label={t('table.close')}
                 onClick={closeRoom}
               />
             )}
