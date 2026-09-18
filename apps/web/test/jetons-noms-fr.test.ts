@@ -59,7 +59,7 @@ describe('le glossaire des jetons', () => {
   it('ne confond pas deux types anglais distincts', () => {
     // « Serpent » et « Snake » sont deux types différents, et le français aussi.
     expect(tokenName('Snake', 'fr')).toBe('Serpent');
-    expect(tokenName('Serpent', 'fr')).toBe('Serpent de mer');
+    expect(tokenName('Serpent', 'fr')).toBe('Grand serpent');
   });
 
   it("n'écrit que des noms : aucune entrée ne ressemble à un texte de règles", () => {

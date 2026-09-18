@@ -5,16 +5,30 @@
  * Scryfall ne publie **aucun** jeton dans une autre langue que l'anglais :
  * `t:token lang:fr include:extras` rend zéro résultat, et nos 3 119 impressions
  * de jetons au catalogue n'ont pas une seule ligne localisée. Il n'y a donc
- * aucun `printed_name` à aller chercher — la mécanique d'impression localisée
- * (`docs/i18n.md` §3) ne peut rien pour eux. Ce qui suit est **notre**
- * traduction, la seule qui existera.
+ * aucun `printed_name` de jeton à aller chercher — la mécanique d'impression
+ * localisée (`docs/i18n.md` §3) ne peut rien pour eux.
  *
- * Elle n'est pas libre pour autant. Un joueur français lit « créature-jeton
- * Soldat blanche 1/1 » sur ses vraies cartes : l'immense majorité des noms de
- * jetons sont des **types de créature**, que Wizards traduit officiellement
- * depuis toujours. On emploie donc le terme français **du jeu**, jamais une
- * traduction de dictionnaire. Et dans le doute, **on laisse l'anglais** : un nom
- * inventé est pire qu'un nom anglais, parce qu'il a l'air juste.
+ * **Mais il y a une source de vérité, et ce n'est pas nous.** L'immense
+ * majorité des noms de jetons sont des **types de créature**, et ceux-là
+ * s'impriment sur la ligne de type de n'importe quelle carte française. C'est
+ * `printed_type_line` qu'on lit, sur une carte ordinaire, pas sur le jeton :
+ *
+ *     https://api.scryfall.com/cards/search
+ *       ?q=t%3Agorgon+lang%3Afr&include_multilingual=true
+ *
+ * On aligne alors les sous-types anglais de `type_line` (« Creature — Gorgon
+ * Warrior ») sur les sous-types français de `printed_type_line` (« Créature :
+ * gorgonoïde et guerrier »), position par position, et le terme officiel tombe
+ * tout seul. C'est ainsi qu'on a su que Rogue s'imprime « gredin » et non
+ * « roublard », Shapeshifter « changeforme » et non « métamorphe ».
+ *
+ * Le glossaire porte donc une majuscule là où la ligne de type imprime une
+ * minuscule : la ligne de type écrit « gorgonoïde » en cours de phrase, un nom
+ * de jeton s'affiche seul. Le **mot** est celui de la carte ; seule la casse
+ * est à nous.
+ *
+ * Et dans le doute, **on laisse l'anglais** : un nom inventé est pire qu'un nom
+ * anglais, parce qu'il a l'air juste.
  *
  * **Ce n'est pas un catalogue d'interface.** `catalog.fr.ts` porte des libellés
  * d'écran, avec pluriels, interpolation et vérification à la compilation ; ici
@@ -44,8 +58,9 @@ import type { Language } from '@mtg/shared';
  *  - quelques **noms entiers** qui n'en sont pas la somme (« The Monarch »,
  *    « City's Blessing »).
  *
- * Ce qui n'y est **pas** y manque exprès. Les cas écartés faute de certitude sur
- * le terme officiel sont consignés dans `TERMES_LAISSES_EN_ANGLAIS`.
+ * Ce qui n'y est **pas** y manque exprès : les cas écartés sont consignés dans
+ * `TERMES_LAISSES_EN_ANGLAIS`, qui dit pour chacun ce qui a manqué. Ce qui y
+ * est sans avoir pu être relevé est listé dans `NON_VERIFIES`.
  */
 export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   // --- Les jetons non-créature, ceux qu'on nomme à voix haute à chaque partie.
@@ -67,6 +82,7 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   // --- Les types de créature. Terme français officiel du jeu, pas du dictionnaire.
   Ally: 'Allié',
   Angel: 'Ange',
+  Ape: 'Grand singe',
   Archer: 'Archer',
   Army: 'Armée',
   Assassin: 'Assassin',
@@ -82,7 +98,7 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Cat: 'Chat',
   Centaur: 'Centaure',
   Citizen: 'Citoyen',
-  Cleric: 'Prêtre',
+  Cleric: 'Clerc',
   Construct: 'Construction',
   Crab: 'Crabe',
   Crocodile: 'Crocodile',
@@ -104,13 +120,13 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Elephant: 'Éléphant',
   Elf: 'Elfe',
   Elk: 'Élan',
-  Faerie: 'Fée',
+  Faerie: 'Peuple fée',
   Ferret: 'Furet',
   Fish: 'Poisson',
   Fox: 'Renard',
   Fractal: 'Fractale',
   Frog: 'Grenouille',
-  Fungus: 'Champignon',
+  Fungus: 'Fongus',
   Gargoyle: 'Gargouille',
   Germ: 'Germe',
   Giant: 'Géant',
@@ -119,10 +135,11 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Goblin: 'Gobelin',
   God: 'Dieu',
   Golem: 'Golem',
-  Gorgon: 'Gorgone',
+  Gorgon: 'Gorgonoïde',
   Gremlin: 'Gremlin',
   Griffin: 'Griffon',
   Harpy: 'Harpie',
+  Hellion: 'Monstruosité',
   Hero: 'Héros',
   Hippo: 'Hippopotame',
   Homunculus: 'Homoncule',
@@ -136,10 +153,10 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Incarnation: 'Incarnation',
   Insect: 'Insecte',
   Jellyfish: 'Méduse',
-  Juggernaut: 'Juggernaut',
-  Kavu: 'Kavu',
+  Juggernaut: 'Djaggernaut',
+  Kavu: 'Kavru',
   Kirin: 'Kirin',
-  Kithkin: 'Kithkin',
+  Kithkin: 'Sangami',
   Knight: 'Chevalier',
   Kobold: 'Kobold',
   Kor: 'Kor',
@@ -151,9 +168,10 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Manticore: 'Manticore',
   Mercenary: 'Mercenaire',
   Merfolk: 'Ondin',
-  Minion: 'Sbire',
+  Minion: 'Mignon',
   Minotaur: 'Minotaure',
   Mole: 'Taupe',
+  Monkey: 'Singe',
   Monk: 'Moine',
   Mutant: 'Mutant',
   Myr: 'Myr',
@@ -165,10 +183,11 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Ogre: 'Ogre',
   Ooze: 'Limon',
   Orc: 'Orque',
-  Ouphe: 'Ouphe',
-  Ox: 'Bœuf',
+  Ouphe: 'Orphe',
+  Ox: 'Bovidé',
   Peasant: 'Paysan',
   Pegasus: 'Pégase',
+  Pest: 'Parasite',
   Phoenix: 'Phénix',
   // Le type reste « Phyrexian » en français : Wizards ne l'a pas francisé.
   Phyrexian: 'Phyrexian',
@@ -176,13 +195,13 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Pirate: 'Pirate',
   Plant: 'Plante',
   Rabbit: 'Lapin',
-  Raccoon: 'Raton laveur',
+  Raccoon: 'Raton-laveur',
   Rat: 'Rat',
   Rebel: 'Rebelle',
   Reflection: 'Reflet',
   Rhino: 'Rhinocéros',
   Robot: 'Robot',
-  Rogue: 'Roublard',
+  Rogue: 'Gredin',
   Salamander: 'Salamandre',
   Samurai: 'Samouraï',
   Saproling: 'Saprobionte',
@@ -193,12 +212,12 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Serf: 'Serf',
   // « Serpent » et « Snake » sont deux types distincts en anglais, et le
   // français les sépare aussi : ne pas les confondre en les relisant.
-  Serpent: 'Serpent de mer',
+  Serpent: 'Grand serpent',
   Snake: 'Serpent',
   Servo: 'Servo',
   Shade: 'Ombre',
-  Shaman: 'Chaman',
-  Shapeshifter: 'Métamorphe',
+  Shaman: 'Shamane',
+  Shapeshifter: 'Changeforme',
   Shark: 'Requin',
   Sheep: 'Mouton',
   Skeleton: 'Squelette',
@@ -210,17 +229,17 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Sphinx: 'Sphinx',
   Spider: 'Araignée',
   Spirit: 'Esprit',
-  Squid: 'Calmar',
+  Squid: 'Calamar',
   Squirrel: 'Écureuil',
   Starfish: 'Étoile de mer',
   Survivor: 'Survivant',
   Tentacle: 'Tentacule',
-  Thopter: 'Thopter',
-  Thrull: 'Thrull',
+  Thopter: 'Mécanoptère',
+  Thrull: 'Srâne',
   Tiger: 'Tigre',
   Treefolk: 'Sylvin',
   Troll: 'Troll',
-  Turtle: 'Tortue',
+  Turtle: 'Tortue terrestre',
   Unicorn: 'Licorne',
   Vampire: 'Vampire',
   Vedalken: 'Vedalken',
@@ -249,22 +268,56 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
  * `Spawn` coûterait la confiance dans les deux cents autres.
  */
 export const TERMES_LAISSES_EN_ANGLAIS: Readonly<Record<string, string>> = {
-  Spawn: "type des « Eldrazi Spawn » : terme officiel non vérifié, et « engeance » n'est qu'une supposition",
-  Scion: 'même cas que Spawn, pour les « Eldrazi Scion »',
-  Inkling: 'jeton de Strixhaven : aucun terme français vérifié',
-  Pest: 'jeton de Strixhaven : « vermine » est plausible, pas certain',
-  Hellion: 'terme officiel non vérifié',
-  Manifest: 'mot de mécanique autant que de jeton ; le traduire ici risquerait de contredire le texte de règles',
-  Morph: 'même cas que Manifest',
-  Lander: "jeton récent ; aucun terme français vérifié",
-  Map: '« Carte » se confondrait avec le mot qui désigne toute carte de Magic',
-  Junk: 'terme officiel non vérifié',
-  Ape: '« Ape » et « Monkey » sont deux types distincts que le français ne sépare pas de façon vérifiée',
-  Monkey: 'voir Ape',
-  Wraith: '« Wraith » et « Specter » risqueraient de tomber tous deux sur « Spectre »',
-  Walker: 'jeton de Un-set ; rien à traduire avec certitude',
+  Spawn:
+    'type des « Eldrazi Spawn » : `t:spawn lang:fr` ne rend aucune impression, il n’y a donc aucune ligne de type française à lire — et « engeance » n’est qu’une supposition',
+  Scion: 'même cas que Spawn, pour les « Eldrazi Scion » : aucune impression française',
+  Inkling: 'jeton de Strixhaven : aucune impression française, donc aucune ligne de type à relever',
+  Manifest:
+    'n’existe qu’en jeton, et Scryfall ne publie aucun jeton français : rien à lire ici. La **mécanique** est traduite (« Manifester », `keywordNames.ts`), mais un nom de jeton n’est pas un nom de mécanique et on ne déduit pas l’un de l’autre',
+  Morph: 'même cas que Manifest ; la mécanique s’imprime « Mue », le jeton n’a pas de nom français publié',
+  Lander: 'jeton récent : aucune impression française',
+  Map: 'jeton : aucune impression française, et « Carte » se confondrait avec le mot qui désigne toute carte de Magic',
+  Junk: 'jeton : aucune impression française',
+  Wraith: 'aucune ligne de type française relevée ; et « Wraith » et « Specter » risqueraient de tomber tous deux sur « Spectre »',
+  Walker: 'jeton de Un-set ; aucune impression française',
   'Marit Lage': 'nom propre : il ne se traduit pas',
 };
+
+/**
+ * Les entrées que la méthode ci-dessus **n'a pas pu atteindre**, et qu'on a
+ * pourtant laissées traduites.
+ *
+ * Elles étaient déjà là ; le relevé des lignes de type françaises ne les
+ * couvre pas — soit le type n'a aucune impression française (`Army`, `Germ`,
+ * `Naga`, `Serf`, `Servo`, `Tentacle`, `Tiger`), soit ce ne sont pas des
+ * sous-types du tout et ils ne vivent que dans un rappel de règles
+ * (`Blood`, `Gold`, `Powerstone`, `Incubator`, `Copy`, `Emblem`,
+ * `Energy Reserve`, `The Monarch`, `City's Blessing`).
+ *
+ * On ne les supprime pas — rien ne les contredit — mais elles ne portent pas
+ * la même garantie que le reste du glossaire. Qui en vérifiera une pourra la
+ * retirer d'ici.
+ */
+export const NON_VERIFIES: readonly string[] = [
+  'Army',
+  'Germ',
+  'Naga',
+  'Serf',
+  'Servo',
+  'Tentacle',
+  'Tiger',
+  'Hero',
+  'Ferret',
+  'Blood',
+  'Gold',
+  'Powerstone',
+  'Incubator',
+  'Copy',
+  'Emblem',
+  'Energy Reserve',
+  'The Monarch',
+  "City's Blessing",
+];
 
 /**
  * Le séparateur des types composés.
@@ -319,6 +372,34 @@ export function tokenName(name: string | null | undefined, language: Language): 
     traduits.push(fr);
   }
   return traduits.join(ET);
+}
+
+/**
+ * Le terme français d'un type, interrogé par son **nom anglais**.
+ *
+ * `tokenName` répond à la question « comment s'appelle ce jeton » ; celle-ci
+ * répond à « comment s'écrit ce type », et c'est ce dont a besoin tout ce qui
+ * manipule un sous-type sans jeton en vue — le dialogue des marqueurs calculés
+ * de `CardSprite`, qui doit écrire « Gredins sur le champ de bataille » à partir
+ * du canon anglais `rogue`. Sans cette porte, ce code-là s'écrivait son propre
+ * lexique français, et la table finissait avec deux mots pour le même type.
+ *
+ * Elle rend **le mot seul**, jamais une composition : un appelant qui a déjà
+ * découpé ses types n'a que faire du « et », et `tokenName` reste la fonction de
+ * ceux qui partent d'un nom entier.
+ *
+ * `fold` est passée en argument pour la raison déjà donnée à
+ * `tokenQueryAliases` : la normalisation vit chez l'appelant, et ce fichier
+ * n'en écrit pas une seconde. La conséquence est qu'un appelant qui changerait
+ * de `fold` en cours de route lirait l'index du premier — il n'en existe qu'un,
+ * construit à la première question, et deux `fold` différentes sur ce module
+ * seraient de toute façon une erreur.
+ */
+let parType: Map<string, string> | null = null;
+
+export function typeTermFr(type: string, fold: (text: string) => string): string | null {
+  parType ??= new Map(Object.entries(TOKEN_NAMES_FR).map(([en, fr]) => [fold(en), fr]));
+  return parType.get(fold(type)) ?? null;
 }
 
 /**

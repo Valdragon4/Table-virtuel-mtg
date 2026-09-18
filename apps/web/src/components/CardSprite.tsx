@@ -31,7 +31,9 @@ import {
   keywordName,
   resolveCardImage,
   tokenName,
+  typeTermFr,
   COMMON_KEYWORDS,
+  TOKEN_NAMES_FR,
   type CardLanguageMark,
 } from '../lib/i18n/index.js';
 import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
@@ -406,8 +408,17 @@ function foldSubtype(raw: string): string {
  *
  * Le critère de la liste : les tribus qu'on joue réellement, celles qui ont des
  * seigneurs. Elle s'allonge sans rien casser.
+ *
+ * **Ce lexique-ci ne sert plus qu'à la saisie.** L'affichage, lui, demande son
+ * mot au glossaire de `tokenNames.ts` (voir `subtypeLabel`) : c'est là que
+ * vivent les termes officiels, relevés sur des lignes de type françaises. Ce
+ * qui reste ici, ce sont les **synonymes d'entrée** — les mots que les joueurs
+ * tapent, qu'ils soient officiels ou non. « Roublard » n'est pas le terme
+ * imprimé de *Rogue*, mais quelqu'un qui joue depuis dix ans le tape, et il doit
+ * trouver. On n'en retire donc aucun ; les termes officiels viennent **en plus**
+ * (`SUBTYPE_OFFICIELS`), dérivés du glossaire.
  */
-const SUBTYPE_ALIASES: Readonly<Record<string, string>> = {
+const SUBTYPE_SYNONYMES: Readonly<Record<string, string>> = {
   // Les tribus les plus jouées
   humain: 'human', gobelin: 'goblin', elfe: 'elf', ondin: 'merfolk', zombi: 'zombie',
   vampire: 'vampire', dragon: 'dragon', ange: 'angel', demon: 'demon', diable: 'devil',
@@ -420,7 +431,7 @@ const SUBTYPE_ALIASES: Readonly<Record<string, string>> = {
   artificier: 'artificer', pilote: 'pilot', samourai: 'samurai', ninja: 'ninja', pirate: 'pirate',
   // Les peuples et les monstres
   geant: 'giant', nain: 'dwarf', orque: 'orc', ogre: 'ogre', troll: 'troll', kobold: 'kobold',
-  minotaure: 'minotaur', gorgone: 'gorgon', meduse: 'gorgon', fee: 'faerie',
+  minotaure: 'minotaur', gorgone: 'gorgon', fee: 'faerie',
   sylvin: 'treefolk', squelette: 'skeleton', spectre: 'specter', ombre: 'shade',
   horreur: 'horror', cauchemar: 'nightmare', mutant: 'mutant', avatar: 'avatar', dieu: 'god',
   illusion: 'illusion', incarnation: 'incarnation', sbire: 'minion', serviteur: 'minion',
@@ -438,9 +449,75 @@ const SUBTYPE_ALIASES: Readonly<Record<string, string>> = {
   nourriture: 'food', aura: 'aura', saga: 'saga', fortification: 'fortification',
 };
 
-/** Le chemin retour, pour réécrire un `kind` en français dans l'infobulle. */
+/**
+ * Les termes **officiels** comme mots d'entrée, dérivés du glossaire.
+ *
+ * Le glossaire de `tokenNames.ts` dit « Gredin », « Shamane », « Gorgonoïde » ;
+ * si l'on ne dérivait pas, l'interface afficherait ces mots-là sans savoir les
+ * relire quand on les tape. Les dériver plutôt que les recopier garantit que les
+ * deux listes ne peuvent pas diverger : ajouter une traduction au glossaire
+ * ajoute son mot d'entrée, sans y penser.
+ *
+ * **Deux filtres, et ils sont volontaires :**
+ *
+ *  - les noms anglais **en plusieurs mots** sont écartés (« The Monarch »,
+ *    « City's Blessing », « Energy Reserve ») : ce ne sont pas des sous-types,
+ *    et rien dans une ligne de type ne les portera jamais ;
+ *  - les clés françaises de **moins de trois lettres** aussi. Elles ne viennent
+ *    que de deux entrées — « Or » (*Gold*) et « Œuf » (*Egg*), dont le `Œ` ne se
+ *    décompose pas et qui se replie en `uf` —, et un alias de deux lettres
+ *    attraperait plus de saisies qu'il n'en servirait.
+ *
+ * Les noms composés, eux, restent : « peuple fée » et « grand serpent » se
+ * replient en `peuple-fee` et `grand-serpent`, et c'est exactement ce que
+ * `foldSubtype` fait de la saisie.
+ */
+const SUBTYPE_OFFICIELS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(TOKEN_NAMES_FR)
+    .filter(([en]) => !en.includes(' '))
+    .map(([en, fr]) => [foldSubtype(fr), foldSubtype(en)] as const)
+    .filter(([fr]) => fr.length >= 3),
+);
+
+/**
+ * Le lexique de saisie complet : l'officiel, puis les synonymes **par-dessus**.
+ *
+ * L'ordre de fusion tranche les rares collisions en faveur de la liste écrite à
+ * la main, parce qu'elle est le fruit d'un choix et la dérivée celui d'une
+ * règle. Encore faut-il que le choix tienne devant le terme imprimé.
+ *
+ * Il n'y avait qu'une collision, et elle s'est tranchée dans l'autre sens :
+ * « méduse » désignait ici la *Gorgon*, par analogie mythologique, alors que
+ * c'est le terme **imprimé** du *Jellyfish*. Le synonyme a donc été retiré :
+ * qui tape « méduse » pense à l'animal, et lui rendre une *Gorgon* serait
+ * d'autant plus déroutant que le libellé affiché dirait « Gorgonoïde ». La
+ * *Gorgon* ne perd rien : « gorgone » la trouve toujours, et la dérivée vient
+ * d'ajouter « gorgonoïde ».
+ */
+const SUBTYPE_ALIASES: Readonly<Record<string, string>> = {
+  ...SUBTYPE_OFFICIELS,
+  ...SUBTYPE_SYNONYMES,
+};
+
+/**
+ * Les canons que le lexique **reconnaît** — côté anglais, cette fois.
+ *
+ * Sert à savoir si un sous-type est su ou supposé : le dialogue en dépend pour
+ * classer une proposition de sous-type devant ou derrière un mot-clé.
+ */
+const SUBTYPE_CANONS: ReadonlySet<string> = new Set(Object.values(SUBTYPE_ALIASES));
+
+/**
+ * Le chemin retour de secours, pour les sous-types que le glossaire ignore.
+ *
+ * Il ne se construit **que** sur les synonymes écrits à la main : ceux-là sont
+ * repliés (sans accent, sans majuscule) et ne font un libellé présentable que
+ * faute de mieux. `equipment`, `vehicle`, `aura`, `saga` et `fortification` ne
+ * sont dans aucun glossaire de jetons — ce ne sont pas des types de créature —
+ * et c'est par ici qu'ils s'affichent.
+ */
 const SUBTYPE_FRENCH: ReadonlyMap<string, string> = new Map(
-  Object.entries(SUBTYPE_ALIASES).map(([fr, en]) => [en, fr]),
+  Object.entries(SUBTYPE_SYNONYMES).map(([fr, en]) => [en, fr]),
 );
 
 /** La forme canonique d'un sous-type, d'où qu'il vienne — saisie ou ligne de type. */
@@ -466,14 +543,51 @@ export function canonSubtype(raw: string): string {
  */
 export function isKnownSubtype(raw: string): boolean {
   const folded = foldSubtype(raw);
-  if (folded in SUBTYPE_ALIASES || SUBTYPE_FRENCH.has(folded)) return true;
+  if (folded in SUBTYPE_ALIASES || SUBTYPE_CANONS.has(folded)) return true;
   return isKnownKeyword(raw);
 }
 
-/** Comment l'écrire à l'écran : en français quand on le connaît, tel quel sinon. */
+/**
+ * Comment l'écrire à l'écran.
+ *
+ * **Une seule source pour le français des types : le glossaire.** Il porte les
+ * termes imprimés sur les cartes françaises, vérifiés ligne de type par ligne de
+ * type, et c'est ce que le joueur lit sur son jeton. Le compteur doit dire le
+ * même mot que le jeton — sans quoi la table affiche « Gredin » d'un côté et
+ * « Roublards » de l'autre pour la même créature.
+ *
+ * Repli, dans l'ordre : le glossaire, puis le lexique de saisie écrit à la main
+ * (les sous-types qui ne sont pas des types de créature y vivent seuls), puis le
+ * canon anglais tel quel — ce qui reste vrai et reconnaissable, ce qu'un mot
+ * inventé ne serait pas.
+ */
 export function subtypeLabel(canon: string): string {
-  const word = SUBTYPE_FRENCH.get(canon) ?? canon;
+  const word = typeTermFr(canon, foldSubtype) ?? SUBTYPE_FRENCH.get(canon) ?? canon;
   return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+/**
+ * Le même libellé, au pluriel, pour « {X}s sur le champ de bataille ».
+ *
+ * Deux cas refusent le `s`, et ce sont des refus **choisis** :
+ *
+ *  - les termes **composés**, espace ou trait d'union. Le pluriel de « Peuple
+ *    fée », de « Loup-garou » ou de « Tortue
+ *    terrestre » accorde les deux mots, pas le dernier : « Peuple fées » et
+ *    « Grand serpents » sont fautifs. Accorder correctement demanderait de
+ *    savoir, pour chaque terme, lequel de ses mots est le nom et lequel est
+ *    l'épithète — une grammaire entière pour une douzaine d'entrées. On laisse
+ *    donc le terme au singulier : « Peuple fée sur le champ de bataille » se lit
+ *    comme un intitulé de décompte, et ne ment sur rien ;
+ *  - les termes déjà terminés par `s`, `x` ou `z`, qui sont invariables en
+ *    français. Sans quoi « Fongus » devenait « Fonguss » et « Phénix »
+ *    « Phénixs ».
+ */
+export function subtypeLabelPlural(canon: string): string {
+  const label = subtypeLabel(canon);
+  if (label.includes(' ') || label.includes('-')) return label;
+  if (/[sxz]$/.test(label)) return label;
+  return `${label}s`;
 }
 
 /**
@@ -638,7 +752,7 @@ export function subtypeOptions(
     return [
       ...COMMON_SUBTYPES.map((canon) => ({
         value: `bat:${canon}`,
-        label: `${subtypeLabel(canon)}s sur le champ de bataille`,
+        label: `${subtypeLabelPlural(canon)} sur le champ de bataille`,
         group: 'Sous-types courants',
         keywords: `${canon} sous-type tribu`,
       })),
@@ -654,7 +768,7 @@ export function subtypeOptions(
   if (canon === '') return [];
   const options = SUBTYPE_SOURCES.map((source) => ({
     value: `${source.code}${canon}`,
-    label: `${subtypeLabel(canon)}s ${source.label}`,
+    label: `${subtypeLabelPlural(canon)} ${source.label}`,
     group: `Sous-type « ${subtypeLabel(canon)} »`,
     keywords: `${canon} ${brut}`,
   }));
@@ -682,7 +796,7 @@ export function subtypeOptions(
     : [];
   // `canonSubtype` a déjà ramené le français sur l'anglais : la seule question
   // qui reste est de savoir si le lexique connaît ce canon-là.
-  const sousTypeSur = SUBTYPE_FRENCH.has(canon);
+  const sousTypeSur = SUBTYPE_CANONS.has(canon);
   const tous = motsCles.length > 0 && !sousTypeSur ? [...motsCles, ...options] : [...options, ...motsCles];
   return tous.filter((option) => option.value.length <= MAX_SOURCE_LENGTH);
 }
@@ -1032,7 +1146,7 @@ export function describeComputed(spec: ComputedSpec): string {
         ? `cartes avec ${keywordLabel(resolved.keyword, 'fr')} ${resolved.source.label}`
         : resolved.subtype === null
           ? resolved.source.label
-          : `${subtypeLabel(resolved.subtype)}s ${resolved.source.label}`;
+          : `${subtypeLabelPlural(resolved.subtype)} ${resolved.source.label}`;
   } else if (spec.source.startsWith('self:')) {
     const stat = spec.source.slice(5);
     what =

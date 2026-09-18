@@ -253,6 +253,17 @@ export const en = defineTranslation({
   'deck.syncedOn': 'synced on {date}',
   'deck.look': 'Appearance',
   'deck.resync': 'Resync',
+  'deck.pinnedPrintings': {
+    one: 'Hand-picked printing',
+    other: 'Hand-picked printings',
+  },
+  'deck.pinnedRelease': 'Give back to the source',
+  'deck.pinnedReleaseHint':
+    'The next resync will restore the printings the source lists. The deck contents do not change.',
+  'deck.pinnedKept': {
+    one: '{count} hand-picked printing was kept.',
+    other: '{count} hand-picked printings were kept.',
+  },
 
   // — Éditeur de deck ————————————————————————————————————————
   'deck.unreadable': 'Unreadable deck.',

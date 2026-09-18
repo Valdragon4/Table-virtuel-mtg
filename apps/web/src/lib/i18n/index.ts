@@ -42,6 +42,7 @@ export {
   isTokenTypeLine,
   tokenName,
   tokenQueryAliases,
+  typeTermFr,
   TOKEN_NAMES_FR,
   TERMES_LAISSES_EN_ANGLAIS,
 } from './tokenNames.js';

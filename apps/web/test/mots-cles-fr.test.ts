@@ -50,7 +50,7 @@ describe('la traduction des mots-clés', () => {
   it('rend l’anglais tel quel pour un mot-clé absent du glossaire', () => {
     // Un mot-clé d'une extension plus récente que ce fichier : il s'affiche, il
     // ne disparaît pas.
-    expect(keywordName('Ward', 'fr')).toBe('Ward');
+    expect(keywordName('Banding', 'fr')).toBe('Banding');
     expect(keywordName('Squelchproof', 'fr')).toBe('Squelchproof');
   });
 
@@ -110,7 +110,7 @@ describe('le nom anglais reste la clé', () => {
   });
 
   it('ne double pas le terme quand il n’y a rien à traduire', () => {
-    expect(keywordSearchTerms(['Ward'], 'fr')).toEqual(['Ward']);
+    expect(keywordSearchTerms(['Banding'], 'fr')).toEqual(['Banding']);
     expect(keywordSearchTerms(['Flying'], 'en')).toEqual(['Flying']);
   });
 
@@ -139,7 +139,7 @@ describe('les libellés et la liste courante', () => {
   });
 
   it('rend un canon inconnu lisible plutôt que brut', () => {
-    expect(keywordLabel('split-second', 'fr')).toBe('Split second');
+    expect(keywordLabel('quantum-leap', 'fr')).toBe('Quantum leap');
   });
 
   it('ne propose d’emblée que des mots-clés que le glossaire connaît', () => {

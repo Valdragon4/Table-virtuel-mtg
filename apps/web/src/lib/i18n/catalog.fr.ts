@@ -166,7 +166,7 @@ export const fr = {
   'home.noRulesTitle': 'Le logiciel ne dit jamais non',
   /* Même découpe qu'au chapeau : le nombre de cartes indexées est au milieu. */
   'home.noRulesBefore':
-    'Pas de pile, pas de priorité, pas de « vous ne pouvez pas faire ça ». Vous posez, vous tapez, vous déplacez ; la carte la plus tordue de',
+    'Pas de pile, pas de priorité, pas de « vous ne pouvez pas faire ça ». Vous posez, vous engagez, vous déplacez ; la carte la plus tordue de',
   'home.noRulesAfter':
     'cartes indexées se joue comme les autres, et vos formats maison aussi. Les désaccords se règlent comme à la vraie table : en parlant.',
   'home.stampNoRules': 'Aucun moteur de règles',
@@ -287,6 +287,25 @@ export const fr = {
   'deck.syncedOn': 'synchronisé le {date}',
   'deck.look': 'Apparence',
   'deck.resync': 'Resynchroniser',
+  /*
+   * Impressions épinglées : les illustrations choisies à la main en partie, que
+   * la resynchronisation conserve au lieu de les rendre à la source.
+   *
+   * Le mot « impression » est celui de Scryfall et du reste du code ; « choisie
+   * à la main » dit au joueur de quoi il s'agit sans qu'il ait à connaître le
+   * vocabulaire du catalogue.
+   */
+  'deck.pinnedPrintings': {
+    one: 'Illustration choisie à la main',
+    other: 'Illustrations choisies à la main',
+  },
+  'deck.pinnedRelease': 'Rendre à la source',
+  'deck.pinnedReleaseHint':
+    'La prochaine resynchronisation remettra les illustrations annoncées par la source. Le contenu du deck ne change pas.',
+  'deck.pinnedKept': {
+    one: '{count} illustration choisie à la main a été conservée.',
+    other: '{count} illustrations choisies à la main ont été conservées.',
+  },
 
   // — Éditeur de deck ————————————————————————————————————————
   'deck.unreadable': 'Deck illisible.',
@@ -360,7 +379,7 @@ export const fr = {
   'pregame.setAside': 'Mettre de côté →',
   'pregame.sideboardHeading': 'Réserve ({value})',
   'pregame.sideboardEmpty': 'Réserve vide.',
-  'pregame.backToDeck': '← Remettre au deck',
+  'pregame.backToDeck': '← Remettre dans la bibliothèque',
 
   // ═══ Lot 1 : les composants de la table de jeu ═══════════════════════════
   //
@@ -553,10 +572,10 @@ export const fr = {
   // — Menu de pile ———————————————————————————————————————————
   'zoneMenu.draw1': 'Piocher 1',
   'zoneMenu.drawHowMany': 'Piocher combien de cartes ?',
-  'zoneMenu.scry1': 'Scry 1',
-  'zoneMenu.scryHowMany': 'Scry combien ?',
-  'zoneMenu.surveil1': 'Surveil 1',
-  'zoneMenu.surveilHowMany': 'Surveil combien ?',
+  'zoneMenu.scry1': 'Regard 1',
+  'zoneMenu.scryHowMany': 'Regard combien ?',
+  'zoneMenu.surveil1': 'Surveiller 1',
+  'zoneMenu.surveilHowMany': 'Surveiller combien ?',
   'zoneMenu.peekTop': 'Regarder le dessus',
   'zoneMenu.peekHowMany': 'Regarder combien de cartes ?',
   'zoneMenu.mill1': 'Meuler 1',
@@ -565,7 +584,7 @@ export const fr = {
   'zoneMenu.exileHowMany': 'Exiler combien de cartes ?',
   'zoneMenu.exileTopFaceDown': 'Exiler le dessus, face cachée',
   'zoneMenu.exileFaceDownHowMany': 'Exiler combien de cartes, face cachée ?',
-  'zoneMenu.searchLibrary': 'Fouiller la bibliothèque',
+  'zoneMenu.searchLibrary': 'Chercher dans la bibliothèque',
   'zoneMenu.revealTopX': 'Révéler le dessus (X cartes)',
   'zoneMenu.revealHowMany': 'Révéler combien de cartes du dessus ?',
   'zoneMenu.revealTopOngoing': 'Révéler le dessus… (en cours)',
@@ -669,8 +688,8 @@ export const fr = {
   'shortcut.footerReopen': 'la rouvre à tout moment.',
 
   // — Consultation et fouille de bibliothèque ————————————————————
-  'consult.bucketTop': 'Dans le deck (dessus)',
-  'consult.bucketTopShort': 'Deck',
+  'consult.bucketTop': 'Dans la bibliothèque (dessus)',
+  'consult.bucketTopShort': 'Biblio.',
   'consult.bucketTopHint': 'Remet sur le dessus, dans l’ordre affiché',
   'consult.bucketHand': 'En main',
   'consult.bucketHandShort': 'Main',
@@ -684,12 +703,12 @@ export const fr = {
   'consult.bucketBottom': 'Au dessous (fond)',
   'consult.bucketBottomShort': 'Dessous',
   'consult.bucketBottomHint': 'Renvoie au fond de la bibliothèque',
-  'consult.bucketSideboardHint': 'Met de côté, hors du deck (avant de lancer la partie)',
+  'consult.bucketSideboardHint': 'Met de côté, hors de la bibliothèque (avant de lancer la partie)',
   'consult.sortName': 'Nom (A-Z)',
-  'consult.sortCost': 'Coût de mana (CMC)',
+  'consult.sortCost': 'Valeur de mana',
   'consult.sortType': 'Type',
   'consult.sortReceived': 'Ordre reçu',
-  'consult.titleSearch': 'Fouille de la bibliothèque',
+  'consult.titleSearch': 'Recherche dans la bibliothèque',
   'consult.titleReveal': {
     one: 'Révélation de la bibliothèque — {count} carte',
     other: 'Révélation de la bibliothèque — {count} cartes',
@@ -710,8 +729,8 @@ export const fr = {
   'consult.sortLabel': 'Trier :',
   'consult.allCount': 'Tout ({count})',
   'consult.selectedCount': '{count} sélectionnée(s) :',
-  'consult.backToDeck': 'Dans le deck',
-  'consult.backToDeckTitle': 'Remettre dans le deck',
+  'consult.backToDeck': 'Dans la bibliothèque',
+  'consult.backToDeckTitle': 'Remettre dans la bibliothèque',
   'consult.selectAll': 'Tout sélectionner ({count})',
   'consult.deselect': 'Désélectionner',
   'consult.noMatch': 'Aucune carte ne correspond à ces critères.',
@@ -727,10 +746,10 @@ export const fr = {
   'consult.sumExile': '{count} en exil',
   'consult.sumBottom': '{count} au fond',
   'consult.sumSideboard': '{count} en réserve',
-  'consult.sumDeck': '{count} dans le deck',
+  'consult.sumDeck': '{count} dans la bibliothèque',
   'consult.submitNoShuffle': 'Valider sans mélanger',
   'consult.submitShuffle': 'Valider et mélanger',
-  'consult.cancelAssignment': 'Annuler (laisser dans le deck)',
+  'consult.cancelAssignment': 'Annuler (laisser dans la bibliothèque)',
   'consult.cardTitleHint': '{name} — Double-clic : prendre en main. Clic droit : menu d’actions.',
   'consult.inspect': 'Inspecter la carte en grand',
   'consult.pickForBulk': 'Sélectionner pour action groupée',

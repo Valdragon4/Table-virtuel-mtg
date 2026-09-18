@@ -4,21 +4,34 @@
  * **Pourquoi il existe.** Scryfall publie pour chaque carte un tableau de noms
  * de mécaniques — `['Flying', 'Trample']`, `['Discover']`, `[]` pour un Anneau
  * solaire — et ce tableau est **toujours anglais**, quelle que soit la langue de
- * l'impression. Il n'existe donc aucun `printed_keyword` à aller chercher, pas
- * plus qu'il n'existe de `printed_name` pour un jeton : la mécanique d'impression
- * localisée (`docs/i18n.md` §3) ne peut rien pour eux. Ce qui suit est **notre**
- * traduction, la seule qui existera.
+ * l'impression. Il n'existe aucun `printed_keyword` à demander : la mécanique
+ * d'impression localisée (`docs/i18n.md` §3) ne rend pas les mots-clés. Ce
+ * tableau-ci est donc le seul endroit où le français existe.
  *
- * **Même discipline que `tokenNames.ts`, et pour la même raison.** Un joueur
- * français lit « Vol », « Piétinement », « Contact mortel » sur ses vraies
- * cartes : on emploie le terme français **du jeu**, jamais une traduction de
- * dictionnaire. Et dans le doute, **on laisse l'anglais** — un nom inventé est
- * pire qu'un nom anglais, parce qu'il a l'air juste. `MOTS_CLES_EN_ANGLAIS`
- * consigne les refus.
+ * **La source de vérité, et comment la ré-interroger.** Ce n'est plus notre
+ * mémoire : c'est le `printed_text` des impressions **françaises**, qui porte le
+ * libellé réellement imprimé sur la carte. Une mécanique se vérifie ainsi —
  *
- * Les mots-clés sont moins nombreux et bien mieux connus que les types de
- * créature, donc la couverture est large ; elle n'est pas totale pour autant, et
- * elle ne doit pas le devenir au prix d'une invention.
+ *     https://api.scryfall.com/cards/search
+ *       ?q=keyword%3Ahexproof+lang%3Afr&include_multilingual=true
+ *
+ * — puis on lit le libellé en tête de ligne, sans son coût ni son nombre :
+ * « Défense talismanique », « Parade », « Piétinement ». Les mots-clés **à coût**
+ * (Ward, Kicker, Cycling, Splice…) se confirment sur deux cartes différentes,
+ * pour distinguer le mot nu de son complément — « Imprégnation d'arcane » et
+ * « Imprégnation d'éphémère ou de rituel » donnent `Imprégnation`.
+ *
+ * Les **actions**-mots-clés s'impriment au mode conjugué (« meulez », « voilez »,
+ * « amassez ») ; on en retient l'infinitif, qui est la forme de citation et que
+ * le rappel de règles imprime souvent lui-même (« Pour meuler une carte… »). Les
+ * **capacités**, elles, s'impriment déjà sous forme nominale (« Suspension 3 »,
+ * « Modularité 1 ») et se recopient telles quelles. C'est la seule règle de ce
+ * fichier ; tout le reste est un relevé.
+ *
+ * **Ce qu'on ne fait toujours pas.** On ne traduit **jamais** de mémoire. Ce qui
+ * n'a pas de libellé imprimé consultable reste **en anglais** — un nom inventé
+ * est pire qu'un nom anglais, parce qu'il a l'air juste. `MOTS_CLES_EN_ANGLAIS`
+ * consigne ces refus, et dit pour chacun ce qui a manqué.
  *
  * **Ce que ce fichier ne fait pas, et ne fera jamais.** Il ne dit nulle part ce
  * qu'une mécanique *fait*. Aucun texte de règles, aucune image, aucune copie de
@@ -56,10 +69,23 @@ export const KEYWORD_NAMES_FR: Readonly<Record<string, string>> = {
   Flash: 'Flash',
   Fear: 'Peur',
   Intimidate: 'Intimidation',
-  Shadow: 'Ombre',
   Infect: 'Infection',
   Wither: 'Flétrissure',
   Toxic: 'Toxique',
+  // Trois permanentes très courantes, longtemps laissées en anglais faute de
+  // source : le `printed_text` français les donne sans ambiguïté.
+  Hexproof: 'Défense talismanique',
+  Shroud: 'Linceul',
+  Ward: 'Parade',
+  // « Shadow » ne donne pas « Ombre » : le français imprime « Distorsion », et
+  // « Ombre » est déjà le type de créature Shade (`tokenNames.ts`).
+  Shadow: 'Distorsion',
+  Undying: 'Survivance',
+  Poisonous: 'Empoisonnement',
+  Changeling: 'Changelin',
+  Horsemanship: 'Équitation',
+  Daybound: 'Diurne',
+  Nightbound: 'Nocturne',
 
   // --- La traversée de terrain. Le français en fait une locution, toujours au
   //     pluriel du type de terrain : « traversée des îles ».
@@ -69,32 +95,48 @@ export const KEYWORD_NAMES_FR: Readonly<Record<string, string>> = {
   Mountainwalk: 'Traversée des montagnes',
   Forestwalk: 'Traversée des forêts',
 
-  // --- Les coûts alternatifs et les mécaniques de coût.
-  Kicker: 'Kicker',
-  Multikicker: 'Multikicker',
-  Buyback: 'Rachat',
+  // --- Les coûts alternatifs et les mécaniques de coût. Le libellé retenu est
+  //     le **mot nu**, sans le coût ni le complément qui le suit sur la carte.
+  Kicker: 'Kick',
+  Multikicker: 'Multikick',
+  Buyback: 'Rappel',
   Flashback: 'Flashback',
   Cycling: 'Recyclage',
   Affinity: 'Affinité',
   Convoke: 'Convocation',
   Evoke: 'Évocation',
   Overload: 'Surcharge',
-  Replicate: 'Réplication',
+  Replicate: 'Duplication',
   Transmute: 'Transmutation',
   Suspend: 'Suspension',
-  Escape: 'Évasion',
+  Escape: 'Échappée',
   Unearth: 'Exhumation',
   Offering: 'Offrande',
   Prototype: 'Prototype',
   Blitz: 'Blitz',
+  Entwine: 'Union',
+  Splice: 'Imprégnation',
+  Delve: 'Fouille',
+  Prowl: 'Incursion',
+  Retrace: 'Pistage',
+  Forecast: 'Prévision',
+  Foretell: 'Prédiction',
+  Bargain: 'Négociation',
+  Casualty: 'Victime',
+  Spree: 'Impétuosité',
+  Freerunning: 'Course libre',
+  Impending: 'Imminence',
+  'Split second': 'Fraction de seconde',
+  'Level up': 'Montée de niveau',
+  'Read ahead': 'Lecture rapide',
 
   // --- Les déclenchées et les statiques nommées.
   Cascade: 'Cascade',
   Prowess: 'Prouesse',
-  Exalted: 'Exalté',
+  Exalted: 'Exaltation',
   Extort: 'Extorsion',
-  Storm: 'Tempête',
-  Madness: 'Démence',
+  Storm: 'Déluge',
+  Madness: 'Folie',
   Miracle: 'Miracle',
   Echo: 'Écho',
   Epic: 'Épique',
@@ -112,34 +154,73 @@ export const KEYWORD_NAMES_FR: Readonly<Record<string, string>> = {
   Haunt: 'Hantise',
   Provoke: 'Provocation',
   Rebound: 'Rebond',
-  Recover: 'Récupération',
+  // « Recouvrement », et non « Récupération » : c'est Scavenge qui s'imprime
+  // « Récupération », et les confondre effacerait la différence.
+  Recover: 'Recouvrement',
+  Scavenge: 'Récupération',
   Reinforce: 'Renfort',
-  Flanking: 'Flanquement',
-  Phasing: 'Décalage',
-  Vanishing: 'Évanescence',
+  Flanking: 'Débordement',
+  Vanishing: 'Disparition',
   'Living weapon': 'Arme vivante',
-  'Totem armor': 'Armure totem',
+  'Totem armor': 'Armure totémique',
   Bushido: 'Bushido',
   Ninjutsu: 'Ninjutsu',
   Mentor: 'Mentor',
   Spectacle: 'Spectacle',
   Mutate: 'Mutation',
   Companion: 'Compagnon',
+  Dredge: 'Dragage',
+  Rampage: 'Sauvagerie',
+  Soulshift: 'Transmigration',
+  Soulbond: "Association d'âmes",
+  Ripple: 'Remous',
+  Sunburst: 'Solarisation',
+  Hideaway: 'Cachette',
+  Outlast: 'Résilience',
+  Unleash: 'Emportement',
+  Cipher: 'Cryptage',
+  Exploit: 'Exploitation',
+  Riot: 'Émeute',
+  Afterlife: 'Au-delà',
+  Boast: 'Vantardise',
+  Disturb: 'Perturbation',
+  Cleave: 'Tranchage',
+  Enlist: 'Enrôlement',
+  Backup: 'Main-forte',
+  Disguise: 'Déguisement',
+  Plot: 'Complot',
+  Offspring: 'Progéniture',
+  'For Mirrodin!': 'Pour Mirrodin',
 
   // --- L'équipement et l'attachement.
   Equip: 'Équipement',
   Enchant: 'Enchanter',
   Fortify: 'Fortification',
 
-  // --- Les actions-mots-clés. Scryfall les range dans le même tableau que les
-  //     capacités, et il a raison : le joueur les cherche du même geste.
+  // --- Les actions-mots-clés, et les capacités qui s'impriment au mode
+  //     conjugué. Scryfall les range dans le même tableau que les capacités, et
+  //     il a raison : le joueur les cherche du même geste. On retient
+  //     l'infinitif ; seul `Scry` s'imprime en nom (« Regard 1 »), et se garde
+  //     donc tel quel — le libellé de menu de `catalog.fr.ts` fait le même
+  //     partage, pour la même raison.
   Scry: 'Regard',
-  Surveil: 'Surveillance',
-  Explore: 'Exploration',
+  Surveil: 'Surveiller',
+  Explore: 'Explorer',
   Investigate: 'Enquêter',
   Fabricate: 'Fabrication',
-  Devour: 'Dévorer',
-  Discover: 'Découverte',
+  Devour: 'Dévorement',
+  Discover: 'Découvrir',
+  Mill: 'Meuler',
+  Amass: 'Amasser',
+  Adapt: 'Adapter',
+  Connive: 'Conniver',
+  Incubate: 'Incuber',
+  Cloak: 'Voiler',
+  Manifest: 'Manifester',
+  Morph: 'Mue',
+  Detain: 'Détenir',
+  Craft: 'Façonner',
+  Saddle: 'Seller',
 };
 
 /**
@@ -148,75 +229,25 @@ export const KEYWORD_NAMES_FR: Readonly<Record<string, string>> = {
  *
  * Cette table n'est lue par personne : elle est documentaire, et c'est
  * volontaire. Y ajouter une entrée coûte une ligne ; inventer « Anti-sort »
- * pour `Ward` coûterait la confiance dans les quatre-vingts autres.
+ * pour `Ward` aurait coûté la confiance dans les cent quarante autres.
  *
- * Le cas le plus gênant est en tête : trois capacités **permanentes** et très
- * courantes restent en anglais. C'est assumé — les rendre de mémoire sur des
- * mots que le joueur voit à chaque partie serait l'erreur la plus visible de
- * tout le glossaire.
+ * Elle a fondu : le `printed_text` français a levé l'essentiel des refus. Ce
+ * qu'il en reste tient à une cause unique et vérifiable — **il n'y a rien à
+ * lire**. Trois de ces mécaniques ne vivent que sur des cartes de 1994-1999,
+ * dont Scryfall ne publie aucun texte imprimé français ; la quatrième ne
+ * s'imprime que sous forme de locution conjuguée, dont aucun libellé ne se
+ * détache. Aucune de ces quatre lignes ne se lève par un effort de traduction :
+ * elle se lèvera le jour où Scryfall publiera le texte, ou pas du tout.
  */
 export const MOTS_CLES_EN_ANGLAIS: Readonly<Record<string, string>> = {
-  Hexproof: 'capacité permanente très courante, mais le terme français officiel n’est pas vérifié — et se tromper ici se verrait à chaque partie',
-  Shroud: '« écran total » est plausible, pas certain ; même famille que Hexproof, donc même refus',
-  Ward: 'mécanique récente : aucun terme français vérifié',
-  Morph: 'mot de mécanique autant que de jeton — déjà refusé dans `tokenNames.ts`, pour ne pas contredire le texte de règles',
-  Manifest: 'même cas que Morph',
-  Changeling: '« changelin » est une supposition',
-  Delve: 'terme officiel non vérifié',
-  Dredge: 'terme officiel non vérifié',
-  Mill: '« meuler » est du jargon de joueur ; le terme imprimé n’est pas vérifié',
-  Amass: 'terme officiel non vérifié',
-  Adapt: '« adaptation » se confondrait avec le mot courant sans certitude sur le terme imprimé',
-  Undying: 'terme officiel non vérifié ; ne pas le confondre avec Persist, qui est traduit',
-  Poisonous: 'terme officiel non vérifié',
-  Rampage: '« déchaînement » est plausible, pas certain',
-  Entwine: 'terme officiel non vérifié',
-  Banding: 'mécanique ancienne : terme officiel non vérifié',
-  Fading: 'terme officiel non vérifié ; ne pas le confondre avec Vanishing, qui est traduit',
-  'Split second': 'terme officiel non vérifié',
-  'Level up': 'terme officiel non vérifié',
-  Horsemanship: 'terme officiel non vérifié',
-  Soulshift: 'terme officiel non vérifié',
-  Soulbond: 'terme officiel non vérifié',
-  Splice: 'terme officiel non vérifié',
-  Scavenge: 'terme officiel non vérifié',
-  Retrace: 'terme officiel non vérifié',
-  Prowl: 'terme officiel non vérifié',
-  Ripple: 'terme officiel non vérifié',
-  Sunburst: 'terme officiel non vérifié',
-  Hideaway: 'terme officiel non vérifié',
-  Forecast: 'terme officiel non vérifié',
-  Outlast: 'terme officiel non vérifié',
-  Unleash: 'terme officiel non vérifié',
-  Detain: 'terme officiel non vérifié',
-  Cipher: 'terme officiel non vérifié',
-  Exploit: 'terme officiel non vérifié',
-  Riot: 'terme officiel non vérifié',
-  Afterlife: 'terme officiel non vérifié',
-  Foretell: 'terme officiel non vérifié',
-  Boast: 'terme officiel non vérifié',
-  Disturb: 'terme officiel non vérifié',
-  Daybound: 'terme officiel non vérifié',
-  Nightbound: 'terme officiel non vérifié',
-  Cleave: 'terme officiel non vérifié',
-  Casualty: 'terme officiel non vérifié',
-  Connive: 'terme officiel non vérifié',
-  Enlist: 'terme officiel non vérifié',
-  'Read ahead': 'terme officiel non vérifié',
-  Backup: 'terme officiel non vérifié',
-  Incubate: 'terme officiel non vérifié',
-  Bargain: 'terme officiel non vérifié',
-  Craft: 'terme officiel non vérifié',
-  Disguise: 'terme officiel non vérifié',
-  Cloak: 'terme officiel non vérifié',
-  Plot: 'terme officiel non vérifié',
-  Saddle: 'terme officiel non vérifié',
-  Spree: 'terme officiel non vérifié',
-  Freerunning: 'terme officiel non vérifié',
-  Offspring: 'terme officiel non vérifié',
-  Impending: 'terme officiel non vérifié',
-  Gift: 'terme officiel non vérifié',
-  'For Mirrodin!': 'cri de guerre imprimé tel quel ; c’est une citation, pas un terme à traduire',
+  Banding:
+    'les 34 impressions françaises connues de Scryfall n’ont aucun `printed_text` : rien à lire, donc rien à relever',
+  Fading:
+    'même cas que Banding — 17 impressions françaises, aucune avec `printed_text` ; à ne pas confondre avec Vanishing, qui s’imprime « Disparition »',
+  Phasing:
+    'même cas que Banding — 12 impressions françaises, aucune avec `printed_text`. « Décalage » a figuré ici comme traduction ; rien ne l’étaye, donc il redescend',
+  Gift:
+    'ne s’imprime jamais en libellé : c’est une locution conjuguée, complétée par ce qui est donné, et qui change d’une carte à l’autre. Aucun nom ne s’en détache, et « Cadeau » seul n’est imprimé nulle part',
 };
 
 /**
