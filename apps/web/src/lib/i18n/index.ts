@@ -39,6 +39,7 @@ export {
   MOTS_CLES_EN_ANGLAIS,
 } from './keywordNames.js';
 export {
+  isTokenForNaming,
   isTokenTypeLine,
   tokenName,
   tokenQueryAliases,

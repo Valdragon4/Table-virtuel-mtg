@@ -43,7 +43,13 @@ import {
   localizedCardName,
   subscribeLocalizations,
 } from '../lib/cardLocalization.js';
-import { cardLanguageMark, keywordName, resolveCardImage } from '../lib/i18n/index.js';
+import {
+  cardLanguageMark,
+  isTokenForNaming,
+  keywordName,
+  resolveCardImage,
+  tokenName,
+} from '../lib/i18n/index.js';
 import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
 import { CardLanguageBadge } from './CardSprite.js';
 import { ManaCost } from './ManaCost.js';
@@ -234,7 +240,25 @@ export function CardPreview(): React.ReactElement | null {
   });
   const imageSrc =
     resolved.url ?? scryfallImage(scryfallId, 'large', faceIndex === 0 ? 'front' : 'back');
-  const shownName = localizedCardName(localized, meta?.name, faceIndex) ?? 'Carte';
+  /*
+   * Le nom affiché — et l'`alt` de l'illustration, qui est le même.
+   *
+   * **Un jeton passe en plus par le glossaire**, exactement comme sur la table
+   * (`CardSprite`) et dans la recherche (`TokenSearch`) : Scryfall ne publie
+   * aucune impression traduite de jeton, `localizedCardName` rend donc l'anglais
+   * quoi qu'il arrive, et le français est le nôtre. Un aperçu qui dirait
+   * « Angel » sous un jeton dont le bandeau dit « Ange » ferait douter le joueur
+   * de l'un des deux.
+   *
+   * Ce qui décide vit dans `isTokenForNaming`, et pas ici : l'aperçu s'ouvre
+   * aussi bien sur un objet de partie — qui porte un `kind`, le signal du
+   * protocole — que sur une simple impression d'étagère ou de recherche, qui
+   * n'en a pas et n'a que sa ligne de type. Les deux cas se lisent au même
+   * endroit plutôt qu'en deux heuristiques jumelles.
+   */
+  const estJeton = isTokenForNaming({ kind: card?.kind, typeLine: meta?.typeLine });
+  const nomCatalogue = localizedCardName(localized, meta?.name, faceIndex);
+  const shownName = (estJeton ? tokenName(nomCatalogue, language) : nomCatalogue) ?? 'Carte';
   /*
    * Le repère de langue, comme sur la vignette.
    *

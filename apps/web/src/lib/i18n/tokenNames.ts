@@ -8,7 +8,11 @@
  * aucun `printed_name` de jeton à aller chercher — la mécanique d'impression
  * localisée (`docs/i18n.md` §3) ne peut rien pour eux.
  *
- * **Mais il y a une source de vérité, et ce n'est pas nous.** L'immense
+ * **Mais il y a des sources de vérité, et ce n'est pas nous.** Il y en a
+ * **deux**, et il en fallait deux : la première ne couvre qu'une famille de
+ * jetons, et c'est la seconde qui atteint l'autre.
+ *
+ * **Source 1 — `printed_type_line`, pour les types de créature.** L'immense
  * majorité des noms de jetons sont des **types de créature**, et ceux-là
  * s'impriment sur la ligne de type de n'importe quelle carte française. C'est
  * `printed_type_line` qu'on lit, sur une carte ordinaire, pas sur le jeton :
@@ -22,10 +26,38 @@
  * tout seul. C'est ainsi qu'on a su que Rogue s'imprime « gredin » et non
  * « roublard », Shapeshifter « changeforme » et non « métamorphe ».
  *
- * Le glossaire porte donc une majuscule là où la ligne de type imprime une
- * minuscule : la ligne de type écrit « gorgonoïde » en cours de phrase, un nom
- * de jeton s'affiche seul. Le **mot** est celui de la carte ; seule la casse
- * est à nous.
+ * **Pourquoi il en fallait une seconde.** Cette méthode a un angle mort qui
+ * n'est pas un détail : elle ne voit que ce qui est un **sous-type**. Or
+ * « Trésor », « Sang », « Lithoforce », « emblème », « l'agrément de la cité »
+ * ne sont sous-types de rien — ils ne vivent que dans le texte d'une carte, et
+ * aucune ligne de type au monde ne les porte. Et même parmi les types de
+ * créature, certains n'ont aucune carte ordinaire française à leur nom :
+ * `Germ`, `Servo` et `Tentacle` n'existent qu'en jeton.
+ *
+ * **Source 2 — `printed_text`, pour tout le reste.** La carte française qui
+ * **crée** le jeton le **nomme**, dans son texte imprimé. On part de l'anglais
+ * pour trouver les cartes candidates (`q=oracle%3A%22Powerstone+token%22`),
+ * puis on lit le `printed_text` de leur impression française :
+ *
+ *     https://api.scryfall.com/cards/search
+ *       ?q=%21%22Argothian+Opportunist%22+lang%3Afr
+ *        &include_multilingual=true&unique=prints
+ *
+ * C'est elle qui a donné « armée » (Invasion de la Horde de l'effroi),
+ * « Germe » (Battecrâne), « Tentacule » (Kraken du nadir) — et qui a **corrigé
+ * deux traductions fausses** que la première n'atteignait pas : Powerstone
+ * s'imprime **« Lithoforce »** et non « pierre de puissance », City's Blessing
+ * **« l'agrément de la cité »** et non « la bénédiction de la cité ». Toutes
+ * deux avaient l'air justes ; c'est précisément le danger.
+ *
+ * **Chaque terme est confirmé sur deux cartes différentes** quand la
+ * formulation pourrait dépendre du contexte. Une entrée dont une seule carte
+ * témoigne est signalée comme telle.
+ *
+ * Le glossaire porte donc une majuscule là où la carte imprime une minuscule :
+ * la ligne de type écrit « gorgonoïde » en cours de phrase, le texte de rappel
+ * écrit « une armée » au fil de la sienne, et un nom de jeton s'affiche seul.
+ * Le **mot** est celui de la carte ; seule la casse est à nous.
  *
  * Et dans le doute, **on laisse l'anglais** : un nom inventé est pire qu'un nom
  * anglais, parce qu'il a l'air juste.
@@ -69,15 +101,27 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Clue: 'Indice',
   Blood: 'Sang',
   Gold: 'Or',
-  Powerstone: 'Pierre de puissance',
+  // « Lithoforce » et non « pierre de puissance » : c'est le mot qu'impriment
+  // les cartes françaises de La Guerre fratricide, et la traduction littérale
+  // qui était ici avait l'air juste sans l'être.
+  Powerstone: 'Lithoforce',
   Incubator: 'Incubateur',
   Copy: 'Copie',
   Emblem: 'Emblème',
   'Energy Reserve': "Réserve d'énergie",
-  // Le monarque et la bénédiction de la cité ne sont pas des créatures : leur
-  // nom est une expression, pas une somme de types.
+  /*
+   * Le monarque et l'agrément de la cité ne sont pas des créatures : leur nom
+   * est une expression, pas une somme de types.
+   *
+   * **On garde l'article**, contre l'usage du reste du glossaire, et c'est
+   * délibéré : ces deux-là ne nomment pas une espèce mais un **statut unique
+   * de la partie** — il n'y a qu'un monarque à la fois. Le français ne dit
+   * jamais « monarque » seul là où il dirait « soldat » seul, et l'anglais
+   * porte déjà l'article dans la clé (« The Monarch »). Sans lui,
+   * « Agrément de la cité » se lirait comme un nom tronqué.
+   */
   'The Monarch': 'Le monarque',
-  "City's Blessing": 'La bénédiction de la cité',
+  "City's Blessing": "L'agrément de la cité",
 
   // --- Les types de créature. Terme français officiel du jeu, pas du dictionnaire.
   Ally: 'Allié',
@@ -116,6 +160,17 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
   Efreet: 'Éfrit',
   Egg: 'Œuf',
   Eldrazi: 'Eldrazi',
+  /*
+   * Ces cinq-là n'ont **aucune ligne de type française** — ils n'existent qu'en
+   * jeton, et Scryfall n'en catalogue aucun hors anglais. C'est la seconde
+   * source qui les donne : le texte imprimé des cartes qui les créent les
+   * nomme, et deux cartes indépendantes confirment chacun.
+   */
+  Spawn: 'Engeance',
+  Scion: 'Scion',
+  Inkling: 'Encrelin',
+  Junk: 'Bric-à-brac',
+  Wraith: 'Apparition',
   Elemental: 'Élémental',
   Elephant: 'Éléphant',
   Elf: 'Elfe',
@@ -268,56 +323,49 @@ export const TOKEN_NAMES_FR: Readonly<Record<string, string>> = {
  * `Spawn` coûterait la confiance dans les deux cents autres.
  */
 export const TERMES_LAISSES_EN_ANGLAIS: Readonly<Record<string, string>> = {
-  Spawn:
-    'type des « Eldrazi Spawn » : `t:spawn lang:fr` ne rend aucune impression, il n’y a donc aucune ligne de type française à lire — et « engeance » n’est qu’une supposition',
-  Scion: 'même cas que Spawn, pour les « Eldrazi Scion » : aucune impression française',
-  Inkling: 'jeton de Strixhaven : aucune impression française, donc aucune ligne de type à relever',
+  /*
+   * Plusieurs lignes disaient « aucune impression française », ce qui était vrai
+   * de la **ligne de type** et faux du **texte imprimé**. Les cinq que la
+   * seconde source a prouvées — Spawn, Scion, Inkling, Junk, Wraith — sont
+   * parties au glossaire ; ce qui reste ici l'est pour une raison, pas par
+   * oubli. `Map` est le seul refus **délibéré** : la source existe, c'est
+   * l'affichage qui n'en veut pas.
+   */
   Manifest:
     'n’existe qu’en jeton, et Scryfall ne publie aucun jeton français : rien à lire ici. La **mécanique** est traduite (« Manifester », `keywordNames.ts`), mais un nom de jeton n’est pas un nom de mécanique et on ne déduit pas l’un de l’autre',
   Morph: 'même cas que Manifest ; la mécanique s’imprime « Mue », le jeton n’a pas de nom français publié',
-  Lander: 'jeton récent : aucune impression française',
-  Map: 'jeton : aucune impression française, et « Carte » se confondrait avec le mot qui désigne toute carte de Magic',
-  Junk: 'jeton : aucune impression française',
-  Wraith: 'aucune ligne de type française relevée ; et « Wraith » et « Specter » risqueraient de tomber tous deux sur « Spectre »',
-  Walker: 'jeton de Un-set ; aucune impression française',
-  'Marit Lage': 'nom propre : il ne se traduit pas',
+  Lander:
+    'jeton récent : les impressions françaises d’Edge of Eternities existent, mais Scryfall n’en publie pas encore le texte — leur `printed_text` est toujours l’anglais. Rien à lire, donc',
+  Map: 'le texte français l’imprime bien « carte » (Compagnon du cartographe, Offrande fanatique) — mais on le laisse en anglais **par choix**, pas faute de source : « Carte » se confondrait à l’écran avec le mot qui désigne toute carte de Magic',
+  Walker:
+    'jeton de Secret Lair, anglais seulement : aucune carte française ne le nomme (`oracle:"Walker creature token" lang:fr` ne rend rien), et les cartes qui le créent ne sont pas traduites',
+  'Marit Lage':
+    'nom propre — celui d’un avatar nommé, pas d’un type : rien à relever nulle part, et le traduire le rendrait méconnaissable à la table',
 };
 
 /**
- * Les entrées que la méthode ci-dessus **n'a pas pu atteindre**, et qu'on a
- * pourtant laissées traduites.
+ * Les entrées que **ni l'une ni l'autre source** n'atteint, et qu'on a pourtant
+ * laissées traduites.
  *
- * Elles étaient déjà là ; le relevé des lignes de type françaises ne les
- * couvre pas — soit le type n'a aucune impression française (`Army`, `Germ`,
- * `Naga`, `Serf`, `Servo`, `Tentacle`, `Tiger`), soit ce ne sont pas des
- * sous-types du tout et ils ne vivent que dans un rappel de règles
- * (`Blood`, `Gold`, `Powerstone`, `Incubator`, `Copy`, `Emblem`,
- * `Energy Reserve`, `The Monarch`, `City's Blessing`).
+ * Il en restait dix-huit quand le glossaire ne connaissait qu'une source ; la
+ * lecture des `printed_text` français en a prouvé quinze — dont deux qui
+ * étaient **fausses** (`Powerstone`, `City's Blessing`, corrigées en place).
+ * Les trois qui suivent résistent, et chacune pour une raison différente : il
+ * ne s'agit pas d'un reste à finir mais de trois impasses.
  *
- * On ne les supprime pas — rien ne les contredit — mais elles ne portent pas
- * la même garantie que le reste du glossaire. Qui en vérifiera une pourra la
- * retirer d'ici.
+ * On ne les supprime pas — rien ne les contredit — mais elles ne portent pas la
+ * même garantie que le reste du glossaire. La valeur dit **ce qui a été
+ * cherché**, pour que personne ne recommence la même recherche ni ne comble de
+ * mémoire.
  */
-export const NON_VERIFIES: readonly string[] = [
-  'Army',
-  'Germ',
-  'Naga',
-  'Serf',
-  'Servo',
-  'Tentacle',
-  'Tiger',
-  'Hero',
-  'Ferret',
-  'Blood',
-  'Gold',
-  'Powerstone',
-  'Incubator',
-  'Copy',
-  'Emblem',
-  'Energy Reserve',
-  'The Monarch',
-  "City's Blessing",
-];
+export const NON_VERIFIES: Readonly<Record<string, string>> = {
+  Tiger:
+    'il n’existe aucun type de créature « Tiger » dans Magic — `t:tiger` ne rend rien, jetons compris ; les tigres du jeu sont des chats. L’entrée ne désigne donc rien, ni en anglais ni en français, et « Tigre » n’a aucune carte pour le dire',
+  Ferret:
+    'une seule carte porte le type (Joven’s Ferrets), et son unique impression française est d’un âge où Scryfall n’a ni `printed_type_line` ni `printed_text` à servir ; aucun jeton Ferret n’existe, donc aucune carte ne le nomme non plus',
+  'Energy Reserve':
+    'les cartes françaises n’écrivent jamais « réserve » : elles disent « marqueur énergie » (Centre d’Éther, Chasseur d’Éther). La réserve est une notion des règles, pas un mot imprimé — le libellé reste donc une traduction de notre fait',
+};
 
 /**
  * Le séparateur des types composés.
@@ -333,16 +381,54 @@ export const NON_VERIFIES: readonly string[] = [
 const ET = ' et ';
 
 /**
+ * Le séparateur des faces d'un nom recto-verso.
+ *
+ * Scryfall écrit « Day // Night » avec des espaces autour ; on les rétablit à la
+ * recomposition plutôt que de recopier ce qu'on a découpé, pour qu'un nom mal
+ * espacé au catalogue ressorte quand même propre.
+ */
+const FACES = ' // ';
+
+/**
+ * Le nom d'**une face**, ou `null` si on ne sait pas le dire en entier.
+ *
+ * Deux passes : le nom entier au glossaire, puis la composition de types. Elle
+ * rend `null` — et non l'anglais — là où `tokenName` rendrait l'anglais, parce
+ * que son appelant a besoin de **distinguer** « traduit » de « pas traduit » :
+ * une face non traduite doit faire retomber le nom entier en anglais, et non
+ * produire « Ange // Zombie Spawn ».
+ */
+function faceName(name: string): string | null {
+  const exact = TOKEN_NAMES_FR[name];
+  if (exact) return exact;
+
+  const parts = name.split(' ');
+  if (parts.length < 2) return null;
+
+  const traduits: string[] = [];
+  for (const part of parts) {
+    const fr = TOKEN_NAMES_FR[part];
+    if (!fr) return null;
+    traduits.push(fr);
+  }
+  return traduits.join(ET);
+}
+
+/**
  * Le nom d'un jeton dans la langue de celui qui regarde.
  *
  * Trois passes, dans cet ordre :
  *
  *  1. le nom entier est au glossaire — le cas des jetons non-créature et des
  *     expressions (« The Monarch ») ;
- *  2. le nom est une **composition de types** dont on connaît **chaque** terme :
- *     on les traduit et on les joint. « Chaque » n'est pas négociable — rendre
- *     « Eldrazi Spawn » en « Eldrazi Spawn » à moitié traduit serait le pire des
- *     deux mondes, ni lisible ni reconnaissable ;
+ *  2. le nom se **découpe**, et chaque morceau se traduit :
+ *     - par `//`, ce sont des **faces** — chacune se traduit pour son compte et
+ *       le séparateur reste `//` ;
+ *     - par l'espace, ce sont des **types empilés** — ils se joignent par « et »,
+ *       comme la ligne de type française les joint.
+ *     « Chaque » n'est négociable dans aucun des deux cas — rendre « Eldrazi
+ *     Spawn » en « Eldrazi Spawn » à moitié traduit serait le pire des deux
+ *     mondes, ni lisible ni reconnaissable ;
  *  3. sinon, **l'anglais**, tel quel.
  *
  * L'anglais demandé ressort toujours inchangé : notre catalogue *est* anglais,
@@ -356,22 +442,57 @@ export function tokenName(name: string | null | undefined, language: Language): 
   if (exact) return exact;
 
   /*
-   * Les noms à double face (« Punchcard // Punchcard », « Day // Night ») ne se
-   * composent pas : les deux moitiés sont des faces, pas des types, et les
-   * joindre par « et » dirait autre chose que ce qui est imprimé.
+   * Les deux moitiés d'un « // » sont des **faces**, pas des types empilés : on
+   * ne les joint donc jamais par « et », ce qui dirait autre chose que ce qui
+   * est imprimé. Mais chaque face est, elle, un nom de jeton à part entière —
+   * un jeton Ange recto-verso s'appelle « Angel // Angel » et se lit « Ange //
+   * Ange ». On traduit donc face par face, en gardant le séparateur.
+   *
+   * Tout ou rien, comme partout ailleurs ici : si une seule face manque au
+   * glossaire, le nom entier reste anglais plutôt que de devenir un hybride
+   * qu'aucun joueur ne reconnaîtrait.
    */
-  if (name.includes('//')) return name;
-
-  const parts = name.split(' ');
-  if (parts.length < 2) return name;
-
-  const traduits: string[] = [];
-  for (const part of parts) {
-    const fr = TOKEN_NAMES_FR[part];
-    if (!fr) return name;
-    traduits.push(fr);
+  if (name.includes('//')) {
+    const faces = name.split('//').map((face) => faceName(face.trim()));
+    if (faces.some((face) => face === null)) return name;
+    return faces.join(FACES);
   }
-  return traduits.join(ET);
+
+  return faceName(name) ?? name;
+}
+
+/**
+ * Faut-il nommer cette carte **comme un jeton**, c'est-à-dire par le glossaire ?
+ *
+ * Deux sources, et leur ordre est tout le sujet :
+ *
+ *  - `kind`, quand il existe, **fait foi** — c'est le protocole qui dit qu'un
+ *    objet est un jeton. Une carte ordinaire dont la ligne de type contiendrait
+ *    « Token » n'en est pas un, et un jeton copie d'une carte existante en est
+ *    un sans que sa ligne de type le dise ;
+ *  - la ligne de type **à défaut**. Tout ce qu'on survole n'est pas un objet de
+ *    partie : une vignette d'étagère, un résultat de recherche de jetons ou une
+ *    carte de « Mes decks » est une simple impression Scryfall, qui n'a pas de
+ *    `kind`. `isTokenTypeLine` est alors le seul signal disponible, et c'est
+ *    déjà celui que `TokenSearch` emploie.
+ *
+ * Dans le doute — ni `kind` ni ligne de type encore arrivée — la réponse est
+ * **non**. Le coût des deux erreurs n'est pas le même : un nom de jeton qui
+ * reste une seconde en anglais se corrige tout seul au lot de métadonnées
+ * suivant, tandis qu'une carte ordinaire passée au glossaire verrait son nom
+ * propre réécrit — « Angel of Destiny » n'est pas « Ange of Destiny ».
+ */
+export function isTokenForNaming({
+  kind,
+  typeLine,
+}: {
+  /** `card.kind` tel que le protocole le publie, absent pour une impression. */
+  kind?: string | null;
+  /** La ligne de type **anglaise** du catalogue. */
+  typeLine?: string | null;
+}): boolean {
+  if (kind != null) return kind === 'TOKEN';
+  return isTokenTypeLine(typeLine);
 }
 
 /**

@@ -3968,6 +3968,86 @@ async function findDoubleFaced() {
     );
   });
 
+  await step('l’aperçu agrandi d’un jeton porte le nom français, comme la carte', async () => {
+    /*
+     * Pourquoi ce pas s’ajoute à celui du bandeau, juste au-dessus.
+     *
+     * Le bandeau est peint par `CardSprite`, l’aperçu agrandi par
+     * `CardPreview` : deux composants, deux calculs du nom. Le second ne passait
+     * pas par le glossaire, et la table affichait donc « Ange » sur le jeton et
+     * « Angel » dans le panneau ouvert juste à côté — la contradiction la plus
+     * visible qu’on puisse mettre à l’écran, puisque les deux se lisent d’un
+     * seul coup d’œil. Le pas du bandeau ne l’attrapait pas : il ne regarde que
+     * la carte.
+     *
+     * On vérifie le **texte peint** et l’`alt` de l’illustration, parce que ce
+     * sont les deux sorties du même nom et qu’un lecteur d’écran n’a que la
+     * seconde.
+     */
+    await unhover();
+
+    // « Treasure » pour la même raison qu’au pas du bandeau : il est au
+    // glossaire et son nom français en diffère, sans quoi on ne prouverait rien.
+    const avant = await page.evaluate(() =>
+      [...window.__mtg.getState().cards.values()].filter((c) => c.kind === 'TOKEN').map((c) => c.id),
+    );
+    await page.getByRole('button', { name: /Créer/ }).click();
+    await page.getByRole('button', { name: 'Treasure', exact: true }).click();
+    const id = await page
+      .waitForFunction(
+        (deja) => {
+          const neuf = [...window.__mtg.getState().cards.values()].filter(
+            (c) => c.kind === 'TOKEN' && !deja.includes(c.id),
+          );
+          return neuf.length > 0 ? neuf[neuf.length - 1].id : null;
+        },
+        avant,
+        { timeout: 15000 },
+      )
+      .then((h) => h.jsonValue());
+
+    const jeton = page.locator(`[data-card="${id}"]`).first();
+    await jeton.waitFor({ timeout: 10000 });
+    await hover(jeton);
+
+    const preview = page.locator('[data-test="card-preview"]');
+    await preview.waitFor({ timeout: 5000 });
+
+    /*
+     * Les métadonnées arrivent par lots : le panneau peut être peint avant le
+     * nom. On attend le texte plutôt que de le lire une fois — sans quoi le pas
+     * serait intermittent pour une raison qui n’a rien à voir avec ce qu’il
+     * vérifie.
+     */
+    await page
+      .waitForFunction(
+        () => {
+          const el = document.querySelector('[data-test="card-preview"]');
+          return (el?.textContent ?? '').includes('Trésor');
+        },
+        null,
+        { timeout: 10000 },
+      )
+      .catch(async () => {
+        const vu = (await preview.textContent())?.trim() ?? '(aperçu vide)';
+        throw new Error(`l’aperçu du jeton dit « ${vu} » et non « Trésor »`);
+      });
+
+    const alt = await preview.locator('[data-test="card-preview-image"]').getAttribute('alt');
+    if (alt !== 'Trésor') {
+      throw new Error(`l’illustration de l’aperçu a pour alt « ${alt} » au lieu de « Trésor »`);
+    }
+    // Et le nom anglais ne doit pas rester **à côté** du français : un panneau
+    // qui dirait les deux serait aussi déroutant qu’un panneau anglais.
+    const texte = (await preview.textContent())?.trim() ?? '';
+    if (texte.includes('Treasure')) {
+      throw new Error(`l’aperçu montre encore le nom anglais : « ${texte} »`);
+    }
+    console.log(`      aperçu du jeton : « ${alt} »`);
+    await page.screenshot({ path: `${OUT}/ui-jeton-apercu-fr.png` });
+    await unhover();
+  });
+
   await step('à deux sièges, décrocher une étiquette ne la déplace pas', async () => {
     /*
      * Pourquoi cette étape existe **en plus** de celle qui décroche déjà une
