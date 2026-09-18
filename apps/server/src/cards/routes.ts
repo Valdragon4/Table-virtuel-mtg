@@ -110,6 +110,20 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
         faces: true,
         power: true,
         toughness: true,
+        /*
+         * Les mots-clés servent l'**interface**, et rien d'autre.
+         *
+         * Ils descendent par le catalogue de cartes, jamais par le protocole de
+         * jeu : ni `DeckPayload`, ni `CardData`, ni l'état de partie ne les
+         * portent. Deux raisons, et la seconde compte plus que la première.
+         * D'abord le poids — une carte de main circule à chaque déplacement, et
+         * ce n'est pas l'endroit où charger la barque. Ensuite, et surtout : le
+         * serveur ne doit **rien** décider à partir d'un mot-clé. Le mettre à
+         * portée du moteur serait une invitation permanente à l'y lire, alors
+         * que la détection ne sert qu'à raccourcir un geste que le joueur
+         * déclenche. Là où il est, il ne peut qu'éclairer un menu.
+         */
+        keywords: true,
       },
     });
     return reply.send({ cards });

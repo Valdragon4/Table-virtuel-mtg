@@ -381,6 +381,26 @@ export const en = defineTranslation({
     other: 'Counter on {count} cards',
   },
 
+  // — Cascade et Découvrir ————————————————————————————————————————
+  'card.assistedActions': 'Assisted actions',
+  'card.cascadeEntry': 'Cascade…',
+  'card.cascadeWithValue': 'Cascade (mana value {value})',
+  'card.discoverEntry': 'Discover N…',
+  'cascade.title': 'Cascade / Discover',
+  'cascade.description':
+    'Exiles cards from the top of your library one at a time until one is not a land and qualifies. That card stays in exile, face up, and is yours to do with as you please; the rest goes back under your library, in a random order.',
+  'cascade.modeLabel': 'Keyword',
+  'cascade.modeBelow': 'Cascade (strictly less than)',
+  'cascade.modeAtMost': 'Discover N (N or less)',
+  'cascade.valueLabel': 'Mana value',
+  'cascade.modeHint':
+    'Cascade stops at the first nonland card strictly below the value entered; “Discover N” stops at N or less.',
+  'cascade.suggested': 'Suggested from the mana cost of {name}: {value}. Correct it if your card says otherwise.',
+  'cascade.ambiguous':
+    'This card has several faces carrying a cost: the suggested value is the front one, worth checking.',
+  'cascade.unknownCost': 'This card’s cost is not known here: enter the value yourself.',
+  'cascade.submit': 'Run the sequence',
+
   // — Marqueur personnalisé : aperçu et formulaire ————————————————
   'counter.preview': 'Live preview',
   'counter.modeFrozen': 'Frozen when placed',

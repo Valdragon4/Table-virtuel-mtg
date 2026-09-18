@@ -24,6 +24,7 @@ import {
   type ZoneKind,
   type ZoneRef,
 } from '@mtg/shared';
+import { resolveCascade } from './cascade.js';
 import { applyIntentPart2 } from './engine-2.js';
 import { IntentError } from './errors.js';
 import { projectCard } from './projection.js';
@@ -1113,6 +1114,19 @@ function applyIntentCore(
      * (`DECK_LOADED` le nomme), et prétendre que la table l'oublie serait un
      * mensonge que le serveur est en mesure de détecter.
      */
+    /*
+     * Cascade et Découvrir. Toute la séquence vit dans `cascade.ts` ; ce
+     * `case` n'est qu'une porte, comme `applyIntentPart2` en est une.
+     *
+     * Ce n'est pas une règle de Magic appliquée en douce (§1.5) : le serveur
+     * n'y refuse rien, ne décide de rien, et exécute à la demande une suite de
+     * déplacements que le joueur ferait sinon un par un. Le seuil vient de lui,
+     * la carte trouvée reste à l'exil sous ses yeux, et il en dispose comme il
+     * l'entend. Le raisonnement complet est en tête de `cascade.ts`.
+     */
+    case 'CASCADE':
+      return resolveCascade(state, seatId, who, intent, rng);
+
     case 'TAKE_BACK': {
       const obj = objectOf(state, intent.cardId);
       assertNotLocked(state, obj.id);

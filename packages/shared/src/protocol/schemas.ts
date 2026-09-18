@@ -159,6 +159,18 @@ const intentUnion = z.discriminatedUnion('type', [
   // reçoit un identifiant neuf. Réservé au propriétaire, vérifié par le moteur.
   z.object({ type: z.literal('TAKE_BACK'), cardId: objectId, to: z.enum(['HAND', 'FACE_DOWN']) }).strict(),
 
+  /*
+   * Cascade / Découvrir. Le seuil vient du joueur, pas du serveur : celui-ci
+   * n'a pas le texte de règles, et il n'a donc rien à deviner. La borne haute
+   * est large exprès — elle empêche une saisie absurde, pas un choix de jeu.
+   */
+  z.object({
+    type: z.literal('CASCADE'),
+    sourceId: objectId.optional(),
+    manaValue: z.number().int().min(0).max(99),
+    compare: z.enum(['BELOW', 'AT_MOST']),
+  }).strict(),
+
   z.object({ type: z.literal('REVEAL'), cardIds: cardIdList, toSeats: seatList, durationMs: z.number().int().min(0).max(600_000).optional() }).strict(),
   // `toSeats: []` arrête la révélation permanente : la liste vide est donc une
   // valeur légitime, et non une saisie incomplète.

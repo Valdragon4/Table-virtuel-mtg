@@ -80,6 +80,17 @@ export interface ScryfallCard {
   illustration_id?: string;
   /** `extendedart`, `showcase`, `legendary`, `inverted`… : le traitement du cadre. */
   frame_effects?: string[];
+  /**
+   * Les **mécaniques** que porte la carte : `['Haste', 'Cascade']`, `['Discover']`.
+   *
+   * Scryfall le publie **à côté** d'`oracle_text`, et c'est ce qui le rend
+   * lisible ici : ce sont des noms de mots-clés, pas des phrases de la carte —
+   * la même nature que `type_line`. On sait qu'une carte cascade ; on ne sait ni
+   * ce que sa cascade fait, ni avec quel nombre (« Discover », jamais
+   * « Discover 4 »). Le texte de règles, lui, n'est pas déclaré ici et ne doit
+   * pas l'être : voir la note de propriété intellectuelle de `schema.prisma`.
+   */
+  keywords?: string[];
   /** Vrai pour les impressions sans encadré de texte (certaines promos, les Unfinity). */
   textless?: boolean;
   finishes?: string[];

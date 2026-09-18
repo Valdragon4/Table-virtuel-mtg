@@ -134,6 +134,39 @@ export interface SetPrinting { type: 'SET_PRINTING'; cardId: ObjectId; scryfallI
  */
 export interface TakeBack { type: 'TAKE_BACK'; cardId: ObjectId; to: 'HAND' | 'FACE_DOWN' }
 
+/**
+ * Cascade et Découvrir : exiler du dessus jusqu'à une carte qui convient.
+ *
+ * **Un assistant, pas un arbitre.** L'intent n'existe que parce que la
+ * séquence est fastidieuse — exiler une à une, comparer, remettre le reste
+ * dessous au hasard — et non parce que le serveur aurait des règles à
+ * appliquer. Rien ne se déclenche tout seul : il part d'un clic, et le joueur
+ * peut tout aussi bien continuer à le faire à la main.
+ *
+ * Le seuil est **saisi par le joueur**, jamais lu sur la carte. Le catalogue ne
+ * stocke aucun texte de règles — ni oracle ni texte imprimé, c'est un invariant
+ * de droits — et il est donc impossible de savoir qu'une carte porte le
+ * mot-clé, ni avec quel nombre. Le client propose ce qu'il sait calculer,
+ * l'humain confirme ou corrige : c'est lui qui lit sa carte.
+ *
+ * `compare` sépare les deux mots-clés, dont c'est toute la différence :
+ *  - `BELOW` — cascade, « strictement inférieure » à la valeur de mana du sort ;
+ *  - `AT_MOST` — découvrir N, « N ou moins ».
+ *
+ * La carte trouvée **reste à l'exil, face visible**, et le joueur en dispose
+ * avec le menu ordinaire. « Jouer sans payer son coût » n'a pas de sens sur une
+ * table sans pile ni coûts : il n'y a pas de lancement, seulement des
+ * déplacements, et choisir à sa place où la carte atterrit serait arbitrer.
+ */
+export interface Cascade {
+  type: 'CASCADE';
+  /** Carte déclenchante, pour le journal seulement : elle n'est pas touchée. */
+  sourceId?: ObjectId;
+  /** Le seuil, tel que le joueur l'a saisi. */
+  manaValue: number;
+  compare: 'BELOW' | 'AT_MOST';
+}
+
 export interface Reveal { type: 'REVEAL'; cardIds: ObjectId[]; toSeats: SeatId[] | 'ALL'; durationMs?: number }
 /**
  * Révèle **en permanence** le dessus de sa propre bibliothèque.
@@ -214,7 +247,7 @@ export type Intent =
   | AddLabel | MoveLabel | RemoveLabel | SetLabel
   | CreateToken | DestroyToken
   | Shuffle | Look | ResolveLook | ReorderTop | Draw | Mulligan
-  | Mill | ExileTop | RandomDiscard | Scoop | SetPrinting | TakeBack
+  | Mill | ExileTop | RandomDiscard | Scoop | SetPrinting | TakeBack | Cascade
   | Reveal | RevealTop | RevealHand | UnrevealHand
   | SetLife | AdjustLife | SetCommanderDamage | SetPlayerCounter
   | RollDie | FlipCoin | EndTurn | SetPhase | Concede | ChatBubble | Cursor | UndoLast

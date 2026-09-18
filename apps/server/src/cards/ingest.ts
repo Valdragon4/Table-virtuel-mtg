@@ -175,6 +175,19 @@ function frameEffectsOf(card: ScryfallCard): string {
   return JSON.stringify(card.frame_effects ?? []);
 }
 
+/**
+ * Les mots-clés, **tableau vide compris**, et c'est tout l'intérêt.
+ *
+ * Comme pour `frame_effects`, Scryfall omet la clé quand il n'y en a aucun. On
+ * l'écrit donc `[]` — un fait — là où `null` en base veut dire « ligne jamais
+ * ré-ingérée », une ignorance. L'interface distingue les deux : elle met
+ * l'action en évidence sur un fait et garde le chemin manuel sur une ignorance.
+ * Les confondre reviendrait à répondre « non » quand on ne sait pas.
+ */
+function keywordsOf(card: ScryfallCard): string {
+  return JSON.stringify(card.keywords ?? []);
+}
+
 function toRow(card: ScryfallCard): Prisma.Sql {
   const isToken = isTokenCard(card);
   const finishes = card.finishes ?? [];
@@ -210,6 +223,7 @@ function toRow(card: ScryfallCard): Prisma.Sql {
     ${card.frame ?? null},
     ${frameEffectsOf(card)}::jsonb,
     ${card.textless ?? null},
+    ${keywordsOf(card)}::jsonb,
     ${card.released_at ? new Date(card.released_at) : null},
     ${card.power ?? null},
     ${card.toughness ?? null},
@@ -229,7 +243,7 @@ async function upsertBatch(cards: ScryfallCard[]): Promise<number> {
       "setType", "collectorNumber", "typeLine", "manaCost", "cmc", "colorIdentity", "colors",
       "layout", "rarity", "imageUris", "faces", "isToken", "isPromo", "isDigital",
       "isVariation", "isFullArt", "hasFoil", "hasNonFoil", "lang", "borderColor",
-      "illustrationId", "frame", "frameEffects", "isTextless",
+      "illustrationId", "frame", "frameEffects", "isTextless", "keywords",
       "releasedAt", "power", "toughness", "loyalty", "printingScore", "updatedAt"
     )
     VALUES ${values}
@@ -263,6 +277,7 @@ async function upsertBatch(cards: ScryfallCard[]): Promise<number> {
       "frame" = EXCLUDED."frame",
       "frameEffects" = EXCLUDED."frameEffects",
       "isTextless" = EXCLUDED."isTextless",
+      "keywords" = EXCLUDED."keywords",
       "releasedAt" = EXCLUDED."releasedAt",
       "power" = EXCLUDED."power",
       "toughness" = EXCLUDED."toughness",

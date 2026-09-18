@@ -210,6 +210,27 @@ model Card {
   frameEffects    Json?
   /// `textless` de Scryfall. Nullable pour la même raison que `frameEffects`.
   isTextless      Boolean?
+  /// `keywords` de Scryfall : `["Haste", "Cascade"]`, `["Discover"]`, `[]`.
+  ///
+  /// **Ce n'est pas du texte de règles, et la note en tête de ce fichier tient.**
+  /// Scryfall publie ce champ **à côté** de `oracle_text`, pas dedans : c'est une
+  /// liste de **noms de mécaniques**, de la terminologie de jeu, exactement de
+  /// même nature que `typeLine` (« Creature — Elf Berserker ») que l'on stocke
+  /// depuis toujours. Aucune phrase de la carte n'en sort : on sait qu'une carte
+  /// *cascade*, jamais ce que sa cascade fait, ni avec quel nombre — « Discover »
+  /// ne dit pas « Discover 4 ». L'interdit reste entier sur `oracle_text` et sur
+  /// `flavor_text`.
+  ///
+  /// Json plutôt que `String[]`, et pour la même raison que `frameEffects` :
+  /// `[]` est un **fait** — cette carte n'a aucun mot-clé —, `null` est une
+  /// **ignorance** — la ligne n'a pas été ré-ingérée depuis l'ajout de la
+  /// colonne. L'interface en dépend : elle met l'action en évidence sur un fait,
+  /// et garde le chemin manuel sur une ignorance. Un `String[]` confondrait les
+  /// deux et transformerait « on ne sait pas » en « non », c'est-à-dire en refus.
+  ///
+  /// Nullable sans valeur imposée : `prisma db push` l'ajoute sans rien détruire,
+  /// et les lignes écrites avant restent valides.
+  keywords        Json?
   releasedAt      DateTime?
   power           String?
   toughness       String?

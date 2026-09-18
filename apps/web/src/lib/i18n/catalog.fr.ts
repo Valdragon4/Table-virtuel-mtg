@@ -428,6 +428,33 @@ export const fr = {
     other: 'Marqueur sur {count} cartes',
   },
 
+  // — Cascade et Découvrir ————————————————————————————————————————
+  /*
+   * Le tiroir des actions assistées, offert sur **toutes** les cartes. Les deux
+   * entrées qui suivent remontent dans le menu principal quand le catalogue sait
+   * que la carte porte le mot-clé ; elles restent ici dans tous les cas, parce
+   * que ne pas savoir n'est pas une raison de dire non.
+   */
+  'card.assistedActions': 'Actions assistées',
+  'card.cascadeEntry': 'Cascade…',
+  /* Le nombre est annoncé : l'entrée agit d'un clic, sans dialogue. */
+  'card.cascadeWithValue': 'Cascade (valeur de mana {value})',
+  'card.discoverEntry': 'Découvrir N…',
+  'cascade.title': 'Cascade / Découvrir',
+  'cascade.description':
+    'Exile les cartes du dessus de votre bibliothèque une à une jusqu’à une carte qui n’est pas un terrain et qui convient. Elle reste à l’exil, face visible, et vous en faites ce que vous voulez ; le reste repart sous votre bibliothèque, dans un ordre aléatoire.',
+  'cascade.modeLabel': 'Mot-clé',
+  'cascade.modeBelow': 'Cascade (strictement inférieure)',
+  'cascade.modeAtMost': 'Découvrir N (N ou moins)',
+  'cascade.valueLabel': 'Valeur de mana',
+  'cascade.modeHint':
+    'La cascade s’arrête à la première carte non-terrain strictement en dessous de la valeur saisie ; « Découvrir N » s’arrête à N ou moins.',
+  'cascade.suggested': 'Proposé d’après le coût de mana de {name} : {value}. Corrigez si votre carte dit autre chose.',
+  'cascade.ambiguous':
+    'Cette carte a plusieurs faces avec un coût : la valeur proposée est celle du recto, à vérifier.',
+  'cascade.unknownCost': 'Le coût de cette carte n’est pas connu ici : saisissez la valeur vous-même.',
+  'cascade.submit': 'Lancer la séquence',
+
   // — Marqueur personnalisé : aperçu et formulaire ————————————————
   'counter.preview': 'Aperçu en direct',
   'counter.modeFrozen': 'Figé à la pose',

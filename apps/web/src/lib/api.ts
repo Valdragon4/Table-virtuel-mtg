@@ -66,4 +66,15 @@ export interface CardMeta {
   faces: Array<{ name: string; imageUris: { normal?: string } | null }> | null;
   power?: string | null;
   toughness?: string | null;
+  /**
+   * Les mécaniques de la carte : `['Haste', 'Cascade']`, `['Discover']`, `[]`.
+   *
+   * Trois états, et les distinguer est tout l'intérêt : un tableau qui contient
+   * le mot-clé, un tableau **vide** qui dit « cette carte n'en a aucun », et
+   * `null`/absent qui dit « on ne sait pas » — ligne de catalogue jamais
+   * ré-ingérée. L'interface met l'action en évidence sur le premier cas et ne
+   * ferme jamais le chemin manuel sur les deux autres : ne pas savoir n'est pas
+   * une raison de dire non.
+   */
+  keywords?: string[] | null;
 }

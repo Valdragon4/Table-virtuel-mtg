@@ -41,6 +41,77 @@ const ALIGN_STEP_X = CARD_WIDTH + 12;
 const ALIGN_STEP_Y = CARD_HEIGHT + 12;
 import { freeSpot } from '../lib/drag.js';
 
+/**
+ * Valeur de mana lue sur le coût, et l'aveu qu'on n'en est pas sûr.
+ *
+ * Ce n'est qu'une **proposition** : la valeur part au serveur dans l'intent
+ * parce que c'est le joueur qui la valide, et le serveur ne la recalcule pas.
+ * Un `X` vaut zéro hors de la pile, un symbole hybride vaut le plus élevé de
+ * ses composants, phyrexian ne coûte rien de plus.
+ *
+ * `ambiguous` dit qu'on a trouvé un coût sur **plusieurs faces** — une carte
+ * partagée, une aventure, une recto-verso modale. Les règles y tranchent selon
+ * la carte et selon la zone ; le dialogue le dit et laisse corriger, plutôt que
+ * de faire semblant de savoir. Le serveur tient le même raisonnement de son
+ * côté et s'arrête sur une telle carte au lieu de la juger.
+ */
+function manaValueOfCost(cost: string): number {
+  let total = 0;
+  for (const match of cost.matchAll(/\{([^}]+)\}/g)) {
+    const symbol = match[1]!.toUpperCase();
+    if (/^\d+$/.test(symbol)) total += Number(symbol);
+    else if (symbol === 'X' || symbol === 'Y' || symbol === 'Z') total += 0;
+    else if (symbol.includes('/')) {
+      total += Math.max(
+        ...symbol.split('/').map((p) => (p === 'P' ? 0 : /^\d+$/.test(p) ? Number(p) : 1)),
+      );
+    } else total += 1;
+  }
+  return total;
+}
+
+export function suggestedManaValue(
+  meta: { manaCost: string | null; faces: Array<{ name: string }> | null } | undefined,
+): { value: number; ambiguous: boolean } | null {
+  if (!meta) return null;
+  const faces = (meta.faces ?? []) as Array<{ manaCost?: unknown }>;
+  const faceCosts = faces
+    .map((f) => (typeof f.manaCost === 'string' ? f.manaCost : ''))
+    .filter((c) => c.length > 0);
+  if (faceCosts.length > 1) return { value: manaValueOfCost(faceCosts[0]!), ambiguous: true };
+  const own = meta.manaCost ?? '';
+  if (own.length > 0) return { value: manaValueOfCost(own), ambiguous: false };
+  if (faceCosts.length === 1) return { value: manaValueOfCost(faceCosts[0]!), ambiguous: false };
+  // Un sort sans coût — un suspendu — vaut bel et bien zéro, et c'est sûr.
+  return { value: 0, ambiguous: false };
+}
+
+/**
+ * Les mots-clés assistés que le catalogue reconnaît sur cette carte.
+ *
+ * Trois états, et c'est la raison d'être de cette fonction : `keywords` peut
+ * **contenir** le mot, être un tableau **vide** — « cette carte n'en a aucun »,
+ * un fait —, ou être **absent** — « on ne sait pas », une ligne de catalogue
+ * jamais ré-ingérée, une carte face cachée, une fiche pas encore arrivée du
+ * serveur. `known` distingue les deux derniers.
+ *
+ * Aucun des trois ne ferme quoi que ce soit : le tiroir des actions assistées
+ * est offert dans tous les cas. La détection ne sert qu'à **remonter** l'action
+ * dans le menu principal. Une comparaison insensible à la casse, parce que le
+ * libellé de Scryfall est capitalisé (« Cascade ») et qu'on ne veut pas
+ * dépendre de sa typographie.
+ */
+export function assistedKeywords(meta: { keywords?: string[] | null } | undefined): {
+  cascade: boolean;
+  discover: boolean;
+  known: boolean;
+} {
+  const list = meta?.keywords;
+  if (!Array.isArray(list)) return { cascade: false, discover: false, known: false };
+  const has = (word: string): boolean => list.some((k) => k.toLowerCase() === word);
+  return { cascade: has('cascade'), discover: has('discover'), known: true };
+}
+
 export interface CardMenuProps {
   card: CardView;
   x: number;
@@ -51,9 +122,134 @@ export interface CardMenuProps {
 interface Entry {
   label: string;
   shortcut?: string;
-  run: () => void;
+  /** Absent sur une **catégorie** : elle ouvre son sous-menu au lieu d'agir. */
+  run?: () => void;
   danger?: boolean;
   separatorBefore?: boolean;
+  /**
+   * Second niveau, ouvert au survol **et au clic**.
+   *
+   * C'est le tiroir des actions assistées : elles ne concernent qu'une carte
+   * sur cent, et leur place n'est pas dans le menu principal de toutes les
+   * autres. Quand le catalogue sait que la carte porte le mot-clé, l'action
+   * **remonte** dans le menu principal — la détection sert à raccourcir le
+   * chemin, jamais à l'ouvrir ni à le fermer : le tiroir reste là dans tous
+   * les cas.
+   */
+  submenu?: Entry[];
+}
+
+/**
+ * Largeur du sous-menu, en pixels. **Doit suivre la classe `w-64`** posée sur
+ * le panneau : c'est elle qui décide de la bascule à gauche, avant tout rendu,
+ * donc avant qu'on puisse mesurer quoi que ce soit.
+ */
+const SUBMENU_WIDTH = 256;
+
+/** L'habillage d'une ligne de menu, partagé par les deux niveaux. */
+const ENTRY_CLASS =
+  'flex w-full items-center justify-between px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-slate-800/90 active:bg-slate-700/80';
+
+function EntryButton({
+  entry,
+  openSub,
+  setOpenSub,
+}: {
+  entry: Entry;
+  openSub: string | null;
+  setOpenSub: (next: { label: string; rect: DOMRect } | null) => void;
+}): React.ReactElement {
+  const ref = useRef<HTMLButtonElement | null>(null);
+  const isOpen = openSub === entry.label;
+
+  const open = (): void => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (rect) setOpenSub({ label: entry.label, rect });
+  };
+
+  return (
+    <button
+      ref={ref}
+      className={`${ENTRY_CLASS} ${
+        entry.danger ? 'text-rose-300 hover:text-rose-200 hover:bg-rose-950/40' : 'text-slate-200 hover:text-white'
+      } ${entry.separatorBefore ? 'mt-1 border-t border-slate-800/80 pt-1.5' : ''} ${
+        isOpen ? 'bg-slate-800/90 text-white' : ''
+      }`}
+      /*
+       * Survol **et** clic, et le clic n'est pas un supplément d'âme : la table
+       * est une PWA qui se joue au doigt, et un tiroir qui ne s'ouvre qu'au
+       * survol serait inatteignable sans souris. Le clic bascule, pour qu'un
+       * second appui referme au lieu de piéger le doigt.
+       */
+      onPointerEnter={() => (entry.submenu ? open() : setOpenSub(null))}
+      onClick={() => {
+        if (!entry.submenu) return entry.run?.();
+        if (isOpen) setOpenSub(null);
+        else open();
+      }}
+    >
+      <span className="truncate">{entry.label}</span>
+      {entry.submenu ? (
+        <span className="ml-2 shrink-0 text-slate-400" aria-hidden>
+          ›
+        </span>
+      ) : (
+        entry.shortcut && (
+          <kbd className="ml-2 rounded border border-slate-700 bg-slate-800/90 px-1.5 py-0.5 text-[10px] font-mono font-medium text-slate-400">
+            {entry.shortcut}
+          </kbd>
+        )
+      )}
+    </button>
+  );
+}
+
+/**
+ * Le second niveau.
+ *
+ * Le placement **réutilise `useMenuPlacement`** plutôt que d'ouvrir un second
+ * calcul : la bascule vers le haut, le rognage dans la fenêtre et le
+ * défilement interne d'un menu plus haut que l'écran y sont déjà, et les
+ * réécrire ici les aurait fait diverger au premier correctif. La seule chose
+ * que ce composant ajoute, c'est le **côté** : à droite de la catégorie si le
+ * sous-menu y tient, à gauche sinon. Sur une fenêtre trop étroite pour l'un
+ * comme pour l'autre, le rognage le pose par-dessus le menu parent — c'est la
+ * réponse des menus tactiles, et `Échap` ramène au parent.
+ */
+function Submenu({ anchor, entries }: { anchor: DOMRect; entries: Entry[] }): React.ReactElement {
+  const fitsRight = anchor.right + SUBMENU_WIDTH + 8 <= window.innerWidth;
+  const { ref, style } = useMenuPlacement(
+    fitsRight ? anchor.right + 2 : anchor.left - SUBMENU_WIDTH - 2,
+    anchor.top,
+  );
+
+  return (
+    <div
+      ref={ref}
+      className="scrollbar-thin fixed z-[60] w-64 rounded-xl border border-slate-700/80 bg-slate-900/95 py-1.5 shadow-2xl shadow-black/80 backdrop-blur-xl"
+      data-test="card-submenu"
+      style={style}
+      /*
+       * Rien n'est nécessaire pour **garder** le tiroir ouvert quand le pointeur
+       * y entre : il est au-dessus du menu parent, les events de pointeur vont
+       * au plus haut, et aucune ligne du parent ne reçoit donc de survol. Le
+       * chemin entre les deux ne traverse pas non plus le parent — le tiroir
+       * s'ouvre à deux pixels de son bord, hors du panneau.
+       */
+    >
+      {entries.map((entry) => (
+        <button
+          key={entry.label}
+          className={`${ENTRY_CLASS} text-slate-200 hover:text-white ${
+            entry.separatorBefore ? 'mt-1 border-t border-slate-800/80 pt-1.5' : ''
+          }`}
+          onClick={entry.run}
+        >
+          <span className="truncate">{entry.label}</span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -262,6 +458,8 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
   const beginAttach = useGame((s) => s.beginAttach);
   const [picking, setPicking] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  /** La catégorie dont le tiroir est ouvert, et l'ancre qui le positionne. */
+  const [openSub, setOpenSub] = useState<{ label: string; rect: DOMRect } | null>(null);
   const { ref, style } = useMenuPlacement(x, y);
   /*
    * La carte **vivante** du store, et non celle que l'ouvreur nous a passée :
@@ -1033,6 +1231,131 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
   // Actions communes, quelle que soit la zone.
 
   /*
+   * Cascade et Découvrir — **la détection raccourcit le chemin, elle ne
+   * l'ouvre ni ne le ferme.**
+   *
+   * Le catalogue sait désormais qu'une carte porte le mot-clé : Scryfall publie
+   * `keywords` à côté du texte de règles, et l'ingestion le conserve. Mais
+   * savoir sert ici à une seule chose — **remonter l'action dans le menu
+   * principal**, prête à cliquer. Ce que la détection ne fait jamais, c'est
+   * refuser : le tiroir « actions assistées » est là sur toutes les cartes, et
+   * la même action s'y trouve à un survol. Une ligne de catalogue jamais
+   * ré-ingérée (`keywords` absent), une carte que Scryfall n'étiquette pas, une
+   * fiche pas encore arrivée du serveur : aucun de ces cas ne laisse le joueur
+   * sans recours. Ne pas savoir n'est pas une raison de dire non.
+   *
+   * Ce que le serveur décide, lui, n'a pas bougé d'un pouce : rien. Le mot-clé
+   * ne voyage pas jusqu'au moteur, le seuil part du client, et la carte trouvée
+   * s'arrête à l'exil — sur une table sans pile ni coûts, « jouer sans payer
+   * son coût » n'est qu'un déplacement de plus, et il appartient au joueur.
+   */
+  const meta = card.faceDown === false ? cardMeta(card.scryfallId) : undefined;
+  const suggested = suggestedManaValue(meta);
+  const detected = assistedKeywords(meta);
+
+  /** Le dialogue complet : mot-clé et seuil, l'un et l'autre corrigeables. */
+  const askCascade = (mode: 'BELOW' | 'AT_MOST'): void => {
+    // Le dialogue vit dans sa propre racine : on referme le menu tout de suite,
+    // et l'intent part quand la promesse se dénoue.
+    onClose();
+    const hint =
+      suggested === null
+        ? t('cascade.unknownCost')
+        : suggested.ambiguous
+          ? t('cascade.ambiguous')
+          : t('cascade.suggested', { name: meta?.name ?? t('card.generic'), value: suggested.value });
+    void openDialog({
+      title: t('cascade.title'),
+      description: t('cascade.description'),
+      submitLabel: t('cascade.submit'),
+      fields: [
+        {
+          name: 'mode',
+          label: t('cascade.modeLabel'),
+          initial: mode,
+          hint: t('cascade.modeHint'),
+          options: [
+            { value: 'BELOW', label: t('cascade.modeBelow') },
+            { value: 'AT_MOST', label: t('cascade.modeAtMost') },
+          ],
+        },
+        {
+          name: 'value',
+          label: t('cascade.valueLabel'),
+          numeric: true,
+          /*
+           * Cascade se pré-remplit avec la valeur de mana de la carte : c'est
+           * exactement ce que la règle demande, et la retaper serait du travail
+           * rendu au joueur pour rien. « Découvrir N » ne le peut pas —
+           * `keywords` dit « Discover », jamais « Discover 4 », le nombre n'est
+           * que dans le texte de règles, que l'on ne stocke pas.
+           */
+          initial: mode === 'BELOW' ? String(suggested?.value ?? 3) : '3',
+          quick: [1, 2, 3, 4, 5, 6].map((n) => ({ label: String(n), value: String(n) })),
+          hint,
+        },
+      ],
+    }).then((result) => {
+      if (!result) return;
+      const value = Number.parseInt(result.values['value'] ?? '', 10);
+      if (!Number.isFinite(value) || value < 0) return;
+      send({
+        type: 'CASCADE',
+        sourceId: card.id,
+        manaValue: value,
+        compare: result.values['mode'] === 'AT_MOST' ? 'AT_MOST' : 'BELOW',
+      });
+    });
+  };
+
+  /*
+   * Le raccourci, et sa seule exception.
+   *
+   * Mot-clé détecté **et** valeur de mana certaine : un clic suffit, et le
+   * libellé annonce le nombre pour qu'il n'y ait pas de surprise. Valeur
+   * **ambiguë** — plusieurs faces portent un coût —, le dialogue s'ouvre
+   * pré-rempli : on demande plutôt que de décider, ici comme sur le serveur.
+   */
+  if (detected.cascade) {
+    entries.push({
+      label:
+        suggested && !suggested.ambiguous
+          ? t('card.cascadeWithValue', { value: suggested.value })
+          : t('card.cascadeEntry'),
+      separatorBefore: true,
+      run: () => {
+        if (!suggested || suggested.ambiguous) return askCascade('BELOW');
+        onClose();
+        send({ type: 'CASCADE', sourceId: card.id, manaValue: suggested.value, compare: 'BELOW' });
+      },
+    });
+  }
+  if (detected.discover) {
+    entries.push({
+      label: t('card.discoverEntry'),
+      separatorBefore: !detected.cascade,
+      run: () => askCascade('AT_MOST'),
+    });
+  }
+
+  /*
+   * Le tiroir, toujours présent.
+   *
+   * Il est conçu pour qu'on y ajoute une action **sans rien restructurer** :
+   * une entrée de plus dans ce tableau, et rien d'autre à toucher. On n'y met
+   * que ce qui existe — aucune ligne grisée, aucun « bientôt disponible » :
+   * une promesse d'interface non tenue vieillit mal.
+   */
+  entries.push({
+    label: t('card.assistedActions'),
+    separatorBefore: !detected.cascade && !detected.discover,
+    submenu: [
+      { label: t('card.cascadeEntry'), run: () => askCascade('BELOW') },
+      { label: t('card.discoverEntry'), run: () => askCascade('AT_MOST') },
+    ],
+  });
+
+  /*
    * Rattraper une maladresse : la table convient d'oublier la carte.
    *
    * C'est l'exception assumée à la monotonie de la connaissance (protocole
@@ -1123,12 +1446,33 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
 
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  // Lu par l'écouteur `Échap`, dont les dépendances sont vides : sans ce relais,
+  // il verrait éternellement l'état du premier rendu.
+  const openSubRef = useRef(openSub);
+  openSubRef.current = openSub;
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
+      if (event.key !== 'Escape') return;
+      /*
+       * **`Échap` referme le tiroir avant le menu**, jamais les deux d'un coup :
+       * un second niveau qui emporte son parent oblige à tout rouvrir pour
+       * corriger un survol.
+       *
+       * L'écoute est en **capture**, comme partout dans ce projet — un écouteur
+       * en bouillonnement ne recevrait jamais la touche. Et il y a un second
+       * écouteur `Échap` sur `window`, posé plus haut dans ce composant, qui
+       * ferme le menu entier : `stopImmediatePropagation` est donc nécessaire,
+       * `stopPropagation` seul ne retient pas un écouteur voisin sur la **même**
+       * cible et le menu se refermerait quand même.
+       */
+      if (openSubRef.current) {
         event.stopPropagation();
-        closeRef.current();
+        event.stopImmediatePropagation();
+        setOpenSub(null);
+        return;
       }
+      event.stopPropagation();
+      closeRef.current();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -1154,6 +1498,10 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
         className="scrollbar-thin fixed z-50 w-60 sm:w-64 rounded-xl border border-slate-700/80 bg-slate-900/95 py-1.5 shadow-2xl shadow-black/80 backdrop-blur-xl"
         data-test="card-menu"
         style={style}
+        // Le tiroir est positionné sur l'ancre relevée à son ouverture : un menu
+        // assez haut pour défiler la ferait mentir, et le tiroir flotterait à
+        // côté d'une ligne qui n'est plus là. On le referme plutôt.
+        onScroll={() => setOpenSub(null)}
       >
         <div className="border-b border-slate-800 px-3 py-1.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs font-semibold text-slate-100">
@@ -1266,22 +1614,20 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
           </div>
         )}
         {entries.map((entry) => (
-          <button
+          <EntryButton
             key={entry.label}
-            className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-slate-800/90 active:bg-slate-700/80 ${
-              entry.danger ? 'text-rose-300 hover:text-rose-200 hover:bg-rose-950/40' : 'text-slate-200 hover:text-white'
-            } ${entry.separatorBefore ? 'mt-1 border-t border-slate-800/80 pt-1.5' : ''}`}
-            onClick={entry.run}
-          >
-            <span className="truncate">{entry.label}</span>
-            {entry.shortcut && (
-              <kbd className="ml-2 rounded border border-slate-700 bg-slate-800/90 px-1.5 py-0.5 text-[10px] font-mono font-medium text-slate-400">
-                {entry.shortcut}
-              </kbd>
-            )}
-          </button>
+            entry={entry}
+            openSub={openSub?.label ?? null}
+            setOpenSub={setOpenSub}
+          />
         ))}
       </div>
+      {openSub && (
+        <Submenu
+          anchor={openSub.rect}
+          entries={entries.find((e) => e.label === openSub.label)?.submenu ?? []}
+        />
+      )}
     </>
   );
 }
