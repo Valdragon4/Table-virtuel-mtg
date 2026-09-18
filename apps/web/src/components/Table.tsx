@@ -5,7 +5,6 @@ import { COMMAND_COLUMN, PANEL_HEIGHT, PANEL_WIDTH, SeatPanel } from './SeatPane
 import { startCardDrag } from './DragLayer.js';
 import { TableLabel } from './TableLabel.js';
 import { TableBackground } from './TableBackground.js';
-import { sceneryMargin } from './tableBoard.js';
 import { GAP } from './SeatPanel.js';
 import { OpponentHand } from './OpponentHand.js';
 import { rotateToBottom, toShared, toView, type Cell } from '../lib/seatView.js';
@@ -18,6 +17,28 @@ import { findDropTarget } from '../lib/drag.js';
 const MAX_SCALE = 2.5;
 /** Plancher absolu, au cas où le cadre serait minuscule. */
 const MIN_SCALE_FLOOR = 0.14;
+/**
+ * Respiration laissée autour de la grille par « voir toute la table », en
+ * **pixels écran** et non en pixels de monde.
+ *
+ * Le cadrage embrassait le décor entier, puis un liseré de décor : les deux
+ * sont des marges proportionnelles à la grille, donc d'autant plus coûteuses
+ * que la table est grande — à deux sièges, le liseré mangeait encore 13 % de
+ * l'échelle. Or ce qu'on veut n'est pas « une marge proportionnelle » mais
+ * « que la grille ne touche pas le bord » : huit pixels d'écran suffisent, et
+ * ils coûtent la même chose à un siège qu'à quatre. Le décor, lui, n'est pas
+ * un élément de jeu — il borde, il ne se cadre pas.
+ */
+const FRAME_PADDING = 8;
+/**
+ * En deçà de cette largeur de fenêtre, les colonnes flottantes ne tiennent plus
+ * à côté de la table : `RoomPage` les escamote derrière un bouton, et le
+ * cadrage récupère alors toute la largeur. Sans cela, la caméra réservait
+ * 544 px de colonnes sur une fenêtre de 430 px, et posait la table hors de
+ * l'écran — le panneau du joueur était coupé à droite, sur mobile, en
+ * permanence.
+ */
+export const NARROW_WIDTH = 900;
 const CURSOR_INTERVAL_MS = 50;
 
 /**
@@ -558,8 +579,9 @@ export const Table = memo(function Table(): React.ReactElement {
    * Recentre le plan dans l'espace réellement libre : les panneaux flottants
    * (journal à gauche, panneau joueur à droite, barre du haut, main en bas) sont
    * en position fixe, et une table qui passerait dessous serait inatteignable au
-   * clic. On n'agrandit jamais au-delà de 1 : une carte n'a pas à dépasser sa
-   * taille de référence.
+   * clic. On n'agrandit jamais au-delà de `MAX_SCALE`, le plafond du zoom
+   * manuel : viser plus haut ferait écrêter le cadrage au premier cran de
+   * molette, et la vue sauterait sans qu'on ait rien demandé.
    */
   function recenter(): void {
     const rect = surface.current?.getBoundingClientRect();
@@ -567,17 +589,28 @@ export const Table = memo(function Table(): React.ReactElement {
 
     const free = freeArea(rect);
     /*
-     * On cadre la grille **et son décor** : muret, massifs et braseros font
-     * partie de la table, et « voir toute la table » qui s'arrête au bord des
-     * panneaux n'en montre justement rien.
+     * Ce que « voir toute la table » doit montrer, c'est la **grille** : tous
+     * les panneaux, toutes les zones, toutes les cartes. Rien de plus, et
+     * surtout pas le décor, qui déborde la grille des trois quarts de son plus
+     * petit côté et faisait de la table un timbre-poste au milieu d'une cour.
+     *
+     * Ce qui reste après ça n'est plus une marge, c'est du **letterboxing** :
+     * la grille et l'espace libre n'ont pas les mêmes proportions, et l'un des
+     * deux axes cale forcément en premier. Mesuré à 1600 × 1000 : un siège cale
+     * en largeur et laisse 141 px en bas, deux sièges calent en hauteur et
+     * laissent environ 439 px sur les côtés — la grille y est en portrait
+     * (1260 × 1368) dans une fenêtre en paysage. Aucune constante de ce fichier
+     * ne récupère cela : le seul levier utile à plusieurs joueurs est vertical,
+     * du côté du rail de main, pas des colonnes latérales.
      */
-    const margin = sceneryMargin(span.width, span.height);
-    const shownW = span.width + margin * 2;
-    const shownH = span.height + margin * 2;
     // Plancher bas : à quatre sièges, la vue d'ensemble est une carte du
     // terrain, pas une vue de lecture. Mieux vaut tout montrer en petit que
     // rogner.
-    const scale = Math.min(1, Math.max(0.12, Math.min(free.width / shownW, free.height / shownH)));
+    const fit = Math.min(
+      (free.width - FRAME_PADDING * 2) / span.width,
+      (free.height - FRAME_PADDING * 2) / span.height,
+    );
+    const scale = Math.min(MAX_SCALE, Math.max(0.12, fit));
 
     setView({
       scale,
@@ -589,6 +622,32 @@ export const Table = memo(function Table(): React.ReactElement {
   /**
    * Cadrage sur le siège local : son panneau est amené en bas du cadre, centré.
    * Le monde n'a pas bougé — seule la caméra de ce client a changé.
+   *
+   * « Recentrer sur moi » cadre **mon panneau**, pas la table : le panneau
+   * tient exactement dans l'espace libre, sans marge ajoutée. Les facteurs
+   * valaient 1,15 et 1,6 — la place de la moitié d'un voisin —, puis 1,04 et
+   * 1,10 : des marges proportionnelles au panneau, donc arbitraires.
+   *
+   * **Pourquoi aucune respiration ici, alors que « voir toute la table » en
+   * garde une.** Un siège actif porte un liseré en `outline`, posé à 2 px du
+   * panneau et épais de 2 px : il se peint **hors** de sa boîte, et un cadrage
+   * au pixel près pourrait le faire courir sous une colonne flottante. Mais
+   * `freeArea` sur-réserve déjà de quoi l'accueillir : le journal s'arrête à
+   * 300 px quand la zone libre commence à 304, le panneau joueur laisse
+   * 12 px, et la gouttière étroite en vaut 12 de chaque côté. Le liseré
+   * mesure 4 px de monde, soit ~3,3 px à l'écran à cette échelle : il tombe
+   * dans ces gouttières. Ajouter `FRAME_PADDING` par-dessus revenait à
+   * réserver deux fois la même place, et coûtait un demi-cran de zoom pour
+   * rien. (Le débord dépasserait la gouttière de gauche au-delà de l'échelle
+   * 1, ce qui suppose une fenêtre libre de plus de 1260 px de large **et**
+   * assez haute pour ne pas borner avant : quelques pixels de liseré en
+   * bordure du journal, sur un écran de 2500 px. On ne paie pas un cran de
+   * zoom pour tout le monde au nom de ce cas-là.)
+   *
+   * Le plancher d'échelle, lui, ne doit **jamais** l'emporter sur « le panneau
+   * tient à l'écran » : à 0,35 sur une fenêtre de 430 px, il imposait un
+   * panneau de 441 px de large, donc coupé — le bouton rognait précisément ce
+   * qu'il promet de montrer. Il ne sert plus qu'à parer un cadre dégénéré.
    */
   function focusOnMe(): void {
     const rect = surface.current?.getBoundingClientRect();
@@ -597,7 +656,13 @@ export const Table = memo(function Table(): React.ReactElement {
     if (!rect || !pos) return recenter();
 
     const free = freeArea(rect);
-    const scale = Math.min(1, Math.max(0.35, Math.min(free.width / (PANEL_WIDTH * 1.15), free.height / (PANEL_HEIGHT * 1.6))));
+    const scale = Math.min(
+      MAX_SCALE,
+      Math.max(
+        MIN_SCALE_FLOOR,
+        Math.min(free.width / PANEL_WIDTH, free.height / PANEL_HEIGHT),
+      ),
+    );
     const panelX = pos.col * (PANEL_WIDTH + GAP);
     const panelY = pos.row * (PANEL_HEIGHT + GAP);
 
@@ -1187,12 +1252,24 @@ function CursorLayer({ shared, view }: { shared: Cell[]; view: Cell[] }): React.
   );
 }
 
-/** Espace écran laissé libre par les panneaux flottants. */
+/**
+ * Espace écran laissé libre par les panneaux flottants.
+ *
+ * Sur une fenêtre étroite, il n'y en a pas : `RoomPage` escamote le journal et
+ * le panneau joueur en deçà de `NARROW_WIDTH`. Continuer à leur réserver
+ * 544 px sur un écran qui en fait 430 ne laissait pas de place du tout — le
+ * plancher à 200 px prenait le relais, et la table était posée à 304 px du
+ * bord gauche, c'est-à-dire hors de l'écran. Il reste une gouttière de 12 px,
+ * celle du bouton d'escamotage.
+ */
 function freeArea(rect: DOMRect): { left: number; top: number; width: number; height: number } {
+  const narrow = rect.width < NARROW_WIDTH;
+  const left = narrow ? 12 : SIDE_LOG_WIDTH;
+  const right = narrow ? 12 : SIDE_PANEL_WIDTH;
   return {
-    left: SIDE_LOG_WIDTH,
+    left,
     top: TOP_BAR_HEIGHT,
-    width: Math.max(200, rect.width - SIDE_LOG_WIDTH - SIDE_PANEL_WIDTH),
+    width: Math.max(200, rect.width - left - right),
     height: Math.max(200, rect.height - TOP_BAR_HEIGHT - handHeight()),
   };
 }

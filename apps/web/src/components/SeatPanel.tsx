@@ -4,6 +4,7 @@ import { BATTLEFIELD_SCALE, CardSprite, CARD_HEIGHT, CARD_WIDTH, PILE_SCALE } fr
 import { CardBack } from './CardBack.js';
 import { zoneAttr } from '../lib/drag.js';
 import { dragJustEnded } from './DragLayer.js';
+import { useT } from '../lib/i18n/index.js';
 
 /**
  * Dimensions d'un terrain de joueur.
@@ -101,6 +102,7 @@ export function SeatPanel({
   onZoneClick,
   onZoneContextMenu,
 }: SeatPanelProps): React.ReactElement {
+  const t = useT();
   const placement = attachmentLayout(battlefield);
   /**
    * Trois retours partagent le bandeau d'identité : la consultation en cours,
@@ -150,7 +152,9 @@ export function SeatPanel({
       // « vous » ne se dit que sur sa propre pile. Ailleurs, c'est le nom du
       // joueur qui situe — « révélé à vous » sur la bibliothèque d'un autre
       // ne dit pas de qui est la bibliothèque.
-      .map((id) => (own && id === mySeat ? 'vous' : (seats.find((s) => s.id === id)?.displayName ?? id)))
+      .map((id) =>
+        own && id === mySeat ? t('seat.you') : (seats.find((s) => s.id === id)?.displayName ?? id),
+      )
       .join(', ');
     return { own, names };
   })();
@@ -204,11 +208,11 @@ export function SeatPanel({
             tax: casts * 2,
             taxTitle:
               casts === 0
-                ? 'Taxe de commandant : aucune, il n’a pas encore été lancé'
-                : `Taxe de commandant : +${casts * 2} (lancé ${casts} fois)`,
+                ? t('seat.commanderTaxNone')
+                : t('seat.commanderTax', { tax: casts * 2, casts }),
           };
         })
-      : [{ card: undefined, tax: null, taxTitle: 'Zone de commandement' }];
+      : [{ card: undefined, tax: null, taxTitle: t('zone.commandFull') }];
 
   return (
     <div
@@ -261,8 +265,11 @@ export function SeatPanel({
         Le nombre du bandeau se lit, mais il ne se **voit** pas — on ne sent pas
         la différence entre trois et sept cartes sans aller la chercher. Un
         éventail de dos la donne d'un coup d'œil, comme en face d'un vrai
-        joueur. On n'en dessine jamais plus de dix : au-delà, c'est le nombre
-        qui renseigne, pas la longueur de l'éventail.
+        joueur. L'éventail rend **toutes** les cartes : il en plafonnait dix, et
+        ce plafond coûtait précisément l'information qu'il est censé donner. Au
+        lieu de couper, le pas se resserre quand la main grossit (`OpponentHand`,
+        `handFanStep`) — une main de trente cartes ne prend pas trois fois la
+        place d'une main de dix, à une vraie table non plus.
       */}
       {/* Champ de bataille : tout le panneau, sauf les deux colonnes de piles.
           `data-mine` marque le nôtre : une recette de test doit pouvoir viser un
@@ -272,6 +279,20 @@ export function SeatPanel({
         className="absolute inset-0"
         data-zone={zoneAttr({ seat: seat.id, kind: 'BATTLEFIELD' })}
         data-mine={seat.id === mySeat ? '1' : undefined}
+        /*
+          Le décalage d'attachement, publié tel que ce panneau l'applique.
+
+          `scripts/verify-ui.mjs` en avait une copie en dur, et cette copie a
+          survécu à deux resserrages : la recette annonçait alors « l'attachée
+          est en 495,311 au lieu de 498,319 » sur un rendu parfaitement sain,
+          et l'on a cherché le défaut du mauvais côté. Le script étant du
+          JavaScript hors du graphe TypeScript, il ne peut pas importer la
+          constante — il la lit donc ici, à la source, sur le DOM réellement
+          rendu. Ce n'est pas circulaire : l'attribut porte les constantes, la
+          position vient de `attachmentLayout`, et l'étape continue de vérifier
+          que la seconde applique bien les premières.
+        */
+        data-attach-offset={`${ATTACH_OFFSET_X},${ATTACH_OFFSET_Y}`}
         style={{ left: COMMAND_COLUMN, right: PILE_COLUMN }}
       >
         {battlefield.map((card) => {
@@ -333,7 +354,7 @@ export function SeatPanel({
                 <span
                   className="pointer-events-none absolute -right-1 -top-2 rounded bg-sky-600 px-1 text-[10px] font-semibold text-white ring-1 ring-sky-300/50"
                   data-test="attach-badge"
-                  title="Objets attachés"
+                  title={t('seat.attachedObjects')}
                 >
                   🔗 {attachedCount.get(card.id)}
                 </span>
@@ -347,7 +368,7 @@ export function SeatPanel({
       <div className="absolute right-2 top-2 flex items-center gap-2 rounded bg-slate-950/80 px-2 py-1 text-xs ring-1 ring-white/10">
         <span className="h-2 w-2 rounded-full" style={{ background: seat.color }} />
         <span className="font-medium text-slate-200">{seat.displayName}</span>
-        {!seat.connected && <span className="text-amber-400">déconnecté</span>}
+        {!seat.connected && <span className="text-amber-400">{t('seat.disconnected')}</span>}
         {/*
           Trois états qui n'avaient aucune sortie visible : à qui est le tour,
           qui consulte sa bibliothèque, qui joue main ouverte. Ils tiennent
@@ -359,7 +380,7 @@ export function SeatPanel({
             data-test="active-turn"
             style={{ background: seat.color }}
           >
-            {isMe ? `Tour ${turnNumber} · à vous` : `Tour ${turnNumber}`}
+            {isMe ? t('seat.turnMine', { turn: turnNumber }) : t('seat.turn', { turn: turnNumber })}
           </span>
         )}
         {looking && (
@@ -367,7 +388,7 @@ export function SeatPanel({
             className="rounded bg-indigo-900/80 px-1.5 py-0.5 text-[10px] text-indigo-200 ring-1 ring-indigo-500/40"
             data-test="looking"
           >
-            {looking === 'REVEAL' ? '✨ révèle le dessus' : '👁 consulte sa bibliothèque'}
+            {looking === 'REVEAL' ? t('seat.revealingTop') : t('seat.lookingLibrary')}
           </span>
         )}
         {handRevealed && (
@@ -375,7 +396,7 @@ export function SeatPanel({
             className="rounded bg-amber-900/70 px-1.5 py-0.5 text-[10px] text-amber-200 ring-1 ring-amber-500/40"
             data-test="hand-revealed"
           >
-            main révélée
+            {t('seat.handRevealed')}
           </span>
         )}
         <span className="ml-1 text-base font-semibold text-slate-100">{seat.life}</span>
@@ -389,7 +410,7 @@ export function SeatPanel({
         <span
           className="inline-flex items-center gap-1 rounded bg-slate-800/90 px-1.5 py-0.5 text-[11px] font-semibold text-slate-100 ring-1 ring-white/15"
           data-test="hand-count"
-          title={`${counts.hand} carte(s) en main`}
+          title={t('seat.handCount', { count: counts.hand })}
         >
           <svg
             aria-hidden
@@ -446,7 +467,7 @@ export function SeatPanel({
         {commandPiles.map((pile, index) => (
           <ZonePile
             key={pile.card?.id ?? `vide-${index}`}
-            label="Commandement"
+            label={t('zone.command')}
             count={counts.command}
             color={seat.color}
             zone={zoneAttr({ seat: seat.id, kind: 'COMMAND' })}
@@ -477,7 +498,7 @@ export function SeatPanel({
         style={{ width: PILE_COLUMN - 16 }}
       >
         <ZonePile
-          label="Bibliothèque"
+          label={t('zone.library')}
           count={counts.library}
           color={seat.color}
           showBack
@@ -493,7 +514,7 @@ export function SeatPanel({
           onContextMenu={(event) => onZoneContextMenu('LIBRARY', event)}
         />
         <ZonePile
-          label="Cimetière"
+          label={t('zone.graveyard')}
           count={counts.graveyard}
           color="#64748b"
           zone={zoneAttr({ seat: seat.id, kind: 'GRAVEYARD' })}
@@ -504,7 +525,7 @@ export function SeatPanel({
           onContextMenu={(event) => onZoneContextMenu('GRAVEYARD', event)}
         />
         <ZonePile
-          label="Exil"
+          label={t('zone.exile')}
           count={counts.exile}
           color="#1f2937"
           zone={zoneAttr({ seat: seat.id, kind: 'EXILE' })}
@@ -523,7 +544,7 @@ export function SeatPanel({
 
       {isMe && (
         <span className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-slate-950/70 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
-          Votre zone
+          {t('seat.yourZone')}
         </span>
       )}
     </div>
@@ -533,15 +554,34 @@ export function SeatPanel({
 /**
  * Décalage d'une carte attachée par rapport à sa cible, en unités de panneau.
  *
- * Resserré : à 26 × 54 la carte attachée s'éloignait assez pour qu'on ne lise
- * plus un attachement mais deux permanents voisins. Il faut juste de quoi voir
- * le bord et le nom de celle du dessous.
+ * Resserré deux fois — 26 × 54, puis 16 × 30 — et pour la même raison : trop
+ * écartées, les deux cartes ne se lisent plus comme un attachement mais comme
+ * deux permanents voisins.
+ *
+ * 13 × 22 est le bout du chemin, et ce n'est pas une impression : la carte du
+ * dessous n'en montre plus que 32 % d'elle-même, et sous 30 % il ne reste plus
+ * assez de bord pour la viser au pointeur.
  */
-const ATTACH_OFFSET_X = 16;
-const ATTACH_OFFSET_Y = 30;
-/** Écart supplémentaire entre deux cartes attachées à la même cible. */
-const SIBLING_STEP_X = 7;
-const SIBLING_STEP_Y = 11;
+const ATTACH_OFFSET_X = 13;
+const ATTACH_OFFSET_Y = 22;
+/**
+ * Écart supplémentaire entre deux cartes attachées à la même cible.
+ *
+ * Deux contraintes le tiennent par les deux bouts, et elles se croisent.
+ *
+ * Par le bas : le troisième objet posé sur une même créature ne dépasse que de
+ * ce pas-là. À 5 × 8 il montre encore quatre pixels d'écran sur le côté et six
+ * en bas, au cadrage habituel de la table — le minimum pour le survoler.
+ *
+ * Par le haut : une carte attachée à celle de rang 0 se range à un décalage
+ * d'attachement de plus, c'est-à-dire **au milieu de ses frères**. Si le pas
+ * doublé rattrape ce décalage, elle disparaît exactement sous celui de rang 2 ;
+ * la sonde l'a montrée à zéro pixel atteignable avant qu'on descende le pas.
+ * Il faut donc garder 13 > 2 × 5 et 22 > 2 × 8 : ce sont ces trois unités de
+ * large et ces six de haut qui laissent une aura d'équipement encore visible.
+ */
+const SIBLING_STEP_X = 5;
+const SIBLING_STEP_Y = 8;
 
 /**
  * Position de rendu des permanents, attachements compris.
@@ -659,6 +699,7 @@ function ZonePile({
    */
   topReveal?: { own: boolean; names: string } | null;
 }): React.ReactElement {
+  const t = useT();
   // Sans badge explicite, on retombe sur le compte : c'est ce que font toutes
   // les piles sauf la zone de commandement, qui affiche la taxe à la place.
   const shownBadge = badge === undefined ? count : badge;
@@ -678,7 +719,7 @@ function ZonePile({
         onClick();
       }}
       onContextMenu={onContextMenu}
-      title={badgeTitle ?? `${label} — ${count}`}
+      title={badgeTitle ?? t('seat.pileTitle', { label, count })}
       type="button"
     >
       {preview ? (
@@ -724,8 +765,8 @@ function ZonePile({
           data-reveal={topReveal.own ? 'from-me' : 'to-me'}
           title={
             topReveal.own
-              ? `Le dessus de votre bibliothèque est révélé à ${topReveal.names}`
-              : `Le dessus de cette bibliothèque est révélé à ${topReveal.names}`
+              ? t('seat.topRevealedMine', { names: topReveal.names })
+              : t('seat.topRevealedOther', { names: topReveal.names })
           }
         >
           <svg

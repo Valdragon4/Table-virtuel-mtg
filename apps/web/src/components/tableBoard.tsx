@@ -226,10 +226,14 @@ function measures(w: number, h: number, gridW: number, gridH: number) {
 /**
  * De combien le décor déborde la grille des sièges, de chaque côté.
  *
- * `Table` en a besoin pour cadrer : « Voir toute la table » montrait la grille
- * au pixel près, donc exactement ce qu'il fallait voir avant qu'il y ait un
- * décor — et pas un balustre après. La valeur est dérivée des mêmes fractions
- * que le décor lui-même, pour qu'elle ne puisse pas s'en désynchroniser.
+ * `TableBackground` en tire l'étendue du voile d'ambiance : le décor entier
+ * doit s'assombrir avec la périphérie, pas seulement la grille. Le **cadrage**,
+ * lui, ne s'en sert plus : « voir toute la table » montre la grille — tous les
+ * panneaux, toutes les cartes — et rien d'autre. Cadrer aussi le décor revenait
+ * à cadrer une surface deux fois et demie plus large que la grille, et la table
+ * devenait un timbre-poste ; c'est ce que les joueurs signalaient. La valeur est
+ * dérivée des mêmes fractions que le décor lui-même, pour qu'elle ne puisse pas
+ * s'en désynchroniser.
  */
 export function sceneryMargin(gridW: number, gridH: number): number {
   const unit = Math.min(gridW, gridH);
