@@ -11,6 +11,7 @@ import {
   type IncomingPrinting,
   type PinnedPrinting,
 } from './pinned-printings.js';
+import { chooseDeckThumbnail, type ThumbnailCandidate } from './thumbnail.js';
 import { parseDeckText } from '../import/text.js';
 import { resolveDeck } from '../import/resolve.js';
 import { importFromArchidekt, DeckImportError } from '../import/archidekt.js';
@@ -322,7 +323,25 @@ export async function listDecks(userId: string): Promise<DeckSummary[]> {
     include: {
       cards: {
         orderBy: [{ zone: 'asc' }, { sortIndex: 'asc' }],
-        include: { card: { select: { name: true, setCode: true, colorIdentity: true } } },
+        /*
+         * `typeLine`, `cmc` et `rarity` ne servent qu'au choix de la carte
+         * représentative (`chooseDeckThumbnail`). Ce sont trois colonnes
+         * scalaires déjà chargées par la même jointure : les prendre ne coûte
+         * aucune requête de plus, et les prendre ici évite d'en faire une
+         * seconde par deck au moment d'élire la miniature.
+         */
+        include: {
+          card: {
+            select: {
+              name: true,
+              setCode: true,
+              colorIdentity: true,
+              typeLine: true,
+              cmc: true,
+              rarity: true,
+            },
+          },
+        },
       },
     },
   });
@@ -332,11 +351,26 @@ export async function listDecks(userId: string): Promise<DeckSummary[]> {
     let cardCount = 0;
     const commanders: DeckSummary['commanders'] = [];
     const pinnedPrintings: DeckSummary['pinnedPrintings'] = [];
+    const candidates: ThumbnailCandidate[] = [];
 
     for (const dc of deck.cards) {
       cardCount += dc.quantity;
       for (const c of dc.card.colorIdentity) colors.add(c);
       if (dc.zone === 'COMMANDER') commanders.push({ scryfallId: dc.scryfallId, name: dc.card.name });
+      /*
+       * La quantité n'entre pas dans le choix de la miniature : quatre
+       * exemplaires d'un éclair ne font pas de lui la carte qui représente le
+       * deck. Chaque carte distincte compte donc une fois.
+       */
+      candidates.push({
+        scryfallId: dc.scryfallId,
+        name: dc.card.name,
+        zone: dc.zone,
+        sortIndex: dc.sortIndex,
+        typeLine: dc.card.typeLine,
+        cmc: dc.card.cmc,
+        rarity: dc.card.rarity,
+      });
       // L'édition part avec le nom : « Forêt » trois fois de suite ne dirait pas
       // laquelle des trois illustrations est épinglée.
       if (dc.printingPinned) {
@@ -360,6 +394,7 @@ export async function listDecks(userId: string): Promise<DeckSummary[]> {
       playmatUrl: deck.playmatUrl,
       cardBackUrl: deck.cardBackUrl,
       commanders,
+      thumbnail: chooseDeckThumbnail(candidates),
       pinnedPrintings,
       colorIdentity: [...colors].sort(),
     };

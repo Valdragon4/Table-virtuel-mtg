@@ -88,6 +88,58 @@ describe('empilement', () => {
   });
 });
 
+describe('miniature de deck', () => {
+  it("affiche la carte que le serveur a élue, sans refaire le choix", () => {
+    // Le choix vit dans `apps/server/src/decks/thumbnail.ts` et il est testé
+    // là-bas. Si la page se met à trier des commandants ou à lire des coûts de
+    // mana, les deux règles divergeront en silence.
+    expect(page).toContain('deck.thumbnail');
+    expect(page).not.toMatch(/\bcmc\b/);
+  });
+
+  it("passe par la résolution d'illustration commune", () => {
+    // Ni URL Scryfall écrite à la main, ni choix de langue réimplémenté :
+    // `resolveCardImage` sait déjà servir l'impression française quand elle
+    // existe et l'anglaise sinon.
+    expect(page).toContain('resolveCardImage(');
+    expect(page).toContain('localizedCard(');
+    expect(page).not.toContain('cards.scryfall.io');
+  });
+
+  it("demande la plus petite image, jamais la grande", () => {
+    // Une page peut aligner vingt decks : `small` fait 146 px de large, `large`
+    // en fait 672. Le cadre affiché n'en montre que 80.
+    expect(page).toContain("version: 'small'");
+    expect(page).not.toContain("version: 'large'");
+    expect(page).toContain('loading="lazy"');
+  });
+
+  it("ne s'abonne aux résolutions qu'une fois pour toute la page", () => {
+    // Un abonnement par miniature ferait vingt fois le même re-rendu, et une
+    // demande de localisation par deck au lieu d'un lot unique.
+    expect(page.match(/useLocalizationTick\(\)/g) ?? []).toHaveLength(1);
+  });
+
+  it('se survole comme les commandants au-dessus', () => {
+    // La miniature doit montrer la carte en grand au survol, comme le nom du
+    // commandant juste à côté : même aperçu, même chemin.
+    expect(page).toMatch(/data-test="deck-thumbnail"[\s\S]{0,200}previewHoverProps\(/);
+  });
+
+  it('garde sa place quand il n\'y a pas de carte représentative', () => {
+    // Sans cadre vide, la colonne des noms cesse d'être une colonne.
+    expect(page).toContain('data-test="deck-thumbnail-empty"');
+  });
+
+  it('ne copie ni ne précharge aucune illustration', () => {
+    // L'invariant de droits : c'est le navigateur du joueur qui va chercher
+    // l'image chez Scryfall. Une vignette mise en cache par nous est une copie.
+    expect(page).not.toContain('new Image(');
+    expect(page).not.toContain('toDataURL');
+    expect(page).not.toMatch(/\bcanvas\b/i);
+  });
+});
+
 describe('langue', () => {
   it("laisse la résolution localisée décider du nom et de l'illustration", () => {
     // Les trois lieux passent le `scryfallId` du catalogue ; c'est l'aperçu qui
@@ -95,5 +147,57 @@ describe('langue', () => {
     // court-circuiter `resolveCardImage`.
     expect(apercu).toContain('resolveCardImage(');
     expect(apercu).toContain('localizedCardName(');
+  });
+});
+
+/*
+ * Le nom des commandants, et ce qu'il ne doit pas coûter.
+ *
+ * Le défaut corrigé : la ligne d'un deck affichait « Selenia, the Cursed
+ * Heart » sous une miniature française. Le nom passe désormais par
+ * `localizedCardName`, comme partout ailleurs dans le produit.
+ *
+ * Ce qui se casserait en silence :
+ *
+ * - une réimplémentation locale du repli (le `printedName` lu à la main), qui
+ *   divergerait à la première correction de `localizedCardName` ;
+ * - le glossaire des jetons appliqué à un nom propre de carte ;
+ * - un `useLocalizationTick()` par ligne, ou une demande hors du lot de la
+ *   frame : la page repasserait d'un `POST` à un par deck.
+ */
+describe('nom de commandant', () => {
+  it('rend le nom imprimé par le chemin commun, sans le réimplémenter', () => {
+    expect(page).toContain('localizedCardName(localized, commander.name)');
+    // Le repli est celui de `localizedCardName` : lire `printedName` ici
+    // serait une seconde règle de repli à maintenir.
+    expect(page).not.toContain('printedName');
+  });
+
+  it("ne passe pas un nom propre par le glossaire des jetons", () => {
+    // `tokenNames.ts` traduit des noms de **type** ; « Selenia » n'en est pas un.
+    // On vise l'appel et l'import, pas le mot : le commentaire de la page
+    // explique justement pourquoi le glossaire ne s'applique pas ici.
+    expect(page).not.toMatch(/tokenName\(/);
+    expect(page).not.toMatch(/from '[^']*tokenNames/);
+  });
+
+  it('garde le nom du catalogue comme clé', () => {
+    // Le français est un vernis d'affichage : l'identité de la carte reste
+    // `scryfallId`, et le survol comme la clé de liste s'y accrochent.
+    expect(page).toContain('key={commander.scryfallId}');
+    expect(page).toContain('previewHoverProps(commander.scryfallId)');
+  });
+
+  it("dit le même nom que la miniature qu'il accompagne", () => {
+    // Un `alt` anglais sous une illustration française désigne la même carte
+    // par deux mots différents — et c'est le `alt` que lit une synthèse vocale.
+    expect(page).toContain('localizedCardName(localized, card.name)');
+    expect(page).toContain('alt={nomAffiché}');
+  });
+
+  it("ne s'abonne toujours qu'une fois pour toute la page", () => {
+    // La garde qui compte : un abonnement par nom ferait, sur vingt decks,
+    // vingt re-rendus de la liste entière à chaque lot rentré.
+    expect(page.match(/useLocalizationTick\(\)/g) ?? []).toHaveLength(1);
   });
 });

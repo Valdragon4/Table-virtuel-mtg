@@ -1623,7 +1623,20 @@ async function findDoubleFaced() {
   await step('aucun bouton d’action sous les cartes du panneau', async () => {
     await page.locator('[data-zone-tab="GRAVEYARD"]').click();
     await page.waitForTimeout(200);
-    const buttons = await page.locator('[data-test="zone-card"] button').count();
+    /*
+     * « Bouton d'**action** », et la nuance compte : ce pas garde le panneau
+     * libre des raccourcis qui doublonneraient le menu contextuel. La pastille
+     * de mécaniques en est un `<button>` aussi, mais elle n'agit pas sur la
+     * carte — elle ouvre un panneau de lecture, exactement comme sur la table,
+     * et elle mérite d'être là. Elle est donc exclue nommément, ce qui laisse
+     * le pas échouer sur n'importe quel bouton qu'on ajouterait sans y penser.
+     *
+     * Sans cette exclusion le pas échouait par intermittence : la pastille
+     * n'apparaît que si la carte tombée au cimetière porte un mot-clé.
+     */
+    const buttons = await page
+      .locator('[data-test="zone-card"] button:not([data-test="card-keywords"])')
+      .count();
     if (buttons > 0) throw new Error(`${buttons} bouton(s) sous les cartes du panneau`);
   });
 

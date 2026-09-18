@@ -94,6 +94,26 @@ export interface DeckSummary {
   cardBackUrl: string | null;
   commanders: Array<{ scryfallId: string; name: string }>;
   /**
+   * La carte qui **représente** le deck : celle dont l'illustration sert de
+   * miniature dans « Mes decks ».
+   *
+   * Elle est choisie par le serveur (`chooseDeckThumbnail`) et non par
+   * l'interface, pour une raison qui n'est pas de commodité : le choix a besoin
+   * de la liste complète des cartes — ligne de type, valeur de mana, rareté —
+   * que ce résumé ne porte pas et n'a aucune raison de porter. Faire remonter
+   * cinquante cartes par deck pour n'en afficher qu'une seule ferait payer la
+   * page entière pour une vignette.
+   *
+   * `null` est un cas réel et non une panne : un deck vide n'a pas de carte
+   * représentative. L'interface montre alors un cadre vide plutôt qu'un trou,
+   * pour que les noms de deck restent alignés d'une ligne à l'autre.
+   *
+   * On ne transporte **que** l'identifiant et le nom. L'illustration, elle, se
+   * charge dans le navigateur du joueur depuis le CDN Scryfall, comme partout
+   * ailleurs : rien de Wizards of the Coast ne transite par nous.
+   */
+  thumbnail: { scryfallId: string; name: string } | null;
+  /**
    * Les impressions que le propriétaire a choisies à la main et que la
    * resynchronisation conserve. Vide sur la plupart des decks : c'est ce qui
    * permet à l'interface de ne rien afficher tant que la question ne se pose pas.

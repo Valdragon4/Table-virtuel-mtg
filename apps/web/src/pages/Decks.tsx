@@ -17,12 +17,124 @@ import { CardPreview, clearCardPreview, previewHoverProps } from '../components/
 import { LegalFooter } from '../components/LegalFooter.js';
 import { Wordmark } from '../components/Mark.js';
 import { AccountBar } from '../components/AccountBar.js';
-import { useT } from '../lib/i18n/index.js';
-import { useLanguage } from '../store/prefs.js';
+import { resolveCardImage, useT } from '../lib/i18n/index.js';
+import {
+  localizedCard,
+  localizedCardName,
+  useLocalizationTick,
+} from '../lib/cardLocalization.js';
+import { scryfallImage } from '../lib/cards.js';
+import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
+
+/**
+ * La miniature d'un deck : l'illustration de sa carte représentative.
+ *
+ * **Ce qu'elle montre.** Le serveur a déjà élu la carte (`chooseDeckThumbnail`,
+ * côté `apps/server/src/decks/thumbnail.ts`) : le commandant par défaut, le
+ * premier des deux quand il y a des partenaires, la carte la plus chère de la
+ * zone principale quand il n'y a pas de commandant du tout. L'interface ne
+ * refait pas ce choix, elle l'affiche.
+ *
+ * **Le cadrage, et pourquoi il est en bande.** Une carte entière a un rapport de
+ * 1 sur 1,4 : à la largeur qu'une ligne de liste peut céder, elle serait haute
+ * de cent pixels et doublerait la hauteur de chaque deck. On ne montre donc que
+ * l'**illustration**, découpée dans l'image complète : le cadre fait 80 × 40,
+ * soit deux fois plus large que haut, ce qui correspond très exactement à la
+ * bande d'art d'une carte au cadre moderne (36 % de sa hauteur), et
+ * `object-position` la centre à 16 % du haut de l'image — juste sous le titre,
+ * juste au-dessus de la ligne de type.
+ *
+ * On découpe côté navigateur plutôt que de demander l'`art_crop` de Scryfall :
+ * ce format n'est pas dans les tailles que `resolveCardImage` sait replier
+ * (`small` / `normal` / `large`), et l'y ajouter pour une vignette obligerait à
+ * toucher la résolution d'illustration de tout le projet. La différence est un
+ * découpage, pas une seconde image.
+ *
+ * **Le coût réseau.** `small` (146 × 204) et rien d'autre : c'est déjà plus que
+ * les 80 pixels affichés, et une page peut aligner vingt decks. `loading="lazy"`
+ * laisse le navigateur ignorer ce qui est sous la ligne de flottaison. Aucune
+ * requête de localisation n'est déclenchée **par deck** : `localizedCard` range
+ * les demandes dans le lot de la frame, qui part en un seul `POST` pour toute la
+ * page — et ce lot est le même cache que celui de l'aperçu au survol, qui n'a
+ * donc plus rien à demander ensuite.
+ *
+ * **Invariant de droits.** L'URL rendue pointe le CDN Scryfall et le
+ * navigateur du joueur va la chercher lui-même. Rien n'est téléchargé, stocké
+ * ni servi par nous : aucune construction d'image en mémoire, aucun
+ * préchargement, aucune vignette en base.
+ */
+function DeckThumbnail({ card }: { card: DeckSummary['thumbnail'] }): React.ReactElement {
+  const language = useLanguage();
+  const allowSubstitute = useForceLocalizedPrinting();
+
+  /*
+   * Le cadre garde sa place même vide, et c'est délibéré : sans lui, la ligne
+   * d'un deck sans carte représentative commencerait 92 pixels à gauche des
+   * autres, et la colonne des noms ne serait plus une colonne.
+   */
+  const cadre =
+    'h-10 w-20 shrink-0 overflow-hidden rounded-[3px] border border-[color:var(--site-floor-dim)]/40 bg-black/25';
+
+  if (!card) return <div aria-hidden="true" className={cadre} data-test="deck-thumbnail-empty" />;
+
+  /*
+   * La langue, par le seul chemin qui existe. `resolveCardImage` sert
+   * l'impression française quand elle existe et l'anglaise sinon ; tant que la
+   * résolution n'est pas rentrée, il rend l'URL dérivée du catalogue anglais,
+   * donc la vignette est visible tout de suite et devient française sans
+   * disparaître entre-temps. `allowSubstitute` suit la préférence du joueur
+   * pour que la miniature et l'aperçu au survol ne montrent jamais deux
+   * illustrations différentes de la même carte.
+   */
+  const localized = localizedCard(card.scryfallId, language);
+  const resolved = resolveCardImage({
+    card: { scryfallId: card.scryfallId },
+    localized,
+    language,
+    version: 'small',
+    allowSubstitute,
+  });
+
+  /*
+   * La même résolution sert le nom : l'illustration française et un `alt`
+   * anglais désigneraient la même carte par deux mots différents, et c'est le
+   * `alt` que lit une synthèse vocale. `localizedCardName` rend l'anglais du
+   * catalogue tant que le lot n'est pas rentré, donc jamais de trou.
+   */
+  const nomAffiché = localizedCardName(localized, card.name) ?? card.name;
+
+  return (
+    <div
+      className={`${cadre} cursor-help`}
+      data-test="deck-thumbnail"
+      {...previewHoverProps(card.scryfallId)}
+    >
+      <img
+        /* Le nom de la carte, et non « miniature du deck » : pour un deck de
+           60 cartes, c'est le seul endroit de la ligne où il soit lisible. */
+        alt={nomAffiché}
+        className="h-full w-full object-cover"
+        decoding="async"
+        draggable={false}
+        loading="lazy"
+        /* CDN Scryfall, directement : rien n'est hébergé ni proxifié chez nous. */
+        src={resolved.url ?? scryfallImage(card.scryfallId, 'small')}
+        style={{ objectPosition: '50% 16%' }}
+      />
+    </div>
+  );
+}
 
 export function DecksPage(): React.ReactElement {
   const t = useT();
   const language = useLanguage();
+  /*
+   * Un seul abonnement aux résolutions localisées pour toute la page, et non un
+   * par miniature : quand le lot rentre, la page se re-rend, et les vignettes
+   * relisent le cache au passage. Vingt abonnements pour vingt decks feraient
+   * vingt fois le même travail.
+   */
+  useLocalizationTick();
   const [decks, setDecks] = useState<DeckSummary[] | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
   const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
@@ -246,43 +358,72 @@ export function DecksPage(): React.ReactElement {
             {decks?.map((deck) => (
               <li className="rule-floor py-5" key={deck.id}>
                 <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="sign-sm truncate text-[1rem] text-[color:var(--site-floor-text)]">
-                      {deck.name}
-                    </p>
-                    <p className="mt-1 text-[0.82rem] text-[color:var(--site-floor-dim)]">
-                      <span className="typed">{deck.cardCount}</span>{' '}
-                      {t('card.countWord', { count: deck.cardCount })} ·{' '}
-                      {deck.source.toLowerCase()}
-                      {/* Les noms de commandant viennent du catalogue Scryfall :
-                          ils ne passent pas par le catalogue de libellés.
+                  {/* La miniature ouvre la ligne, à gauche du nom : c'est l'ordre
+                      de lecture, et c'est aussi ce qui permet de balayer la
+                      colonne des illustrations sans lire un seul mot. */}
+                  <div className="flex min-w-0 items-center gap-3">
+                    <DeckThumbnail card={deck.thumbnail} />
+                    <div className="min-w-0">
+                      <p className="sign-sm truncate text-[1rem] text-[color:var(--site-floor-text)]">
+                        {deck.name}
+                      </p>
+                      <p className="mt-1 text-[0.82rem] text-[color:var(--site-floor-dim)]">
+                        <span className="typed">{deck.cardCount}</span>{' '}
+                        {t('card.countWord', { count: deck.cardCount })} ·{' '}
+                        {deck.source.toLowerCase()}
+                        {/* Les noms de commandant viennent du catalogue Scryfall :
+                            ils ne passent pas par le catalogue de libellés.
 
-                          Ce sont les seules cartes visibles sur la liste
-                          elle-même, et chacune porte son `scryfallId` : on les
-                          rend une à une plutôt qu'en une chaîne jointe, pour
-                          que le survol désigne un commandant et pas la ligne
-                          entière. */}
-                      {deck.commanders.map((commander, index) => (
-                        <span key={commander.scryfallId}>
-                          {index === 0 ? ' · ' : ' & '}
-                          <span
-                            className="cursor-help underline decoration-dotted underline-offset-2"
-                            data-test="deck-commander"
-                            {...previewHoverProps(commander.scryfallId)}
-                          >
-                            {commander.name}
-                          </span>
-                        </span>
-                      ))}
-                      {/* La date suit la langue choisie, et non un `'fr-FR'` figé :
-                          « 09/18/2026 » sous un texte français, ou « 18/09/2026 »
-                          sous un texte anglais, se lit de travers dans les deux
-                          sens — et une date mal lue à un jour près se remarque. */}
-                      {deck.lastSyncedAt &&
-                        ` · ${t('deck.syncedOn', {
-                          date: new Date(deck.lastSyncedAt).toLocaleDateString(language),
-                        })}`}
-                    </p>
+                            Ce sont les seules cartes visibles sur la liste
+                            elle-même, et chacune porte son `scryfallId` : on les
+                            rend une à une plutôt qu'en une chaîne jointe, pour
+                            que le survol désigne un commandant et pas la ligne
+                            entière. */}
+                        {deck.commanders.map((commander, index) => {
+                          /*
+                           * Le nom imprimé, par le chemin commun — et **pas** par
+                           * le glossaire des jetons : `tokenNames.ts` traduit des
+                           * noms de type (« Soldier », « Treasure »), et un nom
+                           * propre de carte n'y a rien à faire.
+                           *
+                           * `localizedCard` ne coûte pas une requête de plus : la
+                           * demande rejoint le lot de la frame, celui que les
+                           * miniatures viennent d'ouvrir juste au-dessus, et
+                           * repart en un seul `POST` pour toute la page. Tant
+                           * qu'il n'est pas rentré, `localizedCardName` rend
+                           * l'anglais du catalogue : le nom est là tout de suite
+                           * et bascule sans clignoter — c'est le même texte au
+                           * même endroit, pas un texte qui apparaît.
+                           *
+                           * `commander.name` reste la clé : rien de ce qui est
+                           * traduit ici ne repart au serveur ni ne sert d'identité.
+                           */
+                          const localized = localizedCard(commander.scryfallId, language);
+                          const nomAffiché =
+                            localizedCardName(localized, commander.name) ?? commander.name;
+                          return (
+                            <span key={commander.scryfallId}>
+                              {index === 0 ? ' · ' : ' & '}
+                              <span
+                                className="cursor-help underline decoration-dotted underline-offset-2"
+                                data-test="deck-commander"
+                                {...previewHoverProps(commander.scryfallId)}
+                              >
+                                {nomAffiché}
+                              </span>
+                            </span>
+                          );
+                        })}
+                        {/* La date suit la langue choisie, et non un `'fr-FR'` figé :
+                            « 09/18/2026 » sous un texte français, ou « 18/09/2026 »
+                            sous un texte anglais, se lit de travers dans les deux
+                            sens — et une date mal lue à un jour près se remarque. */}
+                        {deck.lastSyncedAt &&
+                          ` · ${t('deck.syncedOn', {
+                            date: new Date(deck.lastSyncedAt).toLocaleDateString(language),
+                          })}`}
+                      </p>
+                    </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     <button
