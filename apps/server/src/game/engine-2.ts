@@ -188,17 +188,41 @@ export function applyIntentPart2(
     }
 
     case 'DESTROY_TOKEN': {
-      const removed: ObjectId[] = [];
-      let label = '';
+      const doomed: GameObjectState[] = [];
+      const seen = new Set<ObjectId>();
       for (const id of intent.cardIds) {
         const obj = state.objects.get(id);
-        if (!obj || obj.kind !== 'TOKEN') continue;
-        label ||= obj.card.name;
-        removeFromZone(state, obj.zone, id);
-        state.objects.delete(id);
-        removed.push(id);
+        // Un identifiant répété désignerait deux fois le même jeton : il serait
+        // compté deux fois dans la ligne de journal, et nommé deux fois.
+        if (!obj || obj.kind !== 'TOKEN' || seen.has(id)) continue;
+        seen.add(id);
+        doomed.push(obj);
       }
-      if (removed.length === 0) return { emissions: [] };
+      if (doomed.length === 0) return { emissions: [] };
+
+      /*
+       * Dire *quoi*, pas seulement *combien*.
+       *
+       * « 3 jetons de Valdragon ont été détruits » annonçait une action de masse
+       * sans dire sur quoi elle portait, alors que le cas singulier voisin
+       * nommait — même incohérence que le « a tout dégagé » corrigé dans
+       * `engine.ts`. Ces jetons étaient posés au vu de tous : un jeton qui
+       * quitte le champ de bataille cesse d'exister (cf. `MOVE_CARD`), donc ils
+       * y étaient tous, et les nommer n'apprend rien que la table n'ait déjà lu.
+       * `namedBatch` reste la règle commune — il tait les jetons face cachée et
+       * replie les listes au-delà du seuil.
+       *
+       * **Assemblé avant la suppression** : `namedBatch` interroge l'objet et sa
+       * zone, et un objet effacé de `state` n'a plus rien à répondre.
+       */
+      const named = namedBatch(doomed, state, 'BATTLEFIELD');
+
+      const removed: ObjectId[] = [];
+      for (const obj of doomed) {
+        removeFromZone(state, obj.zone, obj.id);
+        state.objects.delete(obj.id);
+        removed.push(obj.id);
+      }
 
       const detached = removed.flatMap((id) => detachDependents(state, id));
       return {
@@ -208,10 +232,20 @@ export function applyIntentPart2(
             audience: ALL,
             build: () => ({ type: 'TOKENS_DESTROYED', cardIds: removed }),
             log: {
-              text:
-                removed.length > 1
+              text: named
+                ? removed.length > 1
+                  ? `${removed.length} jetons de ${who} ont été détruits : ${named.names}`
+                  : `le jeton ${named.names} de ${who} a été détruit`
+                : // Hors d'atteinte en pratique — `TOKENS_CREATED` publie le jeton à
+                  // toute la table, donc `publicName` le nomme même retourné —, mais
+                  // une ligne de journal ne se construit jamais sur une hypothèse de
+                  // visibilité. Le compte est ce qui se dit sans mentir.
+                  removed.length > 1
                   ? `${removed.length} jetons de ${who} ont été détruits`
-                  : `le jeton ${label} de ${who} a été détruit`,
+                  : `un jeton de ${who} a été détruit`,
+              // Volontairement vides, et c'est la seule réponse juste : les objets
+              // viennent d'être effacés de `state`. Une ancre de survol pointerait
+              // sur un mort, qu'aucun client ne peut plus afficher ni surligner.
               cardIds: [],
             },
           },
@@ -620,25 +654,35 @@ export function applyIntentPart2(
 
       // Le tirage est fait ici, pas côté client : personne ne choisit sa défausse.
       const pool = [...hand];
+      // Le nombre est figé **avant** la boucle : `pool` rétrécit à chaque tirage,
+      // et une borne recalculée à chaque tour la croisait à mi-chemin — « défausse
+      // ta main » de sept cartes n'en défaussait que quatre.
+      const wanted = Math.min(intent.count, pool.length);
       const picked: ObjectId[] = [];
-      for (let i = 0; i < Math.min(intent.count, pool.length); i++) {
+      for (let i = 0; i < wanted; i++) {
         picked.push(...pool.splice(rng.below(pool.length), 1));
       }
 
       const emissions: Emission[] = [];
-      const names: string[] = [];
+      const landed: GameObjectState[] = [];
       for (const id of picked) {
         const obj = state.objects.get(id);
         if (!obj) continue;
-        names.push(obj.card.name);
         const from = relocate(state, obj, graveyard, 'TOP', rng, {});
         emissions.push(moveEmission(state, obj, from));
+        landed.push(obj);
       }
-      emissions[0]!.log = {
-        // La carte défaussée arrive au cimetière, donc publique : la nommer est correct.
-        text: `${who} a défaussé au hasard ${names.join(', ')}`,
-        cardIds: picked,
-      };
+      // La carte défaussée arrive au cimetière, donc publique : la nommer est
+      // correct. Mais la liste était assemblée à la main, sans seuil — « défausse
+      // ta main » à sept cartes écrivait sept noms d'affilée et poussait le reste
+      // de la partie hors du journal. `namedBatch` est la règle commune : elle
+      // replie au-delà du seuil tout en gardant toutes les ancres.
+      const named = namedBatch(landed, state, 'GRAVEYARD');
+      emissions[0]!.log = named
+        ? { text: `${who} a défaussé au hasard ${named.names}`, cardIds: named.cardIds }
+        : // Inatteignable en pratique (le cimetière est public), mais une ligne de
+          // journal ne se construit jamais sur une hypothèse de visibilité.
+          { text: `${who} a défaussé au hasard ${landed.length} carte(s)`, cardIds: [] };
       emissions.push(zoneCount(state, { seat: seatId, kind: 'HAND' }), zoneCount(state, graveyard));
       return { emissions };
     }
@@ -748,7 +792,7 @@ export function applyIntentPart2(
           build: () => ({ type: 'CARD_REVEALED', card: toPublicView(obj), toSeats: targets }),
         });
         /*
-         * **Le proprietaire doit l'apprendre aussi.**
+         * **Le propriétaire doit l'apprendre aussi.**
          *
          * `CARD_REVEALED` ne va qu'aux destinataires : celui qui montre sa
          * carte ne recevait rien, et son client ignorait l'instant d'après
@@ -855,6 +899,20 @@ export function applyIntentPart2(
               toSeats: targets,
               cards: cards.map(toPublicView),
             }),
+            /*
+             * **Ni nom ni ancre, et ce n'est pas un oubli.**
+             *
+             * L'émission est adressée aux seuls `targets`, donc nommer les
+             * cartes ici *semble* sans fuite. Ce serait la pire erreur du
+             * fichier : `Room.commit` attache la ligne de journal aussi bien à
+             * l'event réel qu'au `NOTED` de remplissage envoyé aux sièges hors
+             * audience, et `state.log` — repris tel quel dans le `logTail` de
+             * chaque snapshot — est unique pour toute la table. Une ligne de
+             * journal n'a pas de version par destinataire : le texte part à
+             * tous les sièges quelle que soit l'`audience` de son émission.
+             * Nommer la main la publierait donc à ceux à qui on a justement
+             * choisi de ne pas la montrer.
+             */
             log: { text: `${who} a révélé sa main`, cardIds: [] },
           },
         ],

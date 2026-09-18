@@ -15,7 +15,21 @@ export const zoneRefSchema = z
   .strict();
 
 const counterSchema = z
-  .object({ kind: z.string().min(1).max(32), value: z.number().int().min(-9999).max(9999) })
+  .object({
+    kind: z.string().min(1).max(32),
+    /*
+     * Facultative, comme `Counter.value` l'est depuis la v2 : un marqueur sans
+     * valeur est un mot-clé affiché seul (« vol », « monarque »), par
+     * opposition à un marqueur compté (« 3 × +1/+1 »). Le schéma l'exigeait, et
+     * l'on pouvait donc poser un mot-clé sur un permanent existant
+     * (`SET_COUNTER`) sans pouvoir créer un jeton qui en porte un d'emblée.
+     *
+     * Pas de `null` ici, contrairement à `SET_COUNTER` : « retirer le marqueur »
+     * n'a aucun sens dans la liste des marqueurs d'un jeton qu'on crée — on ne
+     * le met simplement pas.
+     */
+    value: z.number().int().min(-9999).max(9999).optional(),
+  })
   .strict();
 
 const coord = z.number().finite().min(-100_000).max(100_000);
@@ -208,6 +222,13 @@ export const intentSchema = intentUnion.superRefine((intent, ctx) => {
       ...(intent.toGraveyard ?? []),
       ...(intent.toExile ?? []),
       ...(intent.toBattlefield ?? []),
+      // `toSideboard` a été ajouté au type après coup et manquait ici. Une carte
+      // citée à la fois vers la réserve et vers la bibliothèque passait la
+      // garde : le moteur la déplaçait en réserve puis la réinsérait dans la
+      // liste de la bibliothèque, laissant l'objet présent dans deux zones — et
+      // le remélange qui suit une fouille lui donnait un identifiant neuf, si
+      // bien que la réserve gardait un identifiant qui ne désigne plus rien.
+      ...(intent.toSideboard ?? []),
     ];
     // Une même carte ne peut pas partir dans deux destinations à la fois.
     if (new Set(all).size !== all.length) {

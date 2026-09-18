@@ -325,6 +325,25 @@ export interface LogEntry {
   cardIds: ObjectId[];
 }
 
+/**
+ * Nombre de cartes qu'une ligne de journal nomme avant de replier le reste
+ * dans « … et N autres cartes ».
+ *
+ * La valeur est calibrée sur la colonne de journal — 288 pixels de large, six
+ * ou sept lignes visibles : six noms tiennent en deux lignes, et c'est l'ordre
+ * de grandeur des lots réels. Au-delà, ce que le journal a d'utile à dire est
+ * le **compte** ; le détail est dans le cimetière, juste à côté.
+ *
+ * Elle vit ici parce que les deux côtés doivent la lire **pareil**. Le serveur
+ * s'en sert pour couper l'énumération ; le client, pour savoir si une ligne
+ * est dépliable et offrir « Voir les N cartes ». Il le déduit des seuls
+ * `cardIds` et jamais du texte — l'abréviation est une phrase traduisible, la
+ * découper casserait à la première langue ajoutée. Deux copies qui dérivent
+ * donnent donc un bouton en trop ou un bouton manquant : jamais une
+ * divulgation, mais un défaut visible que rien ne rattrape.
+ */
+export const NAMED_LOG_LIMIT = 6;
+
 export interface LookSummary {
   mode: LookMode;
   count: number;

@@ -13,6 +13,7 @@
 import { ulid } from 'ulid';
 import {
   FREE_INTENTS,
+  NAMED_LOG_LIMIT,
   type Audience,
   type Counter,
   type Event,
@@ -183,19 +184,11 @@ function publicName(obj: GameObjectState, state: GameState): string {
   return everyoneSees ? cardName(obj) : 'une carte';
 }
 
-/**
- * Nombre de cartes au-delà duquel le journal cesse d'énumérer.
- *
- * Le journal est une colonne de 288 pixels et sa fenêtre visible tient six ou
- * sept lignes : une meule de vingt cartes énumérées pousserait tout le reste de
- * la partie hors de l'écran, et l'entrée elle-même deviendrait illisible. Six
- * noms tiennent en deux lignes, et c'est l'ordre de grandeur des lots réels
- * (une défausse, un lot ramassé au lasso, une meule de récurrence). Au-delà, ce
- * que le journal a d'utile à dire est le **compte** — le détail est dans le
- * cimetière, juste à côté, dans l'ordre exact, et les ancres du survol y
- * pointent toujours toutes.
+/*
+ * `NAMED_LOG_LIMIT` vient de `@mtg/shared` : le client en dépend pour décider
+ * si une ligne est dépliable, et il ne peut pas le déduire du texte abrégé
+ * sans le découper — voir le commentaire à sa définition.
  */
-const NAMED_LOG_LIMIT = 6;
 
 /**
  * Nomme un lot de cartes pour le journal, et rend les ancres correspondantes.
@@ -941,10 +934,15 @@ function applyIntentCore(
       if (changed.length === 0) return { emissions: [] };
 
       const emissions = changed.map(cardUpdate);
-      emissions[0]!.log = {
-        text: `${who} a ${tapped ? 'engagé' : 'dégagé'} ${changed.map((o) => publicName(o, state)).join(', ')}`,
-        cardIds: changed.map((o) => o.id),
-      };
+      // Un lasso engage volontiers dix permanents d'un coup : énumérer les dix
+      // pousse le reste de la partie hors du journal. `namedBatch` est la règle
+      // commune — il tait ce que la table n'a pas le droit de lire, replie
+      // au-delà du seuil, et garde malgré tout toutes les ancres.
+      const named = namedBatch(changed, state, 'BATTLEFIELD');
+      emissions[0]!.log = named
+        ? { text: `${who} a ${tapped ? 'engagé' : 'dégagé'} ${named.names}`, cardIds: named.cardIds }
+        : // Que des faces cachées : le compte est tout ce qui se dit sans mentir.
+          { text: `${who} a ${tapped ? 'engagé' : 'dégagé'} ${changed.length} carte(s)`, cardIds: [] };
       const ids = changed.map((o) => o.id);
       return {
         emissions,
@@ -965,14 +963,28 @@ function applyIntentCore(
       const changed = [...state.objects.values()].filter(
         (o) => o.zone.kind === 'BATTLEFIELD' && o.controller === target && o.tapped,
       );
+      // Rien n'était engagé : le geste n'a rien fait. Comme `TAP`/`UNTAP`, on se
+      // tait plutôt que d'annoncer un dégagement qui n'a rien dégagé — un
+      // joueur qui relit le journal doit pouvoir croire chaque ligne. Le bouton
+      // « Tout dégager » est cliqué à chaque début de tour, souvent pour rien :
+      // l'annoncer quand même noierait le journal sous des lignes vides.
+      if (changed.length === 0) return { emissions: [] };
+
       for (const obj of changed) obj.tapped = false;
       const emissions = changed.map(cardUpdate);
+      // Dire *quoi*, pas seulement *que* : « a tout dégagé » laissait l'adversaire
+      // deviner ce qui venait de se redresser. Même règle que `TAP`/`UNTAP` —
+      // `namedBatch` tait les faces cachées, replie les longues listes, et rend
+      // toutes les ancres pour que le survol surligne le lot entier.
+      const named = namedBatch(changed, state, 'BATTLEFIELD');
       // `NOTED` porte la ligne de journal et rien d'autre. Détourner
       // `PHASE_CHANGED` pour cela ferait croire à un changement de phase.
       emissions.push({
         audience: ALL,
         build: () => ({ type: 'NOTED' }),
-        log: { text: `${who} a tout dégagé`, cardIds: [] },
+        log: named
+          ? { text: `${who} a tout dégagé : ${named.names}`, cardIds: named.cardIds }
+          : { text: `${who} a tout dégagé : ${changed.length} carte(s)`, cardIds: [] },
       });
       return { emissions };
     }
@@ -1009,7 +1021,13 @@ function applyIntentCore(
       obj.knownTo.add(seatId);
       return {
         emissions: [
-          { ...cardUpdate(obj), log: { text: `${who} a retourné une carte face cachée`, cardIds: [] } },
+          {
+            ...cardUpdate(obj),
+            // L'ancre ne dit rien que la table ne voie déjà : le `CARD_UPDATED`
+            // part à tout le monde, chacun voit *cette* carte se retourner. Le
+            // nom, lui, reste tu — c'est la seule chose qui fuirait.
+            log: { text: `${who} a retourné une carte face cachée`, cardIds: [obj.id] },
+          },
         ],
       };
     }
@@ -1229,13 +1247,13 @@ function applyIntentCore(
       setCounter(obj, kind, next);
 
       const emission = cardUpdate(obj);
-      // Un mot-cle ne se compte pas : l'annoncer « 1 marqueur vol » serait faux.
+      // Un mot-clé ne se compte pas : l'annoncer « 1 marqueur vol » serait faux.
       emission.log = {
         text:
           next === undefined
-            ? `${who} a pose ${kind} sur ${publicName(obj, state)}`
+            ? `${who} a posé ${kind} sur ${publicName(obj, state)}`
             : next === null || next === 0
-              ? `${who} a retire ${kind} de ${publicName(obj, state)}`
+              ? `${who} a retiré ${kind} de ${publicName(obj, state)}`
               : `${who} a mis ${next} marqueur(s) ${kind} sur ${publicName(obj, state)}`,
         cardIds: [obj.id],
       };
