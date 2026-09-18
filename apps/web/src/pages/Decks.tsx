@@ -13,6 +13,7 @@ import { api, ApiError } from '../lib/api.js';
 import { DeckEditor } from '../components/DeckEditor.js';
 import { DeckLook } from '../components/DeckLook.js';
 import { ImportReportView } from '../components/ImportReportView.js';
+import { CardPreview, clearCardPreview, previewHoverProps } from '../components/CardPreview.js';
 import { LegalFooter } from '../components/LegalFooter.js';
 import { Wordmark } from '../components/Mark.js';
 import { AccountBar } from '../components/AccountBar.js';
@@ -43,6 +44,10 @@ export function DecksPage(): React.ReactElement {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Quitter la page par un lien laisse le curseur là où il était : aucun
+  // `pointerleave` ne viendra éteindre un aperçu resté allumé.
+  useEffect(() => clearCardPreview, []);
 
   async function runImport(payload: { url?: string; text?: string }): Promise<void> {
     setBusy(true);
@@ -215,9 +220,25 @@ export function DecksPage(): React.ReactElement {
                       {t('card.countWord', { count: deck.cardCount })} ·{' '}
                       {deck.source.toLowerCase()}
                       {/* Les noms de commandant viennent du catalogue Scryfall :
-                          ils ne passent pas par le catalogue de libellés. */}
-                      {deck.commanders.length > 0 &&
-                        ` · ${deck.commanders.map((c) => c.name).join(' & ')}`}
+                          ils ne passent pas par le catalogue de libellés.
+
+                          Ce sont les seules cartes visibles sur la liste
+                          elle-même, et chacune porte son `scryfallId` : on les
+                          rend une à une plutôt qu'en une chaîne jointe, pour
+                          que le survol désigne un commandant et pas la ligne
+                          entière. */}
+                      {deck.commanders.map((commander, index) => (
+                        <span key={commander.scryfallId}>
+                          {index === 0 ? ' · ' : ' & '}
+                          <span
+                            className="cursor-help underline decoration-dotted underline-offset-2"
+                            data-test="deck-commander"
+                            {...previewHoverProps(commander.scryfallId)}
+                          >
+                            {commander.name}
+                          </span>
+                        </span>
+                      ))}
                       {/* La date suit la langue choisie, et non un `'fr-FR'` figé :
                           « 09/18/2026 » sous un texte français, ou « 18/09/2026 »
                           sous un texte anglais, se lit de travers dans les deux
@@ -284,6 +305,20 @@ export function DecksPage(): React.ReactElement {
       {editing !== null && (
         <DeckEditor deckId={editing} onClose={() => setEditing(null)} onSaved={() => void refresh()} />
       )}
+
+      {/*
+        Le même aperçu qu'à la table, au même endroit — en bas à gauche. Il est
+        `fixed` et transparent aux gestes : il ne recouvre aucun champ de saisie
+        au sens où il empêcherait d'y écrire, et les listes continuent de
+        défiler sous lui.
+
+        Monté ici, il sert les commandants de la liste. L'éditeur monte le sien,
+        parce que son voile `z-50` ouvre un contexte d'empilement dont celui-ci
+        ne peut pas sortir — et **il n'y en a jamais deux à la fois** : la
+        recette d'interface compte les `data-test="card-preview"`, et deux
+        panneaux superposés n'auraient de toute façon rien à s'apprendre.
+      */}
+      {editing === null && <CardPreview />}
 
       <LegalFooter />
     </div>

@@ -28,7 +28,7 @@
  *
  * L'image vient directement du CDN Scryfall, comme partout ailleurs.
  */
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useGame } from '../store/game.js';
 import {
   CARD_HEIGHT,
@@ -141,11 +141,34 @@ export function CardPreview(): React.ReactElement | null {
    * courant. C'est ce qui garantit qu'aucun déplacement ne « colle » : dès que
    * la carte survolée change, l'aperçu rentre chez lui si rien ne l'en empêche.
    */
+  /*
+   * La hauteur réellement occupée, mesurée, et non celle de l'illustration.
+   *
+   * Sous l'image, le panneau porte un bandeau — nom de la carte, coût de mana —
+   * qui n'entre dans aucun calcul si l'on se contente de `size.height`. Le
+   * placement posait donc le sommet trop bas et le bandeau débordait d'une
+   * vingtaine de pixels sous la fenêtre, à la table comme dans l'éditeur de
+   * deck. On mesure plutôt que d'ajouter une constante : un nom long passe à la
+   * ligne, et la hauteur n'est pas la même selon la carte survolée.
+   *
+   * Tant que rien n'est mesuré, on retombe sur la hauteur d'image : c'est
+   * l'ancien comportement, et il vaut mieux qu'un saut au premier rendu.
+   */
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelHeight, setPanelHeight] = useState<number | null>(null);
+  const boxed = { width: size.width, height: panelHeight ?? size.height };
+
   const previewKey = preview?.scryfallId ?? null;
   useLayoutEffect(() => {
+    const measured = panelRef.current?.getBoundingClientRect().height ?? null;
+    if (measured !== null && measured > 0) {
+      setPanelHeight((current) =>
+        current !== null && Math.abs(current - measured) < 1 ? current : measured,
+      );
+    }
     const next = shown
       ? choosePreviewCorner({
-          size,
+          size: { width: size.width, height: measured ?? size.height },
           viewport,
           margin: MARGIN,
           hovered: hoveredCardRects(hoveredId, lastPointer()),
@@ -192,7 +215,9 @@ export function CardPreview(): React.ReactElement | null {
     language,
   });
 
-  const rect = previewRect(corner, size, viewport, MARGIN);
+  // `boxed` porte la hauteur **mesurée** du panneau, bandeau de nom compris ;
+  // `size` ne décrit que l'illustration et servirait à poser le sommet trop bas.
+  const rect = previewRect(corner, boxed, viewport, MARGIN);
 
   return (
     <div
@@ -207,6 +232,7 @@ export function CardPreview(): React.ReactElement | null {
       data-preview-corner={corner}
       data-preview-side={corner.endsWith('left') ? 'left' : 'right'}
       data-preview-source={source}
+      ref={panelRef}
       style={{ left: rect.left, top: rect.top, width: rect.width }}
     >
       <div className="relative overflow-hidden rounded-[14px] bg-slate-950 shadow-2xl shadow-black/90 ring-1 ring-white/20 transition-all">
@@ -236,6 +262,43 @@ export function CardPreview(): React.ReactElement | null {
       )}
     </div>
   );
+}
+
+/**
+ * Les poignées de survol, pour une simple impression.
+ *
+ * Elles existent pour que les pages **hors table** — l'éditeur de deck, le
+ * choix d'une impression — déclenchent le même aperçu que la table sans en
+ * réécrire un second : un jumeau divergerait dès la première correction du
+ * repli d'illustration, du repère de langue ou du placement.
+ *
+ * Elles passent volontairement par le chemin « impression » et non par
+ * `setHovered`, pour la raison qu'`OpponentHand` donne déjà : désigner une
+ * carte comme « carte survolée » la donne pour cible aux raccourcis
+ * contextuels. Dans un éditeur de deck, rien ne doit devenir la cible d'une
+ * action de jeu — et la plupart de ces cartes n'ont d'ailleurs aucun objet de
+ * partie derrière elles.
+ *
+ * `getState()` plutôt qu'un sélecteur : on ne fait qu'**écrire** dans le store,
+ * et s'y abonner ferait re-rendre toute une liste de cartes à chaque survol.
+ */
+export function previewHoverProps(scryfallId: string | null | undefined): {
+  onPointerEnter: () => void;
+  onPointerLeave: () => void;
+} {
+  return {
+    onPointerEnter: () => useGame.getState().hoverPreview(scryfallId ?? null),
+    onPointerLeave: () => useGame.getState().hoverPreview(null),
+  };
+}
+
+/**
+ * Éteint l'aperçu. À appeler au démontage de ce qui l'a allumé : une modale
+ * fermée sous le curseur n'émet aucun `pointerleave`, et l'aperçu resterait
+ * seul à l'écran, au-dessus d'une page qui ne montre plus rien de tel.
+ */
+export function clearCardPreview(): void {
+  useGame.getState().hoverPreview(null);
 }
 
 /** Les identifiants sont des ULID, mais on ne construit pas un sélecteur à l'aveugle. */

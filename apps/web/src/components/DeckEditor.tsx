@@ -20,6 +20,7 @@ import { resolveCardImage, useT } from '../lib/i18n/index.js';
 import { useLanguage } from '../store/prefs.js';
 import { useCloseOnEscape } from '../lib/overlay.js';
 import { ImportReportView } from './ImportReportView.js';
+import { CardPreview, clearCardPreview, previewHoverProps } from './CardPreview.js';
 
 /** Mots-clés Magic en anglais, libellés d'interface en français. */
 const ZONE_LABEL: Record<DeckZone, string> = {
@@ -84,6 +85,13 @@ export function DeckEditor({
   const [detachAsked, setDetachAsked] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
   const [dirty, setDirty] = useState(false);
+
+  /*
+   * L'éditeur se ferme souvent sous le curseur — Échap, ou un clic sur le
+   * voile. Aucun `pointerleave` n'est alors émis, et l'aperçu survivrait à la
+   * modale qui l'a allumé.
+   */
+  useEffect(() => clearCardPreview, []);
 
   useEffect(() => {
     void api
@@ -190,6 +198,14 @@ export function DeckEditor({
 
   return (
     <div className="site fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-3 sm:p-8" onClick={onClose}>
+      {/*
+        L'aperçu est monté **dans** le voile, et non à côté : le voile porte
+        `z-50` et ouvre donc son propre contexte d'empilement. Peint en dehors,
+        l'aperçu (`z-[45]`) passerait sous le noir et ne se verrait pas. Il ne
+        capte pas le pointeur, le clic de fermeture du voile lui traverse
+        dessus sans rien changer.
+      */}
+      <CardPreview />
       <div
         className="dark-panel flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-lg shadow-[0_30px_70px_-20px_rgba(0,0,0,0.9)]"
         data-testid="deck-editor"
@@ -361,25 +377,38 @@ function CardRow({
   return (
     <li className="rounded border border-[color:var(--site-floor-rule)] bg-[color:var(--site-floor)]/70 px-2.5 py-2">
       <div className="flex flex-wrap items-center gap-2">
-        <img
-          alt=""
-          className="h-10 w-7 shrink-0 rounded-sm object-cover"
-          loading="lazy"
-          src={
-            resolveCardImage({
-              card: { scryfallId: row.scryfallId },
-              localized,
-              language,
-              version: 'small',
-            }).url ?? scryfallImage(row.scryfallId, 'small')
-          }
-        />
+        {/*
+          La zone de survol couvre la vignette **et** le nom, pas la ligne
+          entière : les contrôles à droite — quantité, zone, édition — sont le
+          domaine de la souris qui modifie, et l'aperçu n'a pas à s'allumer
+          pendant qu'on y vise. Elle exclut aussi le choix d'édition déplié
+          plus bas, qui a son propre survol.
+        */}
+        <div
+          className="flex min-w-0 flex-1 basis-[10rem] items-center gap-2"
+          data-test="deck-row-card"
+          {...previewHoverProps(row.scryfallId)}
+        >
+          <img
+            alt=""
+            className="h-10 w-7 shrink-0 rounded-sm object-cover"
+            loading="lazy"
+            src={
+              resolveCardImage({
+                card: { scryfallId: row.scryfallId },
+                localized,
+                language,
+                version: 'small',
+              }).url ?? scryfallImage(row.scryfallId, 'small')
+            }
+          />
 
-        <div className="min-w-0 flex-1 basis-[10rem]">
-          <p className="truncate text-[0.9rem]">{shownName}</p>
-          <p className="typed truncate text-[0.7rem] text-[color:var(--site-floor-dim)]">
-            {row.setCode?.toUpperCase() ?? '—'} {row.collectorNumber ?? ''} · {row.typeLine}
-          </p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[0.9rem]">{shownName}</p>
+            <p className="typed truncate text-[0.7rem] text-[color:var(--site-floor-dim)]">
+              {row.setCode?.toUpperCase() ?? '—'} {row.collectorNumber ?? ''} · {row.typeLine}
+            </p>
+          </div>
         </div>
 
         <div className="flex w-full flex-wrap items-center gap-1 sm:w-auto sm:shrink-0 sm:flex-nowrap">
@@ -513,7 +542,11 @@ function EditionPicker({
         <button
           key={printing.scryfallId}
           className={`shrink-0 text-left ${printing.scryfallId === scryfallId ? 'ring-2 ring-[color:var(--site-stamp)]' : ''}`}
+          data-test="deck-printing"
           onClick={() => onPick(printing)}
+          /* On choisit une illustration : c'est justement le moment où l'on a
+             besoin de la voir en grand. */
+          {...previewHoverProps(printing.scryfallId)}
         >
           <img
             alt={t('printing.label', { name: shownName, setCode: printing.setCode })}
@@ -604,6 +637,10 @@ function AddCard({ onAdd }: { onAdd: (card: CardMeta, zone: DeckZone) => void })
               <button
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[color:var(--site-floor-lift)]"
                 data-testid="deck-editor-result"
+                /* Le résultat de recherche est une impression sans objet de
+                   partie : le chemin « impression » est le seul possible, et
+                   c'est aussi le seul souhaitable. */
+                {...previewHoverProps(card.scryfallId)}
                 onClick={() => {
                   onAdd(card, zone);
                   setQuery('');

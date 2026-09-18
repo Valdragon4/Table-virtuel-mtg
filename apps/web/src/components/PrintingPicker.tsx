@@ -34,6 +34,18 @@ export function PrintingPicker({
   useLocalizationTick();
   const language = useLanguage();
 
+  /*
+   * Pas d'aperçu agrandi ici, et c'est délibéré.
+   *
+   * Le geste y manque pourtant — choisir une illustration sans la voir en grand
+   * n'a guère de sens. Mais cette modale-ci vit **à la table**, sous un voile
+   * `z-50` qui ouvre son propre contexte d'empilement : l'aperçu monté par la
+   * salle (`z-[45]`) se peint dessous, et en monter un second à l'intérieur
+   * ferait exister deux `data-test="card-preview"` en même temps — ce que la
+   * recette d'interface compte. Le faire proprement demande de décider **où**
+   * la salle monte le sien, donc de toucher `Room.tsx`. À reprendre là-bas.
+   */
+
   useEffect(() => {
     void api
       .get<{ printings: CardMeta[] }>(`/api/cards/${card.scryfallId}/printings`)
