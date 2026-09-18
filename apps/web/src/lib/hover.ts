@@ -28,11 +28,26 @@ function cardAt(x: number, y: number): string | null {
   return null;
 }
 
+/**
+ * Dernière position connue du pointeur, `null` tant qu'il n'a pas bougé.
+ *
+ * L'aperçu agrandi en a besoin pour retrouver le rectangle de ce qu'il montre
+ * quand il s'agit d'une simple impression — un résultat de recherche de jeton,
+ * l'étagère — qu'aucun identifiant ne désigne. Plutôt que d'ouvrir un second
+ * suivi du pointeur ailleurs, on partage celui-ci : deux suivis finiraient par
+ * diverger, et l'un des deux aurait tort.
+ */
+export function lastPointer(): { x: number; y: number } | null {
+  if (pointerX === null || pointerY === null) return null;
+  return { x: pointerX, y: pointerY };
+}
+
 function resolve(): void {
   frame = null;
   if (pointerX === null || pointerY === null) return;
-  const found = cardAt(pointerX, pointerY);
   const state = useGame.getState();
+  if (state.menu !== null) return;
+  const found = cardAt(pointerX, pointerY);
   if (state.hoveredCardId !== found) state.setHovered(found);
 }
 

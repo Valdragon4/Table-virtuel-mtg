@@ -13,7 +13,21 @@ export function useCloseOnEscape(onClose: () => void): void {
       event.stopPropagation();
       onClose();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    /*
+     * En **capture**, comme `Dialog`, `CardMenu`, `TableMenu`, `LookModal` et
+     * `ZoneMenu`.
+     *
+     * Tous ces voisins écoutent `Échap` en capture **et** coupent la
+     * propagation. Un écouteur posé ici en bouillonnement ne recevait donc
+     * jamais la touche dès que l'un d'eux était monté : la surface restait
+     * ouverte, et son voile plein écran avalait ensuite tous les clics — ce que
+     * l'en-tête de ce fichier annonce précisément comme le dégât à éviter.
+     *
+     * Le cas s'est réellement produit sur `ZoneMenu`, où le drapeau avait été
+     * retiré par inadvertance : dix étapes saines de `verify-ui` tombaient en
+     * cascade, et le coupable a mis une matinée à se désigner.
+     */
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 }

@@ -21,6 +21,7 @@ import type { SeatId, ZoneRef } from '@mtg/shared';
 import { useGame } from '../store/game.js';
 import { useMenuPlacement } from '../lib/menu.js';
 import { askNumber, openDialog } from './Dialog.js';
+import { useT } from '../lib/i18n/index.js';
 
 /**
  * Une ligne du menu.
@@ -52,6 +53,7 @@ export function ZoneMenu({
   y: number;
   onClose: () => void;
 }): React.ReactElement | null {
+  const t = useT();
   const send = useGame((s) => s.send);
   const mySeat = useGame((s) => s.mySeat);
   const seats = useGame((s) => s.seats);
@@ -63,12 +65,24 @@ export function ZoneMenu({
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {
+    useGame.getState().setHovered(null);
+    useGame.getState().hoverPreview(null);
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.stopPropagation();
         closeRef.current();
       }
     };
+    /*
+     * En **capture**, comme `CardMenu`, `TableMenu`, `Dialog` et `LookModal`.
+     *
+     * Tous ces voisins écoutent `Échap` en capture et appellent
+     * `stopPropagation()`. Un écouteur posé ici en bouillonnement ne recevrait
+     * donc jamais la touche dès que l'un d'eux est monté : le menu de zone
+     * resterait ouvert, et son voile plein écran avalerait tous les clics
+     * suivants. Le cas s'est produit — le drapeau avait été retiré par
+     * inadvertance, et dix étapes saines de `verify-ui` tombaient en cascade.
+     */
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, []);
@@ -84,7 +98,7 @@ export function ZoneMenu({
   const ask = (question: string, fallback: string, use: (count: number) => void): void => {
     void askNumber({
       title: question,
-      label: 'Nombre de cartes',
+      label: t('zoneMenu.cardCountLabel'),
       initial: Number.parseInt(fallback, 10),
       quick: [1, 2, 3, 4, 5, 10],
     }).then((count) => {
@@ -104,14 +118,14 @@ export function ZoneMenu({
   const askReveal = (): void => {
     const current = topReveals.get(zone.seat)?.toSeats ?? [];
     void openDialog({
-      title: 'Révéler le dessus de ma bibliothèque',
-      description:
-        'La carte du dessus reste visible de ces joueurs et suit chaque pioche, chaque meule et chaque mélange. Ne cocher personne arrête la révélation.',
-      submitLabel: 'Appliquer',
-      choicesLabel: 'Visible par',
+      title: t('zoneMenu.revealTopTitle'),
+      description: t('zoneMenu.revealTopDescription'),
+      submitLabel: t('common.apply'),
+      choicesLabel: t('zoneMenu.revealTopVisibleBy'),
       choices: seats.map((seat) => ({
         id: seat.id,
-        label: seat.id === mySeat ? `${seat.displayName} (moi)` : seat.displayName,
+        label:
+          seat.id === mySeat ? t('seat.meSuffix', { name: seat.displayName }) : seat.displayName,
         color: seat.color,
         checked: current.includes(seat.id),
       })),
@@ -126,79 +140,79 @@ export function ZoneMenu({
   if (mine && zone.kind === 'LIBRARY') {
     entries.push(
       {
-        label: 'Piocher 1',
+        label: t('zoneMenu.draw1'),
         run: () => send({ type: 'DRAW', count: 1 }),
         more: {
-          question: 'Piocher combien de cartes ?',
+          question: t('zoneMenu.drawHowMany'),
           initial: 2,
           run: (n) => send({ type: 'DRAW', count: n }),
         },
       },
       {
-        label: 'Scry 1',
+        label: t('zoneMenu.scry1'),
         separatorBefore: true,
         run: () => send({ type: 'LOOK', zone, count: 1, mode: 'SCRY' }),
         more: {
-          question: 'Scry combien ?',
+          question: t('zoneMenu.scryHowMany'),
           initial: 2,
           run: (n) => send({ type: 'LOOK', zone, count: n, mode: 'SCRY' }),
         },
       },
       {
-        label: 'Surveil 1',
+        label: t('zoneMenu.surveil1'),
         run: () => send({ type: 'LOOK', zone, count: 1, mode: 'SURVEIL' }),
         more: {
-          question: 'Surveil combien ?',
+          question: t('zoneMenu.surveilHowMany'),
           initial: 2,
           run: (n) => send({ type: 'LOOK', zone, count: n, mode: 'SURVEIL' }),
         },
       },
       {
-        label: 'Regarder le dessus',
+        label: t('zoneMenu.peekTop'),
         run: () => send({ type: 'LOOK', zone, count: 1, mode: 'PEEK' }),
         more: {
-          question: 'Regarder combien de cartes ?',
+          question: t('zoneMenu.peekHowMany'),
           initial: 3,
           run: (n) => send({ type: 'LOOK', zone, count: n, mode: 'PEEK' }),
         },
       },
       {
-        label: 'Meuler 1',
+        label: t('zoneMenu.mill1'),
         run: () => send({ type: 'MILL', count: 1 }),
         more: {
-          question: 'Meuler combien de cartes ?',
+          question: t('zoneMenu.millHowMany'),
           initial: 3,
           run: (n) => send({ type: 'MILL', count: n }),
         },
       },
       {
-        label: 'Exiler le dessus',
+        label: t('zoneMenu.exileTop'),
         run: () => send({ type: 'EXILE_TOP', count: 1 }),
         more: {
-          question: 'Exiler combien de cartes ?',
+          question: t('zoneMenu.exileHowMany'),
           initial: 2,
           run: (n) => send({ type: 'EXILE_TOP', count: n }),
         },
       },
       {
-        label: 'Exiler le dessus, face cachée',
+        label: t('zoneMenu.exileTopFaceDown'),
         run: () => send({ type: 'EXILE_TOP', count: 1, faceDown: true }),
         more: {
-          question: 'Exiler combien de cartes, face cachée ?',
+          question: t('zoneMenu.exileFaceDownHowMany'),
           initial: 2,
           run: (n) => send({ type: 'EXILE_TOP', count: n, faceDown: true }),
         },
       },
       {
-        label: 'Fouiller la bibliothèque',
+        label: t('zoneMenu.searchLibrary'),
         separatorBefore: true,
         run: () => send({ type: 'LOOK', zone, count: 'ALL', mode: 'SEARCH' }),
       },
       {
-        label: 'Révéler le dessus (X cartes)',
+        label: t('zoneMenu.revealTopX'),
         run: () => send({ type: 'LOOK', zone, count: 1, mode: 'REVEAL' }),
         more: {
-          question: 'Révéler combien de cartes du dessus ?',
+          question: t('zoneMenu.revealHowMany'),
           initial: 4,
           run: (n) => send({ type: 'LOOK', zone, count: n, mode: 'REVEAL' }),
         },
@@ -206,27 +220,27 @@ export function ZoneMenu({
       {
         label:
           (topReveals.get(zone.seat)?.toSeats.length ?? 0) > 0
-            ? 'Révéler le dessus… (en cours)'
-            : 'Révéler le dessus…',
+            ? t('zoneMenu.revealTopOngoing')
+            : t('zoneMenu.revealTop'),
         run: askReveal,
       },
       {
-        label: 'Ouvrir le panneau des zones',
+        label: t('zoneMenu.openZonePanel'),
         run: () => window.dispatchEvent(new CustomEvent('mtg:browse-zone', { detail: zone })),
       },
-      { label: 'Mélanger', separatorBefore: true, run: () => send({ type: 'SHUFFLE', zone }) },
-      { label: 'Mulligan', run: () => send({ type: 'MULLIGAN' }) },
+      { label: t('common.shuffle'), separatorBefore: true, run: () => send({ type: 'SHUFFLE', zone }) },
+      { label: t('toolbar.mulligan'), run: () => send({ type: 'MULLIGAN' }) },
     );
   } else if (zone.kind === 'COMMAND') {
     entries.push({
-      label: 'Ouvrir dans le panneau des zones',
+      label: t('zoneMenu.openInZonePanel'),
       run: () => {
         window.dispatchEvent(new CustomEvent('mtg:browse-zone', { detail: zone }));
       },
     });
   } else if (zone.kind === 'GRAVEYARD' || zone.kind === 'EXILE') {
     entries.push({
-      label: 'Ouvrir dans le panneau des zones',
+      label: t('zoneMenu.openInZonePanel'),
       run: () => {
         // Ces zones sont publiques : les parcourir se fait côté client, sans intent.
         window.dispatchEvent(new CustomEvent('mtg:browse-zone', { detail: zone }));
@@ -234,7 +248,7 @@ export function ZoneMenu({
     });
     if (mine && zone.kind === 'GRAVEYARD') {
       entries.push({
-        label: 'Tout remettre dans la bibliothèque',
+        label: t('zoneMenu.graveyardToLibrary'),
         separatorBefore: true,
         run: () => {
           const ids = [...useGame.getState().cards.values()]
