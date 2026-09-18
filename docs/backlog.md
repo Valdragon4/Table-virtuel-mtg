@@ -4,14 +4,23 @@ Liste tenue à jour des demandes reçues et non encore livrées. Elle existe pou
 qu'une interruption ne fasse rien perdre : ce qui est fait sort d'ici, ce qui
 arrive y entre.
 
-Dernière revue : 15 septembre 2026, après déploiement de `magic.valentin-marot.fr`.
+Dernière revue : 18 septembre 2026, après la session de corrections d'interface et
+la pose du socle d'internationalisation.
 
 ## Demandé, pas encore livré
 
-Il reste **le choix de la langue des cartes** (français / anglais) avec une
-recherche qui trouve la carte quelle que soit la langue tapée. L'ingestion
-Scryfall ne garde aujourd'hui que `lang = 'en'` : il faudra ingérer aussi le
-français et indexer les deux noms. Seules ces deux langues.
+**Le choix de la langue des cartes** (français / anglais) est livré pour
+l'**affichage** : les cartes s'affichent en français avec repli anglais dans
+toutes les vues, et la langue est une préférence de compte modifiable en pleine
+partie. La solution retenue n'est pas celle qui était envisagée ici — nous
+n'ingérons pas un second bulk, nous **résolvons** l'impression traduite carte par
+carte (`POST /api/cards/localized`), parce que chez Scryfall une carte française
+est un objet distinct et non une variante d'URL. Voir `docs/i18n.md`.
+
+**Ce qui reste de la demande d'origine, c'est la recherche.** L'ingestion ne garde
+toujours que `lang = 'en'` (`CATALOG_LANGUAGE`), et rien n'indexe les noms
+français : taper « Anneau » ne trouve rien. Le reste des manques est détaillé sous
+« Décisions en attente et chantiers ouverts ».
 
 
 ## Interactions de table
@@ -43,7 +52,136 @@ exercé par une étape de `scripts/verify-ui.mjs`, contre la pile locale
 | U7 | `Ctrl+Z` annonce « plus rien à annuler » là où l'action n'était pas annulable, et aucun bouton « Annuler » n'existe | **serveur** + barre d'actions |
 | A1 | Une erreur `t:'error'` non fatale est maintenant montrée ; le socket, lui, n'attend toujours aucun `pong` et ne détecte pas une coupure silencieuse | **`net/socket.ts`** |
 
+## Décisions en attente et chantiers ouverts
+
+Consignés le 18 septembre 2026. Rien n'est tranché ici : ce sont des choix qui
+appartiennent au propriétaire du projet, ou des chantiers dont le volume mérite
+d'être vu avant d'être lancé. Les points 1 à 6 relèvent de la décision, les 7 et 8
+sont des défauts établis qui attendent leur correctif.
+
+### 1. Traduire le journal de partie — le prix est une coupure
+
+Le serveur fabrique des **phrases françaises** et les pousse telles quelles dans
+`state.log`, noms de cartes cuits dedans. Traduire le journal impose qu'il publie
+une **clé et des paramètres** à la place. C'est un changement de format de
+message : il coûte une montée de `PROTOCOL_VERSION`, donc la **déconnexion de
+toutes les tables ouvertes** au déploiement, plus une reprise de `engine.ts` et
+`engine-2.ts` — y compris la réécriture rétroactive des lignes, qui s'exprime
+aujourd'hui par une expression régulière sur du texte français.
+
+Les trois options (laisser en l'état, traduire maintenant, en faire un lot déployé
+à une heure creuse) sont posées au §7 de `docs/i18n.md`, qui ne tranche pas non
+plus. L'option par défaut en vigueur est « laisser en français ».
+
+**Ce que cela débloquerait du même coup**, et qui est moins évident : le
+**dépliage localisé du journal**. Le dépliage d'une ligne abrégée est aujourd'hui
+volontairement non traduit, et pour une raison précise — une ligne n'est dépliable
+qu'au-delà de six cartes (`NAMED_LOG_LIMIT`), c'est-à-dire exactement quand le
+serveur en a déjà nommé six en anglais dans sa phrase. Traduire le seul dépliage
+ferait apparaître la même carte sous deux noms à deux lignes d'écart : « déplace
+Sol Ring, … et 4 autres cartes » au-dessus d'une pastille « Anneau solaire ». Ce
+n'est pas un repli invisible, c'est une contradiction visible. Tant que le serveur
+cuit les noms dans sa phrase, mieux vaut tout en anglais que la moitié.
+
+### 2. Les migrations Prisma n'existent pas
+
+`docker/entrypoint.sh` applique le schéma par
+`prisma db push --accept-data-loss`, et c'est ce que subit la **base de
+production** à chaque démarrage. Les changements récents ont été rendus sûrs pour
+ce régime — `UserPrefs.language` est une colonne à valeur par défaut,
+`CardLocalization` une table neuve : rien à perdre dans les deux cas. Mais la
+garantie vient du contenu du changement, pas du dispositif, et un futur changement
+moins anodin (renommage, resserrement de type, contrainte ajoutée) passera par la
+même commande.
+
+Mettre en place des migrations versionnées est un chantier à part entière,
+**baseline de la production comprise** : il ne suffit pas de créer un dossier
+`migrations/`, il faut déclarer l'état existant comme point de départ sans rejouer
+la création des tables.
+
+### 3. Extraire les chaînes des 46 fichiers d'interface
+
+40 composants et 6 écrans, dont `LanguagePicker.tsx` déjà traduit. Les catalogues
+ne couvrent aujourd'hui que 47 clés d'amorce, choisies pour couvrir les cas durs.
+
+Le travail est **mécanique mais volumineux**, et il est sécurisé par le typage :
+une clé absente, un paramètre manquant, une accolade perdue en traduction ou une
+clé oubliée dans le catalogue anglais **refusent de compiler** (`docs/i18n.md`
+§4.2). Les deux seules règles de conduite : recopier les chaînes mot pour mot, et
+nommer les clés par domaine et non par fichier.
+
+### 4. Les lignes de type (`typeLine`) restent anglaises
+
+Partout : menu de carte, fiche d'inspection, éditeur de deck, filtres par famille.
+`LocalizedPrinting` ne porte pas ce champ — le serveur ne résout que l'image et le
+nom imprimé. L'ajouter, c'est un champ de plus à résoudre et à persister côté
+serveur, et le faire pour la seule ligne de type alors que le texte de règles reste
+hors de portée (nous ne stockons aucun texte de règles, par choix de droits) donne
+une carte à moitié traduite.
+
+### 5. Le tri et le filtre des listes portent sur les noms anglais
+
+Le filtre de recherche d'un panneau de zone (`ZonePanel.tsx`) et celui d'une
+fouille de bibliothèque (`LookModal.tsx`, qui trie aussi par nom) interrogent le
+nom du **catalogue**. Même chose pour l'ajout d'une carte à un deck, qui tape
+`/api/cards/search`. Seule l'étiquette affichée passe au nom imprimé.
+
+**Conséquence assumée : taper « Anneau » ne trouve rien dans son propre deck.** Le
+choix inverse coûterait plus qu'il ne rend — trier sur le nom imprimé ferait
+**sauter les lignes** à mesure que les traductions arrivent, une carte changeant de
+place sous le curseur au moment où sa résolution rentre. Et le nom du catalogue
+reste la clé de deck : c'est lui qui part au serveur à l'enregistrement.
+
+### 6. Le faux journal de `TablePreview` est écrit en anglais à la main
+
+C'est le décor de la page d'accueil, sous un en-tête « Journal » en français :
+trois lignes anglaises codées en dur (`tapped`, `moved … from library to
+battlefield`, `created a … token`), reprises des formulations de la capture de
+référence. Rien ne le relie au vrai journal. À reprendre en même temps que le
+point 3, ou au moment où le journal se localisera.
+
+### 7. `lib/cards.ts` n'a pas de repos après échec réseau
+
+`lib/cardLocalization.ts` en a un (`RETRY_AFTER_ERROR`, dix secondes) et il a été
+ajouté pour **fermer une boucle infinie contre notre propre API** : l'appel échoue,
+on prévient les abonnés, ils re-rendent, ils redemandent la carte qui n'est
+toujours pas en cache, et l'on repart trente millisecondes plus tard,
+indéfiniment. Une panne de quelques minutes devenait un martèlement.
+
+`lib/cards.ts` a exactement la même structure — `.catch(() => undefined)`, puis
+retrait de `inFlight` et notification des abonnés — et donc **la même faiblesse**.
+Le cas n'a pas été observé en production, mais il ne demande qu'une indisponibilité
+de `/api/cards/batch` pour se produire.
+
+### 8. `RESOLVE_LOOK` : une garde manque côté moteur
+
+Le schéma partagé refuse désormais qu'une carte soit citée dans **deux
+destinations** à la fois, `toSideboard` compris — le `superRefine` de
+`intentSchema`, dans `packages/shared/src/protocol/schemas.ts`. Mais le moteur, lui, **fait
+confiance au schéma** : `engine-2.ts` vérifie seulement que chaque carte citée
+appartient bien à la consultation, jamais qu'elle n'est citée qu'une fois.
+
+Constaté en contournant la validation : un doublon `toSideboard` + `top` avec
+remélange **perd la carte**. L'objet est déplacé en réserve puis réinséré dans la
+liste de la bibliothèque, le mélange qui suit lui donne un identifiant neuf, et la
+réserve garde un identifiant qui ne désigne plus rien.
+
+Le chemin normal est fermé — aucun client ne peut émettre cet intent — et rien ne
+fuit. Mais l'invariant « un objet est dans une zone et une seule » ne doit pas
+dépendre d'une validation de frontière : c'est le genre de garde qui manque le jour
+où l'on ajoute une huitième destination, comme `toSideboard` l'a déjà montré.
+
 ## Fait récemment
+
+- **Session de corrections d'interface** (18 septembre 2026). Cadrage de la table
+  (« Voir toute la table » ne cadre plus le décor, « Recentrer sur moi » cadre le
+  panneau au pixel exact), mise en page étroite sous 900 px, attachements
+  resserrés à 13 × 22 avec le pas entre frères abaissé en conséquence, aperçu de
+  carte fixe en bas à gauche sans mémoire d'état, lignes de journal multi-cartes
+  nommées et dépliables, éventail de main adverse sans plafond, marqueurs calculés
+  (un seul marqueur posé, « Périmètre » réservé au mode figé). Le détail et les
+  mesures sont dans `docs/ui-reference.md` ; les manques d'internationalisation
+  qui subsistent sont sous « Décisions en attente et chantiers ouverts » ci-dessus.
 
 - **Révélation permanente du dessus de bibliothèque** (16 septembre 2026).
   *Experimental Frenzy*, *Realmbreaker*, *Vizier of the Menagerie* : la carte du

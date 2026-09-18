@@ -14,6 +14,7 @@ snapshot qu'un client ancien ignorerait en silence, et il afficherait alors une
 carte périmée sur la pile — c'est exactement le cas que la §11 appelle cassant.
 
 - Version de protocole décrite : `3` (`PROTOCOL_VERSION = 3`)
+- Autre constante partagée par les deux côtés : `NAMED_LOG_LIMIT = 6` (§5.4)
 - Transport : WebSocket natif, `wss://<host>/ws/rooms/:code`
 - Encodage : JSON UTF-8, une frame texte = un message. Le passage à un encodage binaire
   est prévu comme optimisation transparente (§11).
@@ -125,6 +126,8 @@ interface PublicCardView {
   attachedTo?: ObjectId;
   isFoil: boolean;
   sortIndex: number;         // ordre dans les zones listées (main, cimetière, exil)
+  copyOf?: ObjectId;         // uniquement sur un token créé par copie d'un permanent
+  revealedTo?: SeatId[];     // sièges à qui la carte a été *montrée* (voir ci-dessous)
 }
 
 /** Objet présent mais dont l'identité est cachée au destinataire. */
@@ -149,7 +152,7 @@ interface OpaqueZoneView { zone: ZoneRef; count: number; }
 
 type CardView = PublicCardView | HiddenCardView;
 
-interface Counter { kind: string; value: number; }  // "+1/+1", "loyalty", "poison", libre
+interface Counter { kind: string; value?: number; }  // "+1/+1", "loyalty", "poison", libre
 ```
 
 Règles d'application :
@@ -182,6 +185,19 @@ information : la carte est physiquement retournée sur la table. Sans lui, un jo
 ignore que sa propre carte est cachée aux autres et croit avoir révélé ce qu'il vient de
 dissimuler. Il n'est posé que dans une zone publique : en main ou en bibliothèque, être
 face cachée découle de la zone et n'apprend rien à son propriétaire.
+
+**Un marqueur sans valeur est un mot-clé.** `Counter.value` est facultatif :
+une valeur le compte (+1/+1, loyauté, poison), son absence en fait un mot posé
+sur la carte — « vol », « ne se dégage pas », « monarque » — affiché seul. La
+valeur était obligatoire et l'on écrivait donc « vol 1 », un nombre qui ne veut
+rien dire.
+
+**`revealedTo` n'est posé que sur une vue déjà publique** pour son destinataire,
+jamais sur un `HiddenCardView` : il n'apprend donc rien. Il existe pour le
+**montreur**, qui sans lui ne sait plus l'instant d'après qu'il a révélé une
+carte de sa main — `REVEAL` ne prévient que les destinataires, alors que c'est
+justement l'information qui change sa façon de jouer. Montrer une carte est de
+toute façon un geste public à une vraie table.
 
 **Interdiction absolue** : un `HiddenCardView` ne doit contenir aucun champ dérivé de
 l'identité de la carte — ni `cmc`, ni `colorIdentity`, ni dimensions d'image, ni
@@ -230,9 +246,17 @@ aux events.
 Corollaire, et c'est une contrainte d'implémentation : **une ligne de journal est
 diffusée à tous les sièges, quelle que soit l'audience de l'event qui la porte.**
 Un siège hors audience reçoit le même `seq` avec un event `NOTED` (§7), sans
-charge utile. Sans cela, « seat_2 regarde une carte face cachée » — dont l'event
-n'est adressé qu'à seat_2 — ne serait jamais annoncé à la table, et la
-contrepartie sociale de l'information cachée (§6.1) resterait une promesse.
+charge utile — et il le reçoit **que l'émission porte une ligne de journal ou
+non** : la séquence est dense pour tout siège connecté (§5, §8.1). Sans cela,
+« seat_2 regarde une carte face cachée » — dont l'event n'est adressé qu'à
+seat_2 — ne serait jamais annoncé à la table, et la contrepartie sociale de
+l'information cachée (§6.1) resterait une promesse.
+
+Ce corollaire a une conséquence de conception que la lecture des types ne montre
+pas, et qu'il faut avoir en tête **avant** d'écrire une ligne de journal :
+`audience` restreint l'**event**, jamais le **texte** du journal. La règle
+complète, ce qu'elle interdit et le seuil d'abrègement `NAMED_LOG_LIMIT` sont au
+§5.4.
 
 Ordre garanti : l'`ack` d'un intent est émis **après** l'event correspondant dans le
 flux du siège émetteur. Le client peut donc lever sa prédiction optimiste à l'`ack`
@@ -254,6 +278,10 @@ type Audience =
 Il n'existe **pas de spectateurs** : toute connexion à une room est soit un siège
 joueur, soit une connexion en attente d'un `SIT_DOWN` qui ne reçoit que la liste des
 sièges et le statut de la room — jamais un état de partie.
+
+**Avant d'écrire quoi que ce soit qui produise une ligne de journal, lire le
+§5.4 :** l'audience restreint l'event, jamais le texte du journal, qui est lu par
+toute la table et relu par qui rejoint plus tard.
 
 Pour un même fait de jeu, le serveur produit jusqu'à **deux variantes** partageant le
 même `seq` : une variante riche pour l'audience autorisée, une variante pauvre pour les
@@ -277,6 +305,25 @@ autres. Exemple, une pioche :
 
 Les deux frames partagent `seq` : la resynchronisation reste cohérente pour tout le monde.
 
+**Invariant de densité : un siège connecté reçoit exactement un message par
+`seq`, sans trou.** L'audience décide *ce qu'il reçoit*, jamais *s'il reçoit
+quelque chose*. `Room.commit` construit donc, pour chaque `seq`, une variante par
+siège présent : l'event réel si le siège est dans l'audience, un `NOTED` (§7)
+sinon — et ce remplissage n'est **pas** conditionné à la présence d'une ligne de
+journal. Une émission restreinte et muette, typiquement le `LOOK_RESULT` adressé
+au seul consultant, laisse malgré tout un `NOTED` aux autres sièges.
+
+Ce n'est pas un raffinement : c'est ce sur quoi la détection de trou côté client
+se fonde (§8.1). Sans ce remplissage, l'event suivant arrivait chez les autres
+sièges en `seq !== lastSeq + 1`, chacun demandait un `resync`, et chaque réponse
+`hello/delta` rejouait les mêmes lignes de journal — le même message s'affichait
+trois fois. Le bug était réel.
+
+`NOTED` ne fait rien fuiter : il dit « un `seq` s'est produit », ce que le trou
+disait déjà, en pire — le trou l'annonçait *et* déclenchait une
+resynchronisation complète. Il ne porte aucune charge utile ; la ligne de
+journal qu'il transporte parfois est publique par construction (§5.4).
+
 ### 5.1 Matrice de référence (ce qui sort effectivement du serveur)
 
 | Fait | Propriétaire | Autres sièges |
@@ -293,6 +340,8 @@ Les deux frames partagent `seq` : la resynchronisation reste cohérente pour tou
 | Décision de scry (agrégat) | oui | oui |
 | Sideboard | oui | non |
 | Carte révélée via `REVEAL` | oui | sièges listés uniquement |
+| Ligne de journal (texte **et** ancres `cardIds`) | oui | **oui, toujours** (§5.4) |
+| Existence d'un `seq` | oui | oui — event réel ou `NOTED`, jamais rien |
 
 « Décision de scry » est publique en agrégat (« seat_1 met 1 carte dessous ») : c'est
 une information que la table observe sur une vraie table.
@@ -345,6 +394,30 @@ objets encore dans la zone qu'elle couvrait. Une carte montrée à part par
 `REVEAL`, ou déjà connue autrement, n'est pas touchée ; une carte **piochée**
 après avoir été révélée sur le dessus reste connue de son destinataire, parce
 qu'elle a quitté la bibliothèque.
+
+#### Cas limite traité : nommer au journal une carte remontée sur le dessus
+
+La branche `HAND` de `RESOLVE_LOOK` nomme les cartes qui partent en main quand la
+consultation est de mode `REVEAL` **ou** quand tous les sièges connaissent déjà
+l'identité (`allKnown`). Le cas paraît ouvrir une fuite, et il a été soulevé comme
+tel : une carte révélée puis reposée **sur le dessus** garde un `knownTo`
+complet — seul le passage par le fond le vide (§6.4) —, donc un `SCRY` ultérieur
+qui la reprend en main la nommerait au journal public.
+
+**Arbitrage rendu : le comportement est correct et reste en place.** Il découle
+de l'invariant ci-dessus, il ne le contredit pas. La connaissance est monotone ;
+le seul effacement est le passage par la bibliothèque, et cet effacement-là ne
+tient que parce que `SHUFFLE` réattribue tous les identifiants (§2.1). Remettre
+une carte sur le dessus **sans mélanger** ne coupe aucun lien et n'efface donc
+rien — c'est vrai à une vraie table aussi : on n'oublie pas la carte qu'on vient
+de voir parce que son propriétaire l'a reposée sur son deck. Nommer au journal ce
+que toute la table a déjà vu n'est pas une fuite, c'est la monotonie appliquée.
+
+La garde est d'ailleurs doublée : le mode `REVEAL` ajoute tous les sièges au
+`knownTo` dès l'ouverture de la session, si bien que `allKnown` suffirait seul
+dans le cas nominal. C'est écrit ici pour qu'un futur contributeur ne « corrige »
+pas ce cas par excès de prudence : le resserrer reviendrait à faire mentir le
+journal sur une information que la table détient.
 
 Restent purgées, et ce sont des remises à zéro et non des oublis : `STAND_UP`
 (toute trace du partant, §6.8), `START_GAME` et `RESTART_GAME`.
@@ -407,6 +480,84 @@ Le geste n'est **pas annulable** : `UNDO_LAST` republierait l'identité que la
 table vient de convenir d'oublier. Se raviser se fait à la main, en remontrant
 la carte.
 
+### 5.4 La ligne de journal est publique, quelle que soit l'audience
+
+**À lire avant d'écrire la moindre ligne de journal.** C'est la règle qu'on
+enfreint sans s'en apercevoir, et l'enfreindre crée une fuite *permanente* — pas
+une frame de trop, une entrée que tout le monde relira.
+
+`audience: { kind: 'SEATS', seats: [...] }` restreint l'**event**. Il ne
+restreint **jamais** le texte du journal ni ses ancres. Deux propriétés de
+l'implémentation le garantissent, et il faut les connaître toutes les deux :
+
+1. `Room.commit` construit la ligne de journal **une seule fois, hors de toute
+   boucle d'audience**, puis l'attache à l'identique aux destinataires réels
+   **et** au remplissage `NOTED` servi à tous les autres sièges (§5, §4.2). Il
+   n'existe pas de version par destinataire : le texte n'est pas projeté.
+2. La projection de snapshot recopie `logTail: state.log.slice(-200)` **tel quel
+   dans le snapshot de chaque siège**, sans aucun filtrage. Un joueur qui rejoint
+   tard, ou qui resynchronise, relit donc les lignes écrites avant son arrivée.
+
+Conséquence opérationnelle : **toute ligne de journal doit être sûre pour la
+table entière**, même quand l'event qui la porte ne l'est pas. Un « pour lui
+seul » n'existe pas dans le journal. Le type `LogEntry` est déclaré au §8.1, avec
+les autres types portés par le snapshot.
+
+Deux illustrations, délibérées toutes les deux :
+
+- `REVEAL_HAND` à des sièges nommés écrit « *X* a révélé sa main » — **sans
+  noms, avec `cardIds: []`** —, alors même que son event `HAND_REVEALED` est
+  restreint aux destinataires. Nommer les cartes dans la ligne les publierait à
+  toute la table, y compris aux sièges à qui la main n'a pas été montrée.
+- `PEEK_FACE_DOWN` écrit « *X* a regardé une carte face cachée » avec
+  `cardIds: []`. L'ancre est omise volontairement : ancrer désignerait
+  *laquelle* des cartes face cachée a été regardée, ce que le texte se garde
+  justement de dire.
+
+La règle vaut aussi pour les ancres au-delà de ces cas : `commit` filtre les
+`cardIds` qui désignent un objet de zone non énumérable, parce qu'un identifiant
+de bibliothèque n'existe pas pour les autres sièges (§2.1).
+
+#### `namedBatch` et `NAMED_LOG_LIMIT`
+
+Les lignes portant sur plusieurs cartes passent toutes par un assembleur unique,
+`namedBatch`, pour que la règle ci-dessus n'ait pas à être réappliquée à la main
+à chaque intent. Il :
+
+- nomme via `publicName`, qui n'accepte un nom que si **tous** les sièges voient
+  l'identité — jamais en lisant le nom sur l'objet. Une carte qu'un siège ne peut
+  pas identifier devient « une carte » : elle sort de l'énumération tout en
+  restant **comptée** dans le « et N autres cartes » ;
+- exige en plus que la **zone d'arrivée** soit publique. La monotonie (§5.2) ne
+  suffit pas : une carte vue au cimetière reste connue de tous une fois reprise
+  en main, et `publicName` la nommerait — le journal dirait alors ce que le
+  joueur tient ;
+- abrège au-delà de `NAMED_LOG_LIMIT` en « … et N autres cartes » ;
+- **rend toutes les ancres `cardIds`, y compris celles des cartes que le seuil a
+  repliées.** Le texte s'abrège, la liaison aux cartes non : le survol surligne
+  le lot entier, et `TAKE_BACK` (§5.3) efface le passé en parcourant `cardIds` —
+  une carte publique laissée hors des ancres échapperait à l'oubli.
+
+`NAMED_LOG_LIMIT` (valeur **6**) est une **constante de protocole**, définie dans
+`packages/shared/src/protocol/core.ts` à côté de `PROTOCOL_VERSION`, et non un
+réglage de serveur. Les deux côtés doivent la lire pareil : le serveur s'en sert
+pour couper l'énumération, le client pour décider si une ligne est dépliable et
+offrir « voir les N cartes ». Le client le déduit des seuls `cardIds`, jamais du
+texte — l'abréviation est une phrase traduisible, la découper casserait à la
+première langue ajoutée. Deux copies qui divergent ne fuient rien, mais donnent
+un bouton en trop ou un bouton manquant.
+
+Intents passant par `namedBatch` : `MOVE_CARDS`, `TAP` / `UNTAP`, `UNTAP_ALL`,
+`DESTROY_TOKEN`, `RANDOM_DISCARD`, `MILL`, `EXILE_TOP`, `RESOLVE_LOOK`.
+
+Restent volontairement en **simple compte**, et ce n'est pas un oubli :
+
+| Intent | Pourquoi le compte, et rien de plus |
+|---|---|
+| `DRAW`, `MULLIGAN` | la carte arrive en **main** : la nommer publierait ce que le joueur tient |
+| `SCOOP`, `SWAP_SIDEBOARD` | nommer publierait le contenu du **deck** et de la réserve |
+| `SHUFFLE`, `REORDER_TOP` | le contenu et l'ordre d'une bibliothèque sont secrets (§2.3) |
+
 ---
 
 ## 6. Intents
@@ -437,6 +588,8 @@ interface FlipFace   { type: 'FLIP_FACE'; cardId: ObjectId; }         // DFC / t
 interface TurnFaceDown { type: 'TURN_FACE_DOWN'; cardId: ObjectId; }
 interface TurnFaceUp   { type: 'TURN_FACE_UP'; cardId: ObjectId; }
 interface PeekFaceDown { type: 'PEEK_FACE_DOWN'; cardId: ObjectId; }  // propriétaire ; journalisé
+/** Change l'impression d'une carte sans changer son identité de jeu. */
+interface SetPrinting { type: 'SET_PRINTING'; cardId: ObjectId; scryfallId: string; isFoil?: boolean; }
 
 /** Rattrapage d'une maladresse : la table convient d'oublier la carte (§5.3). */
 interface TakeBack { type: 'TAKE_BACK'; cardId: ObjectId; to: 'HAND' | 'FACE_DOWN'; }  // propriétaire seul
@@ -485,25 +638,32 @@ et le journaliser noierait les vraies actions.
 ### 6.2 Compteurs, attachements, marqueurs
 
 ```ts
-interface SetCounter    { type: 'SET_COUNTER'; targetId: ObjectId; kind: string; value: number; }   // [libre]
+/** `value` : un nombre compte, `null` retire, **absent** en fait un mot-clé (§3). */
+interface SetCounter    { type: 'SET_COUNTER'; targetId: ObjectId; kind: string; value?: number | null; } // [libre]
 interface AddCounter    { type: 'ADD_COUNTER'; targetId: ObjectId; kind: string; delta: number; }   // [libre]
 interface RemoveCounter { type: 'REMOVE_COUNTER'; targetId: ObjectId; kind: string; }               // [libre]
 
 interface Attach { type: 'ATTACH'; sourceId: ObjectId; targetId: ObjectId; }  // [libre]
 interface Detach { type: 'DETACH'; sourceId: ObjectId; }                      // [libre]
 
-interface AddLabel    { type: 'ADD_LABEL'; text: string; x: number; y: number; color?: string; value?: number; }  // [libre]
-interface MoveLabel   { type: 'MOVE_LABEL'; labelId: ObjectId; x: number; y: number; }                              // [libre]
-interface SetLabel    { type: 'SET_LABEL'; labelId: ObjectId; text?: string; value?: number | null; color?: string; } // [libre]
-interface RemoveLabel { type: 'REMOVE_LABEL'; labelId: ObjectId; }                                                   // [libre]
+interface AddLabel    { type: 'ADD_LABEL'; text: string; x: number; y: number; color?: string;
+                        value?: string; attachedTo?: ObjectId; }                                    // [libre]
+interface MoveLabel   { type: 'MOVE_LABEL'; labelId: ObjectId; x: number; y: number; }              // [libre]
+interface SetLabel    { type: 'SET_LABEL'; labelId: ObjectId; text?: string; value?: string | null;
+                        color?: string; attachedTo?: ObjectId | null; }                             // [libre]
+interface RemoveLabel { type: 'REMOVE_LABEL'; labelId: ObjectId; }                                  // [libre]
 ```
 
 `text` est borné à 200 caractères, échappé, jamais interprété comme du HTML.
 
-Une étiquette portant un `value` est un **compteur libre** : un marqueur numérique
-posable n'importe où sur la table, pour ce que les cartes ne portent pas — un « 2/2 »
-qui pompe, un compteur d'orages, un décompte de tours. `SET_LABEL` avec `value: null`
-lui retire sa valeur et le ramène à une simple note. Les étiquettes sont [libre] :
+Une étiquette portant un `value` est un **compteur libre** : un marqueur posable
+n'importe où sur la table, pour ce que les cartes ne portent pas — un « 2/2 »
+qui pompe, un compteur d'orages, un décompte de tours. **La valeur est du texte
+libre** (24 caractères au plus), et non un entier : on veut poser « X/X »,
+« +2/+0 » ou « monarque » aussi bien que « 3 ». L'interface reste celle d'un
+compteur — boutons − et + — quand la valeur se lit comme un nombre, et devient un
+simple champ de texte sinon. `SET_LABEL` avec `value: null` la retire et ramène
+l'étiquette à une simple note. Les étiquettes sont [libre] :
 elles appartiennent à la table plus qu'à leur auteur, et chacun les ajuste.
 
 `SCOOP` renvoie chaque carte à sa bibliothèque, détruit les jetons et mélange — mais
@@ -545,7 +705,7 @@ un seul siège.
 ### 6.4 Bibliothèque, mélange, regard
 
 ```ts
-type LookMode = 'SCRY' | 'SURVEIL' | 'SEARCH' | 'PEEK';
+type LookMode = 'SCRY' | 'SURVEIL' | 'SEARCH' | 'PEEK' | 'REVEAL';
 
 interface Shuffle { type: 'SHUFFLE'; zone: ZoneRef; }   // propriétaire uniquement
 interface Look    { type: 'LOOK'; zone: ZoneRef; count: number | 'ALL'; mode: LookMode; }
@@ -559,12 +719,19 @@ interface ResolveLook {
   toGraveyard?: ObjectId[];
   toExile?: ObjectId[];
   toBattlefield?: ObjectId[];
+  toSideboard?: ObjectId[];   // geste de sideboard : fouiller son deck et mettre de côté
+  exileFaceDown?: boolean;    // porte sur `toExile` seul ; ailleurs, la zone décide
   shuffleAfter?: boolean;
 }
 
 interface ReorderTop { type: 'REORDER_TOP'; zone: ZoneRef; order: ObjectId[]; }
 interface Draw       { type: 'DRAW'; count: number; }                 // son siège uniquement
 interface Mulligan   { type: 'MULLIGAN'; keep?: number; }             // Londres : pioche 7, remet `keep` cartes dessous
+
+interface Mill          { type: 'MILL'; count: number; }                            // dessus → son cimetière
+interface ExileTop      { type: 'EXILE_TOP'; count: number; faceDown?: boolean; }   // dessus → son exil
+interface RandomDiscard { type: 'RANDOM_DISCARD'; count: number; }                  // tirage serveur
+interface Scoop         { type: 'SCOOP'; }                                          // tout ranger et mélanger
 ```
 
 Le cycle « regard » est **stateful** : `LOOK` ouvre une session (`lookId`), verrouille
@@ -587,7 +754,16 @@ n'apprend rien et bloquerait toute consultation ultérieure du siège.
 `RESOLVE_LOOK` accepte une résolution **partielle** — les cartes non citées
 restent où elles sont —, refuse tout identifiant hors de la session
 (`ERR_UNKNOWN_OBJECT`, sans rien déplacer), et purge `knownTo` des cartes
-renvoyées au fond.
+renvoyées au fond. `toSideboard` existe parce que le sideboard se fait en
+fouillant son deck : sans lui, sortir une carte demandait de la prendre en main
+puis de la ranger, deux gestes pour un. `exileFaceDown` ne porte que sur
+`toExile` — ailleurs (main, cimetière, bibliothèque), être face cachée découle de
+la zone (§3).
+
+`MILL` et `EXILE_TOP` prennent des cartes du **dessus** de sa propre
+bibliothèque ; `RANDOM_DISCARD` tire dans sa main, et **le tirage est fait par le
+serveur** : le client ne choisit pas sa défausse et ne connaît pas la carte avant
+les autres (§6.7, l'aléa est serveur uniquement).
 
 `SEARCH` sur sa propre bibliothèque envoie la liste **complète, mélangée côté serveur**,
 pour ne pas révéler l'ordre réel au propriétaire lui-même — sinon chercher reviendrait à
@@ -750,6 +926,8 @@ interface LoadDeck      { type: 'LOAD_DECK'; deckId?: string; deckText?: string;
 interface StartGame     { type: 'START_GAME'; }                                      // hôte
 interface RestartGame   { type: 'RESTART_GAME'; keepDecks: boolean; }                // hôte
 interface SwapSideboard { type: 'SWAP_SIDEBOARD'; in: ObjectId[]; out: ObjectId[]; } // entre parties
+interface SetSeatCosmetics { type: 'SET_SEAT_COSMETICS'; playmatUrl?: string | null;
+                             cardBackUrl?: string | null; displayName?: string; }   // son siège
 ```
 
 `START_GAME` fige un `DeckSnapshot` par siège : une modification ultérieure du `Deck` en
@@ -802,7 +980,10 @@ mélangé, ensuite parce qu'une carte sortie de la bibliothèque emporterait son
 `ObjectId` dans la réserve, où il est publié.
 
 `SET_SEAT_COSMETICS` ne touche que le siège de son auteur et émet
-`SEAT_COSMETICS`. Un champ absent est laissé tel quel, `null` efface.
+`SEAT_COSMETICS`. Un champ absent est laissé tel quel, `null` efface. Il porte
+aussi le **pseudo affiché**, modifiable tant que la partie n'a pas commencé
+seulement (`ERR_GAME_ALREADY_STARTED` sinon) : en cours de partie, changer de nom
+brouillerait un journal d'actions déjà écrit, qui nomme l'auteur de chaque ligne.
 
 ---
 
@@ -823,8 +1004,9 @@ type Event =
   // zones
   | { type: 'ZONE_SHUFFLED'; zone: ZoneRef; count: number }   // + ré-attribution d'ids (§2.1)
   | { type: 'ZONE_COUNT'; zone: ZoneRef; count: number }
-  | { type: 'LOOK_STARTED'; lookId: string; seat: SeatId; zone: ZoneRef; count: number; mode: LookMode }
-  | { type: 'LOOK_RESULT'; lookId: string; cards: PublicCardView[] }              // audience SEAT
+  | { type: 'LOOK_STARTED'; lookId: string; seat: SeatId; zone: ZoneRef; count: number; mode: LookMode;
+      cards?: PublicCardView[] }                                                 // `cards` : mode REVEAL seulement
+  | { type: 'LOOK_RESULT'; lookId: string; mode: LookMode; cards: PublicCardView[] }   // audience SEAT
   | { type: 'LOOK_RESOLVED'; lookId: string; seat: SeatId; summary: LookSummary } // agrégat public
   | { type: 'HAND_REVEALED'; seat: SeatId; toSeats: SeatId[]; cards: PublicCardView[] }
   | { type: 'HAND_UNREVEALED'; seat: SeatId }
@@ -853,10 +1035,22 @@ type Event =
   | { type: 'CHAT'; seat: SeatId; text: string }
   | { type: 'UNDONE'; undoneSeq: Seq }
   | { type: 'NOTED' }                                        // porte une ligne de journal, rien d'autre
-  | { type: 'SEAT_COSMETICS'; seatId: SeatId; playmatUrl: string | null; cardBackUrl: string | null }
-  // planechase
-  | { type: 'PLANE_CHANGED'; card: PublicCardView; previous?: ObjectId };
+  | { type: 'SEAT_COSMETICS'; seatId: SeatId; playmatUrl: string | null; cardBackUrl: string | null;
+      displayName: string };
 ```
+
+`LOOK_STARTED` est public (audience `ALL`) et ne porte normalement que l'agrégat :
+qui regarde, quelle zone, combien de cartes, sous quel `mode`. Son champ
+**`cards` est optionnel et n'est servi que pour le mode `REVEAL`** (§6.4), où le
+contenu est justement montré à toute la table ; il est absent pour `SCRY`,
+`SURVEIL`, `SEARCH` et `PEEK`, dont le contenu ne part qu'au consultant par
+`LOOK_RESULT`. Un client ne doit donc jamais supposer sa présence.
+
+`LOOK_RESULT` porte le `mode` de la session en plus de son `lookId` et de ses
+cartes : le destinataire doit savoir quelle interface ouvrir — réordonner un
+scry, piocher d'une recherche — sans avoir à retenir le `LOOK_STARTED`
+correspondant, qu'une resynchronisation a pu lui faire manquer. Même raison pour
+`Snapshot.pendingLook`, qui porte le même champ (§8.1).
 
 `TOP_REVEALED` est d'audience **`ALL`**, en deux variantes : seul un destinataire
 reçoit `card`, les autres reçoivent le fait — `card: null` — et la liste des
@@ -869,9 +1063,19 @@ partie (§6.5).
 
 `NOTED` est l'event vide. Il sert deux fois : pour un fait qui n'existe que dans le
 journal (un `UNTAP_ALL`, une révélation à des sièges nommés), et comme variante
-servie aux sièges hors audience d'un event qui porte une ligne de journal (§4.2).
-Un client qui ne sait qu'en faire enregistre son `seq` et affiche son `log` :
-c'est exactement ce qu'il y a à en faire.
+servie aux sièges hors audience de **n'importe quel** event — que l'émission
+porte une ligne de journal ou non (§4.2, §5). C'est ce second emploi qui rend la
+séquence dense : un `LOOK_RESULT`, restreint au seul consultant et muet au
+journal, laisse tout de même un `NOTED` aux autres sièges pour son `seq`.
+Un client qui ne sait qu'en faire enregistre son `seq` et affiche son `log` s'il
+y en a un : c'est exactement ce qu'il y a à en faire. `NOTED` ne fuite rien — il
+n'énonce que « un `seq` s'est produit », ce que le trou qu'il comble annonçait
+déjà.
+
+Il n'y a **pas** d'event de planechase. Le mode a été retiré le 15 septembre
+2026, faute d'implémentation : il promettait ce que la table ne tenait pas. La
+valeur subsiste dans l'enum Prisma pour ne pas casser les parties déjà
+enregistrées, et le serveur les ramène à `COMMANDER` au chargement.
 
 Hors séquence (non journalisé, non persisté, sans `seq`) :
 
@@ -937,20 +1141,57 @@ des cartes, émettent donc leurs `CARD_MOVED` / `CARDS_MOVED` comme les autres.
 Le client détecte aussi un trou en réception (`seq !== lastSeq + 1`) et envoie
 `resync{sinceSeq}` sans attendre la coupure du socket.
 
+**Cette détection ne vaut que parce que la séquence est dense** (§5) : un siège
+connecté reçoit exactement un message par `seq`, event réel ou `NOTED`. Un `seq`
+qu'aucune variante ne couvrait n'était pas « rien » pour le client, c'était un
+trou — donc un `resync` par event suivant, et le même journal rejoué à chaque
+réponse `hello/delta`.
+
+Le tampon obéit à la même règle, et `deltaFor` la vérifie : si une variante
+manque pour le siège demandé sur un `seq` de l'intervalle, la fonction rend
+`null` — donc **snapshot complet** — au lieu de servir un delta troué. Un delta
+amputé recréerait chez le client le trou même qu'on cherche à supprimer ; un
+snapshot est la seule réponse honnête.
+
+Deux garde-fous existent en plus **côté client** (`apps/web/src/store/game.ts`),
+en défense en profondeur :
+
+- un drapeau interdit d'empiler un second `resync` tant que le `hello` du
+  premier n'est pas revenu — sinon un commit produisant plusieurs events en
+  déclenche un par event ;
+- les entrées de journal sont dédupliquées **par `seq`** dans le chemin
+  `hello/delta`, un resync en vol pouvant chevaucher des events reçus en direct.
+
+Ils restent utiles alors même que la séquence est dense : ils rendent le client
+robuste à un serveur plus ancien et à deux resyncs qui se croisent.
+
 ```ts
 interface Snapshot {
   seq: Seq;
-  room: { code: string; mode: GameMode; status: RoomStatus; hostSeat: SeatId };
+  room: { code: string; mode: GameMode; status: RoomStatus; closed: boolean;
+          hostSeat: SeatId | null };
   seats: SeatSummary[];
-  turn: { activeSeat: SeatId; turnNumber: number; phase: PhaseName };
+  turn: { activeSeat: SeatId | null; turnNumber: number; phase: PhaseName };
   cards: CardView[];           // déjà projetées pour le destinataire
   zoneCounts: OpaqueZoneView[];
   labels: Label[];
-  pendingLook?: { lookId: string; cards: PublicCardView[] };
+  pendingLook?: { lookId: string; mode: LookMode; cards: PublicCardView[] };
   topReveals?: Array<{ seat: SeatId; toSeats: SeatId[]; cardId: ObjectId | null }>;
-  logTail: LogEntry[];         // 200 dernières entrées, filtrées
+  logTail: LogEntry[];         // 200 dernières entrées, à l'identique pour tous (§5.4)
 }
 ```
+
+**Trois champs sont nullables, et c'est le lobby qui l'exige** : `room.hostSeat`
+vaut `null` tant que personne n'est assis, `turn.activeSeat` tant que la partie
+n'a pas démarré, et `room.closed` dit qu'une `CLOSE_ROOM` est passée (§6.8) —
+distinct de `status: 'ENDED'`, qui peut aussi venir d'une concession. Un client
+qui suppose ces deux `SeatId` non nuls casse au **premier écran** qu'il
+rencontre, pas dans un cas limite.
+
+`pendingLook` porte le `mode` de la session en cours, comme `LOOK_RESULT` (§7) :
+un client qui reprend sur snapshot n'a jamais vu le `LOOK_STARTED` et ne saurait
+sinon pas quelle interface de consultation rouvrir. Ses `cards` sont brassées et
+leur `sortIndex` est le rang *montré*, jamais le rang réel (§6.4).
 
 `topReveals` est absent quand aucune bibliothèque n'a son dessus révélé — le cas
 courant. Il n'est pas décoratif : sans lui, un rechargement de page, ou toute
@@ -959,6 +1200,64 @@ la table voit pourtant retournée, et `snapshot(T)` cesserait d'être
 indistinguable de `snapshot(T₀) + delta`. `cardId` n'est renseigné que pour un
 destinataire ; la carte elle-même est jointe à `cards`, projetée par la même
 fonction que le reste.
+
+#### Les trois types portés par le snapshot
+
+`SeatSummary`, `Label` et `LogEntry` sont cités par le snapshot et par plusieurs
+events (`SEAT_JOINED`, `LABEL_ADDED` / `LABEL_UPDATED`, §7). Les voici en entier,
+puisque c'est ici qu'on les rencontre :
+
+```ts
+interface SeatSummary {
+  id: SeatId;
+  seatIndex: number;
+  displayName: string;
+  userId: string | null;          // null : joueur invité
+  connected: boolean;
+  conceded: boolean;
+  life: number;
+  handCount: number;              // le compte, jamais le contenu (§2.3)
+  playerCounters: Counter[];      // poison, énergie, expérience, mulligans…
+  commanderDamage: Record<SeatId, Record<ObjectId, number>>;  // reçus, par source puis commandant
+  commanderTax: Record<ObjectId, number>;
+  playmatUrl: string | null;
+  cardBackUrl: string | null;
+  color: string;
+  deckName: string | null;
+}
+
+interface Label {
+  id: ObjectId;
+  text: string;
+  x: number; y: number;           // décalage relatif à la carte si `attachedTo`
+  color?: string;
+  owner: SeatId;
+  value?: string;                 // texte libre : compteur libre (§6.2) ; absent = simple note
+  attachedTo?: ObjectId;
+}
+
+interface LogEntry {
+  seq: Seq;
+  at: number;
+  actor: SeatId | null;           // null : commit système (déconnexion, balayage)
+  text: string;
+  cardIds: ObjectId[];
+}
+```
+
+`SeatSummary` est **entièrement public** : c'est de là que vient la lecture libre
+des dégâts de commandant (§6.6), et c'est pourquoi la main n'y figure que par son
+`handCount`. `commanderDamage` est indexé par siège source puis par commandant —
+un joueur peut en avoir deux.
+
+**`LogEntry.text` et `LogEntry.cardIds` sont publics pour toute la table**,
+quelle que soit l'audience de l'event qui les a portés : c'est la règle du §5.4,
+et ce type en est la forme. Le texte est construit une fois côté serveur, jamais
+projeté par destinataire, et `logTail` le recopie à l'identique dans le snapshot
+de chaque siège. Le `seq` est ce par quoi un client déduplique les entrées quand
+un resync chevauche le flux direct (§8.1) ; `cardIds` est ce par quoi le client
+décide si une ligne abrégée est dépliable (`NAMED_LOG_LIMIT`, §5.4) et ce que
+`TAKE_BACK` parcourt pour effacer le passé (§5.3).
 
 Le snapshot est **toujours** construit par la même fonction de projection
 `projectFor(seat, state)` que les events : il n'existe qu'un seul endroit où la
@@ -1017,7 +1316,7 @@ restaure l'état issu du dernier event et affiche un toast discret.
 ```ts
 type ErrorCode =
   | 'ERR_PROTOCOL' | 'ERR_AUTH' | 'ERR_ROOM_NOT_FOUND' | 'ERR_ROOM_FULL'
-  | 'ERR_ROOM_PASSWORD' | 'ERR_NOT_SEATED' | 'ERR_SEAT_TAKEN'
+  | 'ERR_ROOM_PASSWORD' | 'ERR_NOT_SEATED' | 'ERR_NOT_HOST' | 'ERR_ROOM_CLOSED' | 'ERR_SEAT_TAKEN'
   | 'ERR_UNKNOWN_OBJECT' | 'ERR_NOT_YOURS' | 'ERR_NOT_VISIBLE' | 'ERR_BAD_ZONE'
   | 'ERR_LOOK_PENDING' | 'ERR_UNDO_UNAVAILABLE' | 'ERR_GAME_NOT_STARTED'
   | 'ERR_GAME_ALREADY_STARTED' | 'ERR_RATE_LIMIT' | 'ERR_PAYLOAD' | 'ERR_INTERNAL';
@@ -1050,6 +1349,19 @@ déploiement voit donc la carte disparaître et la nouvelle arriver, sans rien
 afficher de périmé : c'est exactement ce que la règle ci-dessus appelle non
 cassant. Fermer toutes les tables en cours pour une entrée de menu qu'elles
 n'auraient pas serait une punition sans motif.
+
+Même application à la **densité de séquence** (§5), qui **ne monte pas** non plus
+la version : aucun format de message ne change, `NOTED` existe depuis la version
+1 et tout client sait déjà l'ignorer après avoir enregistré son `seq`. Le
+changement ne fait qu'en émettre davantage — là où le client voyait un trou, il
+voit maintenant un event qu'il ignore. Monter la version aurait fermé toutes les
+tables en cours sans rien apporter à personne.
+
+`NAMED_LOG_LIMIT` est, avec `PROTOCOL_VERSION`, une **constante de protocole** :
+elle vit dans `packages/shared/src/protocol/core.ts` et les deux côtés doivent la
+lire pareil (§5.4). La modifier ne casse rien au sens ci-dessus — un client et un
+serveur qui divergent sur sa valeur restent synchrones, seul le bouton
+« déplier » du journal devient inexact.
 
 ---
 
@@ -1139,4 +1451,5 @@ L'interface cible est celle de la capture de référence (`docs/ui-reference.md`
 | 5 | 2026-09-16 | Révélation permanente du dessus de bibliothèque : intent `REVEAL_TOP` et réconciliation en un point unique (§6.5), event `TOP_REVEALED` d'audience `ALL` en deux variantes (§7), champ `Snapshot.topReveals` (§8.1). **`PROTOCOL_VERSION` monte à 3** (§11) : un client ancien ignorerait l'event et afficherait une carte périmée sur la pile. |
 | 6 | 2026-09-16 | Monotonie de `knownTo` (§5.2) : une connaissance acquise survit à tous les changements de zone, seule l'entrée en bibliothèque l'efface. `relocate` ne recalcule plus `knownTo` à l'arrivée, `UNREVEAL_HAND` ne reprend que son propre dépôt (§6.5), une carte piochée après révélation du dessus reste connue. Critère §12.9. **Aucun format de message ne change : `PROTOCOL_VERSION` reste à 3.** |
 | 7 | 2026-09-16 | `TAKE_BACK` (§5.3, §6.1) : l'unique exception à la monotonie, écrite contre la règle qu'elle excepte. Rattrapage d'une carte posée par erreur, réservé au propriétaire, journalisé nommément, avec **réattribution de l'`ObjectId`** — sans elle, la vue déjà reçue par l'adversaire resterait en place et le masquage serait un mensonge. Le journal perd l'ancre et le nom de la carte (§4.2 réappliquée au passé). Critère §12.10. **Aucun event nouveau, aucun format existant modifié : `PROTOCOL_VERSION` reste à 3** (§11). |
+| 8 | 2026-09-18 | **Densité de séquence** (§4.2, §5, §7, §8.1) : chaque `seq` produit une variante pour **chaque** siège connecté — l'event réel dans l'audience, un `NOTED` sinon, que l'émission porte un journal ou non. Corrige le trou laissé par une émission restreinte et muette (`LOOK_RESULT`), qui déclenchait un `resync` par event suivant et faisait apparaître un message trois fois ; `deltaFor` rend désormais `null` plutôt qu'un delta troué, et deux garde-fous client sont documentés (§8.1). Nouvelle **§5.4 : la ligne de journal est publique quelle que soit l'audience** — `commit` la construit hors de toute boucle d'audience et `logTail` la recopie sans filtrage dans chaque snapshot —, avec `namedBatch`, `publicName` et `NAMED_LOG_LIMIT` hissée en constante de protocole (§11). Cas limite de `RESOLVE_LOOK`/`HAND` tranché en §5.2 : nommer une carte que toute la table a vue n'est pas une fuite. Lignes ajoutées à la matrice §5.1. **Aucun format de message ne change : `PROTOCOL_VERSION` reste à 3**, délibérément (§11). Au passage, **balayage complet des déclarations de types contre `packages/shared/src/protocol/`**, sans rapport avec le travail du jour : `LookMode` gagne `'REVEAL'` (§6.4) ; `ErrorCode` gagne `ERR_NOT_HOST` et `ERR_ROOM_CLOSED` (§11) ; `LOOK_STARTED` son `cards?` servi au seul mode `REVEAL`, `LOOK_RESULT` son `mode`, `SEAT_COSMETICS` son `displayName`, et `PLANE_CHANGED` disparaît — le mode planechase a été retiré (§7) ; `Snapshot` gagne `room.closed`, `pendingLook.mode`, et `room.hostSeat` / `turn.activeSeat` deviennent nullables comme au lobby, le commentaire de `logTail` cesse de promettre un filtrage que la projection ne fait pas (§8.1) ; `PublicCardView` gagne `copyOf` et `revealedTo`, `Counter.value` devient facultatif — un marqueur sans valeur est un mot-clé (§3) ; `SET_COUNTER.value` devient `number | null` facultatif, la valeur d'une étiquette est du **texte** et non un entier, et `ADD_LABEL` / `SET_LABEL` retrouvent `attachedTo` (§6.2) ; `RESOLVE_LOOK` retrouve `toSideboard` et `exileFaceDown`, et les intents `MILL`, `EXILE_TOP`, `RANDOM_DISCARD`, `SCOOP` sont déclarés (§6.4), comme `SET_PRINTING` (§6.1) et `SET_SEAT_COSMETICS`, dont le pseudo se fige au lancement (§6.8). Enfin `SeatSummary`, `Label` et `LogEntry`, jusqu'ici cités sans jamais être déclarés, sont écrits au §8.1 — `LogEntry` avec la règle du §5.4, puisque c'est là qu'on le rencontre. |
 | 3 | 2026-09-15 | Durcissement : `CARD_HIDDEN` à l'entrée en bibliothèque (§2.1), gardes de `MOVE_CARDS` et d'`ATTACH` (§6.1), `copyOf` restreint au champ de bataille (§6.3), verrou de zone et `sortIndex` brassé des `LOOK` (§6.4), `REVEAL_HAND` comme droit de zone (§6.5), `START_GAME` et `SIT_DOWN` durcis (§6.8), cas de bascule du delta et snapshot sans siège (§8.1), fermeture de l'annulation (§9), critères §12.6 et §12.7 |

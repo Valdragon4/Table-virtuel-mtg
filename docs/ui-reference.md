@@ -52,6 +52,22 @@ Exemples de formulation à respecter :
 - `Workris is viewing their library`
 - `Workris tapped Fabled Passage`
 
+Ce sont les formulations de la capture de référence ; les phrases réellement produites
+sont **françaises et fabriquées par le serveur**, noms de cartes anglais cuits dedans.
+C'est un état documenté et non un oubli : voir `docs/i18n.md` §7.
+
+**Lignes portant sur plusieurs cartes.** Elles les **nomment** au lieu d'annoncer un
+compte, abrègent au-delà de `NAMED_LOG_LIMIT` (6, dans `@mtg/shared`) en « … et N autres
+cartes », et gardent **toutes** les ancres, y compris celles des cartes repliées : le
+survol surligne le lot entier. Une ligne abrégée se **déplie au clic** sur un bouton
+« Voir les N cartes » — un vrai bouton et non un survol, la PWA se jouant au doigt et le
+survol de la ligne étant déjà pris par la mise en évidence. Le client décide de la
+dépliabilité à partir des seuls `cardIds`, jamais en découpant le texte.
+
+La règle de visibilité qui gouverne tout cela — une ligne de journal est publique quelle
+que soit l'audience de l'event qui la porte — est au §5.4 de `docs/protocol.md`, avec le
+détail de `namedBatch`. Elle n'est pas redite ici.
+
 **Barre d'actions haut-droite** — `Untap All`, `Draw`, menu `Create` (token par
 recherche, copie d'un permanent, compteur, étiquette), menu `Actions` (mulligan, mélange,
 scry, surveil, révéler la main, concéder…).
@@ -94,6 +110,32 @@ deck partait en largeur.
 - Les tokens identiques posés côte à côte se chevauchent en éventail.
 - Les terrains se rangent sur une rangée basse, par convention, sans contrainte serveur.
 
+### Cartes attachées
+
+Une carte attachée se range **sous** sa cible, décalée de `ATTACH_OFFSET` = **13 × 22**
+unités de panneau (`SeatPanel.tsx`), et les frères d'une même cible s'écartent en plus
+d'un pas de **5 × 8**. Les valeurs ont été resserrées deux fois — 26 × 54, puis 16 × 30 :
+trop écartées, les deux cartes ne se lisent plus comme un attachement mais comme deux
+permanents voisins. La carte du dessous en montre désormais **32 %** (contre 40 %) ; sous
+30 %, il ne reste plus assez de bord pour la viser au pointeur.
+
+Deux choses ne se devinent pas en lisant les chiffres :
+
+- **Le pas entre frères a dû baisser avec le décalage, et pas par symétrie.** Une carte
+  attachée à celle de rang 0 se range à un décalage d'attachement de plus, c'est-à-dire au
+  milieu de ses frères. Si `2 × SIBLING_STEP` rattrape `ATTACH_OFFSET`, elle disparaît
+  exactement sous le frère de rang 2 : la sonde l'a montrée à **zéro pixel atteignable**.
+  Il faut donc tenir 13 > 2 × 5 et 22 > 2 × 8.
+- **Le plafond n'est plus une impression, c'est un invariant de la recette.**
+  `scripts/verify-ui.mjs` refuse un masquage supérieur à **70 %** de l'attachée ; on est à
+  **68,2 %**. Resserrer encore fait échouer la recette, ce qui est le but.
+
+Le panneau publie ses constantes sur le DOM via `data-attach-offset`. La recette en gardait
+une copie en dur, qui a survécu à deux resserrages : elle annonçait « l'attachée est en
+495,311 au lieu de 498,319 » sur un rendu parfaitement sain, et l'on a cherché le défaut du
+mauvais côté. Le script étant hors du graphe TypeScript, il ne peut pas importer la
+constante : il la lit là, à la source.
+
 ## Disposition des sièges
 
 La place d'un panneau est une **fonction pure de son `seatIndex`**, identique sur tous les
@@ -110,6 +152,66 @@ La table est plafonnée à **quatre sièges** (`LIMITS.maxSeats`).
 
 Le confort du « je suis en bas » se rend par le **cadrage** — bouton `Recentrer sur moi`,
 posé d'office à l'arrivée — et jamais en faisant tourner le monde selon le siège local.
+
+## Cadrage
+
+Deux boutons, deux cibles distinctes, et aucune marge proportionnelle nulle part
+(`Table.tsx`, fonctions `recenter` et `focusOnMe`).
+
+**« Voir toute la table » cadre la grille des sièges, et elle seule.** L'ancien cadrage
+embrassait la grille **plus** `sceneryMargin` (`tableBoard.tsx`), qui vaut 0,725 × le plus
+petit côté de la grille : la surface cadrée faisait environ deux fois et demie la grille,
+et la table devenait un timbre-poste au milieu d'une cour. Le décor n'est pas un élément
+de jeu — il borde, il ne se cadre pas. Il ne reste qu'un `FRAME_PADDING` de **8 pixels
+d'écran**, dont le mérite est de coûter la même chose à un siège qu'à quatre, là où une
+marge proportionnelle coûte d'autant plus que la table est grande.
+
+Mesuré à 1600 × 1000, en unités d'échelle de caméra :
+
+| | avant | après | remplissage |
+|---|---|---|---|
+| Un siège | 0,424 | **0,825** | 51 % → 98 % |
+| Deux sièges | 0,215 | **0,490** | 43 % → 98 % |
+| `Recentrer sur moi` | 0,650 | **0,838** | — |
+
+**« Recentrer sur moi » cadre le panneau au pixel exact**, sans marge ajoutée — ce qui
+demande une justification, puisque l'autre bouton en garde une. Un siège actif porte un
+liseré peint en `outline`, c'est-à-dire **hors** de sa boîte : un cadrage au pixel près
+pourrait le faire courir sous une colonne flottante. Mais l'espace libre est déjà
+sur-réservé de quoi l'accueillir — le journal s'arrête à 300 px quand la zone libre
+commence à 304, le panneau joueur laisse 12 px, et la gouttière étroite en vaut 12 de
+chaque côté. Le liseré fait 4 unités de monde, ~3,3 px à l'écran à cette échelle : il
+tombe dans ces gouttières. Ajouter `FRAME_PADDING` par-dessus, c'était réserver deux fois
+la même place et payer un demi-cran de zoom pour rien.
+
+**Où est désormais la limite — et pourquoi il n'y a plus de zoom à gagner.** Ce qui reste
+autour de la table n'est plus une marge, c'est du **letterboxing** : la grille et l'espace
+libre n'ont pas les mêmes proportions, l'un des deux axes cale forcément en premier, et
+aucune constante ne récupère l'autre.
+
+- **À deux sièges**, la grille fait 1260 × 1368 — du **portrait dans une fenêtre en
+  paysage**. C'est la hauteur qui cale, et il reste ~439 px de part et d'autre. Ils sont
+  incompressibles : les récupérer supposerait de déformer la grille ou de rogner un
+  panneau.
+- **À plusieurs joueurs**, c'est la **hauteur** qui borne, mangée par la barre du haut
+  (60 px) et le rail de main. Élargir les colonnes latérales ou les escamoter ne rendrait
+  donc rien — c'est le bon réflexe et ce n'est pas là que ça se joue.
+
+## Mise en page étroite
+
+En deçà de `NARROW_WIDTH` (**900 px** de largeur de fenêtre), le journal et le panneau
+joueur cessent d'être deux colonnes permanentes : ils deviennent un **tiroir replié**,
+posé par-dessus la table et ouvert par un bouton de la barre du haut (`pages/Room.tsx`).
+
+Rendues à toute largeur, ces deux colonnes prennent 544 px quels que soient la fenêtre et
+l'usage. Sur un écran de 430 px — et l'application est une PWA, donc ce cas est réel —
+elles couvraient l'écran entier, le panneau du joueur finissait coupé à droite en
+permanence, et la caméra leur réservait une place qui n'existait pas. Repliées, elles
+rendent toute la largeur au cadrage (`freeArea`), qui ne garde qu'une gouttière de 12 px
+pour le bouton.
+
+**Les largeurs de bureau n'ont pas changé** : au-dessus du seuil, les colonnes sont
+toujours là, et un bouton pour les cacher serait un réglage de plus à comprendre.
 
 ## Fond de table
 
@@ -199,13 +301,45 @@ Trois propriétés tiennent ce décor, et une régression sur l'une d'elles est 
 
 Rail en bas de l'écran, centré sur le siège local. Les cartes y sont rendues **en grand
 et lisibles** (texte d'oracle déchiffrable), légèrement superposées, remontant au survol.
-La main des autres sièges n'est qu'un compteur dans leur bandeau d'identité.
+
+### Main d'un adversaire
+
+Un éventail de dos de carte en bord de son terrain, plus une pastille de compte — le
+nombre du bandeau se *lit*, mais il ne se *voit* pas (`OpponentHand.tsx`).
+
+L'éventail rend **toutes** les cartes, une place par carte annoncée. Il en plafonnait dix,
+et dix dos immuables ne distinguaient pas une main de onze d'une main de trente. Ce qui
+s'adapte, ce n'est pas le nombre de places mais le **pas** : nominal à **18 px** tant que
+la main tient dans la largeur disponible, c'est-à-dire jusqu'à **64 cartes**, resserré
+juste ce qu'il faut au-delà, et planté à un plancher de **6 px** — en dessous, les
+tranches se fondent en un aplat uni et l'œil n'y compte plus rien.
+
+C'est le panneau qui borne l'éventail et non l'inverse, sans quoi une main épaisse irait
+recouvrir le siège voisin. Une carte montrée remplace son dos à sa place dans l'éventail.
 
 ## Curseurs
 
 Le curseur des autres joueurs est une flèche à la couleur du siège, suivie d'une
 étiquette au pseudo sur fond plein. Il porte visuellement la carte en cours de
 déplacement. 20 Hz, interpolé côté client entre deux frames.
+
+## Langue
+
+Le détail est dans `docs/i18n.md` ; ce qui se voit à l'écran tient en quatre points.
+
+- **Les cartes s'affichent en français, avec repli anglais**, partout où une carte est
+  rendue : table, main, aperçu, fouille, panneaux de zone, révélation publique, étagère et
+  recherche de jetons, sélecteur d'impression, éditeur de deck. Le repli est le cas
+  **courant** et ne doit jamais ressembler à un incident.
+- **Un sélecteur de langue** est monté à deux endroits : variante `segmented` dans la
+  barre du haut en partie, variante `select` sur l'accueil. Les deux écrivent la
+  préférence du **compte** ; il n'existe pas de « langue de session ».
+- **Les libellés de l'interface ne sont pas traduits.** Le catalogue compte 47 clés, pour
+  40 composants et 6 écrans : c'est un échantillon d'amorce, pas une couverture. L'écran
+  reste donc français quelle que soit la langue choisie.
+- **Le journal de partie reste en français**, ses phrases étant fabriquées côté serveur
+  avec les noms de cartes cuits dedans, en anglais. C'est l'état documenté ; le coût de
+  l'en sortir est consigné dans `docs/backlog.md`.
 
 ## Métriques relevées
 
@@ -246,8 +380,25 @@ décision 1 du README. Les dimensions ci-dessus restent la cible.
   Les cartes tenues par le tracé se marquent **en direct**, d'un liseré ambré discontinu,
   distinct de l'anneau bleu de la sélection acquise.
 - Action groupée sur la sélection ; un déplacement de groupe part en un seul `MOVE_CARDS`.
-- **Aperçu agrandi** de la carte survolée, affiché du côté opposé pour ne pas la masquer,
-  et sans jamais capter le pointeur.
+- **Aperçu agrandi** de la carte survolée, **en bas à gauche, toujours**, et sans jamais
+  capter le pointeur. Il ne déménage que pour un seul motif : si la carte survolée
+  elle-même se trouverait dessous (`lib/previewPlacement.ts`). Un menu, une modale, les
+  autres cartes de la table ne comptent pas — un panneau qui se déplace pour des raisons
+  que le joueur ne voit pas est un panneau qu'il doit chercher des yeux à chaque fois.
+  **Aucune hystérésis, aucune mémoire d'état** : le coin se recalcule de zéro à chaque
+  carte survolée, depuis le bas-gauche. Ce n'est pas un raccourci de mise en œuvre mais le
+  correctif d'un défaut réel — la version précédente gardait le coin choisi, ne se
+  réarmait jamais, et l'aperçu restait collé en haut à droite pour toutes les cartes
+  suivantes après une fouille. Le critère ne dépendant plus que de la carte survolée, rien
+  ne peut osciller sous un curseur immobile.
+- **Marqueurs calculés** : le champ « Périmètre » (compter toutes les cartes, ou toutes
+  sauf la porteuse) n'est proposé **qu'en mode figé**. Un marqueur dynamique n'est qu'un
+  `kind` relu à chaque rendu, et rien dans cette grammaire ne dit « sauf moi » : le
+  proposer dans les deux autres modes promettait un filtre que la pastille n'appliquait
+  pas, tandis que l'aperçu, lui, l'appliquait — deux nombres différents pour un seul et
+  même marqueur. Un décompte figé pose par ailleurs **un** marqueur et un seul : un `send`
+  prématuré en émettait deux, le décompte brut avant exclusion puis la valeur correcte,
+  et la carte portait « +3/+3 » sous « +2/+2 » sans qu'on comprenne d'où venait le premier.
 - **Panneau latéral des zones**, ancré à droite, à onglets (cimetière, exil, commandement,
   bibliothèque, réserve) et barre de recherche. Aucun bouton d'action sous les cartes :
   clic droit pour le menu, glissement vers la table pour déplacer. L'onglet Bibliothèque

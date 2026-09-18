@@ -47,6 +47,8 @@ apps/server       Fastify + Prisma + WebSocket. Détient l'état de partie.
 apps/web          React + Vite + Zustand. N'applique que ce que le serveur diffuse.
 docs/protocol.md  Le document qui verrouille l'architecture réseau.
 docs/ui-reference.md  L'interface cible, relevée sur la capture de référence.
+docs/i18n.md      La langue de la plateforme et les cartes françaises.
+docs/backlog.md   Ce qui reste à faire, et les décisions en attente.
 ```
 
 L'état de partie vit **en mémoire** dans le processus propriétaire de la room. Postgres
@@ -109,8 +111,13 @@ implémentation :
    le profilage montre une limite.
 2. **Pas de logique de table côté client**, même en solo : une partie solo est une room
    à un siège. Cela évite deux implémentations divergentes des zones et des déplacements.
-3. **Le schéma est appliqué par `prisma db push`** au démarrage du conteneur. Des
-   migrations versionnées prendront le relais quand le schéma se sera stabilisé.
+3. **Le schéma est appliqué par `prisma db push --accept-data-loss`** au démarrage du
+   conteneur (`docker/entrypoint.sh`) : il n'existe **aucune migration versionnée**, et
+   cette commande s'exécute telle quelle sur la base de production. Les changements
+   récents ont été conçus pour ce régime — une colonne à valeur par défaut, une table
+   neuve —, mais un changement moins anodin passera par le même chemin. Mettre en place
+   des migrations versionnées, baseline de la prod comprise, est un chantier ouvert :
+   voir `docs/backlog.md`.
 4. **Aucun texte de règles n'est stocké** : la table `Card` ne contient ni oracle text ni
    flavor text. L'image Scryfall les porte déjà, et c'est le navigateur qui va la chercher.
 
@@ -131,6 +138,8 @@ implémentation :
 
 ### 1. Table de jeu & Expérience visuelle
 - **Rendu DOM + transformations CSS** : 60 images/seconde continues, zoom et panoramique fluides (bouton droit ou espace), centrage automatique sans dépendance lourde WebGL.
+- **Deux cadrages, deux cibles** : « Voir toute la table » cadre la grille des sièges seule, à huit pixels d'écran près ; « Recentrer sur moi » cadre le panneau local au pixel exact. Aucune marge proportionnelle : ce qui reste autour de la table est du letterboxing, pas de la place perdue. Détail et mesures dans `docs/ui-reference.md`, section « Cadrage ».
+- **Mise en page étroite** : sous 900 px de large, le journal et le panneau joueur se replient en tiroir ouvert par un bouton, et la caméra récupère toute la largeur. Les largeurs de bureau ne changent pas.
 - **Orientation « Joueur local toujours en bas » (`lib/seatView.ts`)** : chaque joueur voit son champ de bataille au premier plan sans rotation destructrice, tout en conservant le repère partagé universel pour la précision des curseurs multijoueurs.
 - **Disposition dynamique multi-sièges** : adaptation géométrique sans aucun chevauchement de 1 à 4 joueurs.
 - **Fonds de table immersifs** :
@@ -141,23 +150,24 @@ implémentation :
   - Éventail dynamique dimensionné selon la fenêtre (ne mange jamais le terrain).
   - Resserrement progressif lors des pioches puis défilement molette exclusif sur le rail.
   - Rangement manuel par glisser-insérer ou tri automatique d'un clic (terrains puis coûts convertis).
-- **Mains adverses visualisées** : éventail de dos de cartes et pastille de décompte dynamique sur chaque siège adverse.
+- **Mains adverses visualisées** : éventail de dos de cartes et pastille de décompte dynamique sur chaque siège adverse. Une place par carte, sans plafond : c'est le pas de l'éventail qui se resserre (18 px jusqu'à 64 cartes, plancher à 6 px), pour qu'une main épaisse *se voie* au lieu de se lire.
 - **Zoom & Inspection haute définition** :
   - Rendu haute résolution (images Scryfall `normal` / `large`) pour une lisibilité parfaite des cartes complexes.
-  - Zoom au curseur et grand aperçu fixe sans débordement sur la table de jeu.
+  - Zoom au curseur et grand aperçu **fixe en bas à gauche**, qui ne se déplace que si la carte survolée se trouverait dessous — sans hystérésis ni mémoire d'état, pour qu'on sache toujours où regarder.
 
 ### 2. Manipulation des cartes, Attachements & Marqueurs
 - **Lasso de sélection modèle pur** : capture uniquement les permanents réels sur le champ de bataille (exclut les mains, cartes de réserve et aperçus de piles).
 - **Système d'attachement précis (auras, équipements, étiquettes)** :
   - Geste en deux temps (menu contextuel puis clic sur la cible, ou glisser direct).
-  - Empilement ordonné sous la cible avec décalage millimétré, badge `🔗 N`, mise en surbrillance de la paire au survol et suivi automatique lors des déplacements de la carte parente.
+  - Empilement ordonné sous la cible avec décalage millimétré — 13 × 22 unités, la carte du dessous restant visible à 32 % —, badge `🔗 N`, mise en surbrillance de la paire au survol et suivi automatique lors des déplacements de la carte parente. Le serrage a un plafond vérifié : la recette d'interface refuse un masquage supérieur à 70 %.
   - Détachement fluide par déplacement de la carte attachée ou via menu contextuel.
 - **Cartes face cachée** : indicateur discret pour le propriétaire sans jamais divulguer l'identité aux adversaires.
 - **Marqueurs calculés et configurables** :
   - Valeur libre : entiers, compteurs textuels, mots-clés de règles (vol, vigilance, piétinement...).
   - Force / Endurance indépendantes (`X/Y`) avec commandes d'incrément `−` et `+` séparées pour chaque valeur.
   - Compteurs de loyauté, taxe de commandant et compteurs libres déplaçables.
-  - Compteurs figés / gelés avec journalisation dédiée dans l'Action Log.
+  - Compteurs figés / gelés avec journalisation dédiée dans l'Action Log : le décompte est résolu une fois à la pose et laisse **un seul** marqueur derrière lui.
+  - Le champ « Périmètre » (compter toutes les cartes ou toutes sauf la porteuse) n'apparaît qu'en mode figé — seul mode capable de l'appliquer.
 - **Étagère à jetons enrichie (`TokenShelf.tsx`)** :
   - Recherche Scryfall différenciant toutes les variantes d'un même jeton (couleur, force/endurance, type).
   - Réorganisation directe par flèches au survol.
@@ -175,6 +185,7 @@ implémentation :
 - **Journal d'actions enrichi (`ActionLog.tsx`)** :
   - Traces précises détaillant la nature de l'action (`consultation`, `scry`, `révélation`).
   - Notification exacte des destinations choisies pour chaque carte et mention explicite de l'état de la bibliothèque (`mélangée` ou `sans mélanger`).
+  - Les lignes portant sur plusieurs cartes les **nomment**, abrègent au-delà de six (`NAMED_LOG_LIMIT`) et gardent toutes leurs ancres ; une ligne abrégée se **déplie au clic**. La règle de visibilité qui l'encadre est au §5.4 de `docs/protocol.md`.
 
 ### 4. Réseau, Sécurité & Information cachée
 - **Serveur autoritatif Fastify + WebSocket** : logique de jeu pure validée côté serveur, aucun arbitrage laissé aux clients.
@@ -200,10 +211,40 @@ implémentation :
 - **Progressive Web App installable** : manifeste web complet, icônes adaptatives, raccourcis et fonctionnement plein écran.
 - **Mise en cache respectueuse** : le service worker ne met en cache que la coquille applicative locale ; aucun asset sous copyright de Wizards of the Coast n'est hébergé ou stocké.
 - **Couverture de tests automatisés** :
-  - 294 tests unitaires et d'intégration validés (`Vitest`).
+  - 490 tests unitaires et d'intégration validés (`Vitest`).
   - Tests d'invariants et de non-fuite par fuzzing sur des centaines d'actions aléatoires.
   - Sondes de bout en bout (`Playwright` / scripts Node) validant l'expérience dans de vrais navigateurs.
 
+### 7. Langue — ce qui existe, et ce qui n'existe pas
+
+Le chantier est **partiel**, et le dire vaut mieux que le laisser découvrir. Le document
+de référence est `docs/i18n.md` ; il détaille la mécanique, ses tests et ses pièges.
+
+Ce qui fonctionne :
+
+- **Les cartes s'affichent en français, avec repli anglais**, dans toutes les vues où une
+  carte est rendue. Une carte française est chez Scryfall un **objet distinct**, résolu
+  par `POST /api/cards/localized` ; le repli anglais est le cas courant, pas une erreur.
+- **Le choix de la langue est une préférence de compte**, modifiable en pleine partie. Elle
+  ne passe **pas** par le protocole de jeu : deux joueurs à la même table peuvent lire la
+  même partie dans deux langues sans que rien de l'état partagé ne change.
+- **Le sélecteur est monté à deux endroits** : la barre du haut en partie et l'accueil.
+- **Rien n'est hébergé pour autant** : `CardLocalization` ne stocke que des URL et des
+  noms, jamais un octet d'image ni un texte de règles.
+
+Ce qui ne l'est pas :
+
+- **Les libellés de l'interface ne sont pas traduits.** Le catalogue compte 47 clés, pour
+  40 composants et 6 écrans : c'est un échantillon d'amorce destiné à prouver la
+  mécanique, pas une couverture. L'interface reste française quelle que soit la langue
+  choisie.
+- **Le journal de partie reste en français.** Ses phrases sont fabriquées côté serveur, les
+  noms de cartes cuits dedans en anglais. L'en sortir suppose que le serveur publie une
+  clé et des paramètres au lieu d'une phrase — donc une montée de `PROTOCOL_VERSION`, donc
+  la déconnexion de toutes les tables ouvertes au déploiement. C'est une décision en
+  attente, consignée dans `docs/backlog.md`.
+- **Les lignes de type restent anglaises** partout, et le tri comme le filtre des listes
+  portent sur les noms du catalogue, c'est-à-dire l'anglais.
 
 ## Mention légale
 
