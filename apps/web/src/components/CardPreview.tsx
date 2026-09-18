@@ -46,6 +46,7 @@ import {
 import { cardLanguageMark, resolveCardImage } from '../lib/i18n/index.js';
 import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
 import { CardLanguageBadge } from './CardSprite.js';
+import { ManaCost } from './ManaCost.js';
 import { lastPointer } from '../lib/hover.js';
 import {
   DEFAULT_PREVIEW_CORNER,
@@ -230,11 +231,7 @@ export function CardPreview(): React.ReactElement | null {
           <span className="truncate text-xs font-semibold text-slate-100">
             {shownName}
           </span>
-          {meta.manaCost && (
-            <span className="shrink-0 font-mono text-[11px] font-bold text-amber-300">
-              {meta.manaCost}
-            </span>
-          )}
+          {meta.manaCost && <ManaCost cost={meta.manaCost} size="md" />}
         </div>
       )}
     </div>

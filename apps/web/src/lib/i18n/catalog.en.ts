@@ -745,4 +745,20 @@ export const en = defineTranslation({
   'account.displaySection': 'Display',
   'account.displayHint':
     'The interface language, and what you accept seeing change in order to get it.',
+
+  // — Coût de mana ———————————————————————————————————————————
+  'mana.costLabel': 'Mana cost: {cost}',
+  'mana.white': 'white',
+  'mana.blue': 'blue',
+  'mana.black': 'black',
+  'mana.red': 'red',
+  'mana.green': 'green',
+  'mana.colorless': 'colorless',
+  'mana.snow': 'snow',
+  'mana.generic': '{amount} generic',
+  'mana.or': 'or',
+  'mana.phyrexian': 'Phyrexian {part}',
+  'mana.tap': 'tap',
+  'mana.untap': 'untap',
+  'mana.energy': 'energy',
 } as const);

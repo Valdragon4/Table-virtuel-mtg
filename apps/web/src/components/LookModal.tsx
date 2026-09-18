@@ -22,6 +22,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PublicCardView } from '@mtg/shared';
 import { useGame } from '../store/game.js';
 import { CardSprite } from './CardSprite.js';
+import { ManaCost } from './ManaCost.js';
 import { cardMeta, cardName, scryfallImage } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
 import { resolveCardImage, useT, type BoundT } from '../lib/i18n/index.js';
@@ -710,10 +711,16 @@ export function LookModal(): React.ReactElement | null {
                 {inspectedMeta.manaCost && (
                   <p className="rounded-lg bg-slate-950/80 px-2.5 py-1.5 text-slate-300 text-[11px] leading-relaxed border border-slate-800 flex items-center justify-between">
                     <span className="text-slate-400">{t('consult.manaCost')}</span>
-                    <span className="font-mono font-bold text-amber-300">{inspectedMeta.manaCost}</span>
+                    <ManaCost cost={inspectedMeta.manaCost} size="md" />
                   </p>
                 )}
-                {inspectedMeta.power !== undefined && inspectedMeta.toughness !== undefined && (
+                {/*
+                  `!= null` et non `!== undefined` : le catalogue rend `null`
+                  pour une carte qui n'a ni force ni endurance — un artefact, un
+                  rituel. L'ancien test les laissait passer, et l'inspecteur
+                  affichait une ligne « Force / Endurance » réduite à un `/` nu.
+                */}
+                {inspectedMeta.power != null && inspectedMeta.toughness != null && (
                   <p className="rounded-lg bg-slate-950/80 px-2.5 py-1.5 text-slate-300 text-[11px] leading-relaxed border border-slate-800 flex items-center justify-between">
                     <span className="text-slate-400">{t('consult.powerToughness')}</span>
                     <span className="font-mono font-bold text-slate-200">
@@ -1002,9 +1009,11 @@ function LookCardItem({
           </span>
         </label>
         {meta?.manaCost && (
-          <span className="shrink-0 font-mono text-[10px] font-bold text-amber-300/90 bg-slate-950/80 px-1 py-0.5 rounded border border-slate-800">
-            {meta.manaCost}
-          </span>
+          <ManaCost
+            className="rounded border border-slate-800 bg-slate-950/80 px-1 py-0.5 text-[10px] font-bold text-amber-300/90"
+            cost={meta.manaCost}
+            size="sm"
+          />
         )}
       </div>
 

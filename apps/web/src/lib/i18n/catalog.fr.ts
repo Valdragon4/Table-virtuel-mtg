@@ -798,6 +798,27 @@ export const fr = {
   'account.displaySection': 'Affichage',
   'account.displayHint':
     'La langue de l’interface, et ce que vous acceptez de voir changer pour l’obtenir.',
+
+  // — Coût de mana ———————————————————————————————————————————
+  // Ces libellés ne s'affichent jamais : ils sont l'énoncé du coût pour le
+  // lecteur d'écran, qui ne peut rien faire d'une suite d'images. Le groupe
+  // entier porte `mana.costLabel` ; les autres clés en composent le contenu.
+  'mana.costLabel': 'Coût de mana : {cost}',
+  'mana.white': 'blanc',
+  'mana.blue': 'bleu',
+  'mana.black': 'noir',
+  'mana.red': 'rouge',
+  'mana.green': 'vert',
+  'mana.colorless': 'incolore',
+  'mana.snow': 'neige',
+  /** Vaut pour les chiffres comme pour les variables : « 2 générique », « X générique ». */
+  'mana.generic': '{amount} générique',
+  /** Le séparateur d'un hybride : « blanc ou bleu ». */
+  'mana.or': 'ou',
+  'mana.phyrexian': '{part} phyrexian',
+  'mana.tap': 'engager',
+  'mana.untap': 'dégager',
+  'mana.energy': 'énergie',
 } as const;
 
 /** La forme du catalogue : c'est le français qui la définit, toujours. */
