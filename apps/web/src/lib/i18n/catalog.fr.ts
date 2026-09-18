@@ -921,6 +921,58 @@ export const fr = {
 
   'admin.auditEmpty': 'Aucune action d’administration n’a encore été journalisée.',
   'admin.auditLine': '{actor} — {action} sur {target}',
+
+  // — Horodatages ————————————————————————————————————————————
+  // Un tableau de bord s’ouvre quand quelque chose ne va pas, et l’on y cherche
+  // « depuis quand ». Une date absolue seule oblige à calculer ; un relatif seul
+  // empêche de recouper avec un journal serveur. On donne les deux.
+  'admin.colOpened': 'Ouverte',
+  'admin.colJoined': 'Assis',
+
+  // — Le fil des dernières actions ——————————————————————————
+  'admin.sectionActivity': 'Dernières actions',
+  'admin.activityNote':
+    'Ce qui s’est passé sur l’instance, toutes sources mêlées et trié par date : comptes créés, connexions, tables ouvertes, places prises, ingestions, actions d’administration. Les actions de jeu n’y sont pas : elles ne sont pas enregistrées en base. La clôture d’une table non plus : aucune colonne ne la date.',
+  'admin.activityEmpty': 'Rien ne s’est encore passé sur cette instance.',
+  'admin.actAccountCreated': 'Compte créé',
+  'admin.actSessionOpened': 'Connexion',
+  'admin.actTableOpened': 'Table ouverte',
+  'admin.actSeatJoined': 'Place prise',
+  'admin.actIngest': 'Ingestion',
+  'admin.actAdmin': 'Administration',
+
+  // — Le replay ——————————————————————————————————————————————
+  'replay.title': 'Replay',
+  'replay.loading': 'Chargement du replay…',
+  'replay.notFound': 'Il n’y a pas de replay ici',
+  'replay.notFoundBody':
+    'L’adresse ne correspond à rien, ou la partie n’est pas terminée. Un replay n’existe qu’une fois la partie finie — c’est ce qui empêche d’aller lire la main de ses adversaires en pleine partie.',
+  'replay.networkError': 'Le replay n’a pas pu être chargé. Réessayez.',
+  'replay.viewLabel': 'Point de vue',
+  'replay.viewAll': 'Tout voir',
+  'replay.viewAllHint': 'La partie révélée : mains, bibliothèques, pioches.',
+  'replay.viewSeatHint': 'Ce que ce joueur voyait à cet instant précis.',
+  'replay.first': 'Début',
+  'replay.previous': 'Pas précédent',
+  'replay.next': 'Pas suivant',
+  'replay.last': 'Fin',
+  'replay.play': 'Lecture',
+  'replay.pause': 'Pause',
+  'replay.position': 'Pas {current} sur {total}',
+  'replay.truncated':
+    'L’enregistrement a atteint sa limite : la partie continue au-delà de ce que ce replay montre.',
+  'replay.backToTable': 'Retour à la table',
+
+  // — Partager un replay ————————————————————————————————————
+  'replay.shareTitle': 'Partager ce replay',
+  'replay.shareNote':
+    'Le lien montre la partie entière, à qui le détient : les mains, les bibliothèques et les pioches de tous les joueurs, pas seulement les vôtres.',
+  'replay.shareCreate': 'Créer un lien de partage',
+  'replay.shareRevoke': 'Fermer le partage',
+  'replay.shareCopied': 'Lien copié.',
+  'replay.shareNone': 'Ce replay n’est pas partagé.',
+  'replay.open': 'Voir le replay',
+  'replay.home': 'Retour à l’accueil',
 } as const;
 
 /** La forme du catalogue : c'est le français qui la définit, toujours. */

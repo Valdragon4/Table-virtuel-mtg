@@ -258,8 +258,27 @@ export function isPublicZone(kind: ZoneKind): boolean {
   return PUBLIC_ZONES.has(kind);
 }
 
+/**
+ * Siège fictif qui voit tout. **Il n'existe jamais dans une partie.**
+ *
+ * Il ne sert qu'à l'enregistrement d'un replay : `commit` construit une variante
+ * par destinataire, et il n'y a donc aucun endroit d'où récupérer l'event
+ * complet dont ces variantes dérivent. Plutôt que de recoller des vues
+ * partielles — qui mentiraient, chacune ayant été amputée de ce que son siège
+ * n'avait pas le droit de voir —, on demande la variante d'un destinataire qui
+ * a le droit de tout voir.
+ *
+ * Sa valeur ne peut pas entrer en collision avec un `SeatId` réel, qui vaut
+ * toujours `seat_<n>`, et il n'est jamais inscrit dans un `knownTo` : les vues
+ * publiques produites pour lui déclarent donc exactement les mêmes
+ * `revealedTo` que celles produites pour un vrai siège.
+ */
+export const OMNISCIENT_SEAT: SeatId = '@omniscient';
+
 export function canSeeIdentity(obj: GameObjectState, seat: SeatId | null): boolean {
   if (seat === null) return false;
+  // Le replay, et rien d'autre : aucun socket de partie ne porte ce siège-là.
+  if (seat === OMNISCIENT_SEAT) return true;
   if (obj.zone.kind === 'LIBRARY') return obj.knownTo.has(seat);
   if (PUBLIC_ZONES.has(obj.zone.kind) && !obj.faceDown) return true;
   return obj.knownTo.has(seat);

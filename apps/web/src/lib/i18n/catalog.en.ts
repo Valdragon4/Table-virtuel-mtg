@@ -860,4 +860,51 @@ export const en = defineTranslation({
 
   'admin.auditEmpty': 'No admin action has been logged yet.',
   'admin.auditLine': '{actor} — {action} on {target}',
+
+  'admin.colOpened': 'Opened',
+  'admin.colJoined': 'Seated',
+
+  'admin.sectionActivity': 'Latest activity',
+  'admin.activityNote':
+    'What happened on this instance, every source merged and sorted by date: accounts created, sign-ins, tables opened, seats taken, ingest runs, admin actions. Game actions are not here: they are not stored in the database. Neither is a table being put away: no column dates it.',
+  'admin.activityEmpty': 'Nothing has happened on this instance yet.',
+  'admin.actAccountCreated': 'Account created',
+  'admin.actSessionOpened': 'Sign-in',
+  'admin.actTableOpened': 'Table opened',
+  'admin.actSeatJoined': 'Seat taken',
+  'admin.actIngest': 'Ingest',
+  'admin.actAdmin': 'Admin',
+
+  // — Replay ————————————————————————————————————————————————
+  'replay.title': 'Replay',
+  'replay.loading': 'Loading replay…',
+  'replay.notFound': 'There is no replay here',
+  'replay.notFoundBody':
+    'The address matches nothing, or the game is not over. A replay only exists once the game has ended — that is what stops anyone reading their opponents’ hands mid-game.',
+  'replay.networkError': 'The replay could not be loaded. Try again.',
+  'replay.viewLabel': 'Point of view',
+  'replay.viewAll': 'See everything',
+  'replay.viewAllHint': 'The game laid bare: hands, libraries, draws.',
+  'replay.viewSeatHint': 'What this player could see at that exact moment.',
+  'replay.first': 'Start',
+  'replay.previous': 'Previous step',
+  'replay.next': 'Next step',
+  'replay.last': 'End',
+  'replay.play': 'Play',
+  'replay.pause': 'Pause',
+  'replay.position': 'Step {current} of {total}',
+  'replay.truncated':
+    'The recording hit its limit: the game carries on beyond what this replay shows.',
+  'replay.backToTable': 'Back to the table',
+
+  // — Sharing a replay ——————————————————————————————————————
+  'replay.shareTitle': 'Share this replay',
+  'replay.shareNote':
+    'The link shows the whole game to whoever holds it: every player’s hand, library and draws, not only yours.',
+  'replay.shareCreate': 'Create a share link',
+  'replay.shareRevoke': 'Close sharing',
+  'replay.shareCopied': 'Link copied.',
+  'replay.shareNone': 'This replay is not shared.',
+  'replay.open': 'Watch the replay',
+  'replay.home': 'Back to home',
 } as const);

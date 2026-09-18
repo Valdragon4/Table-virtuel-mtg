@@ -267,8 +267,21 @@ async function handleRoomIntent(
       case 'CLOSE_ROOM':
         if (!conn.seatId) throw new IntentError('ERR_NOT_SEATED', 'Assieds-toi d’abord.');
         room.closeRoom(conn.seatId);
+        /*
+         * `endedAt` avec le statut, et pas seulement dans `POST /rooms/:code/close`.
+         *
+         * Une table peut être close par deux chemins — cette intention-ci, et la
+         * route HTTP — et rien ne dit qu'un joueur passera par l'un plutôt que par
+         * l'autre. Ne dater que l'un des deux laisserait le fil d'administration
+         * afficher une clôture à l'heure de la dernière action de jeu, qui n'est
+         * pas la sienne. `lastActivityAt` ne peut pas servir de repli : il n'est
+         * jamais réécrit après la création de la table.
+         */
         await prisma.gameRoom
-          .update({ where: { code: room.state.code }, data: { status: 'ENDED' } })
+          .update({
+            where: { code: room.state.code },
+            data: { status: 'ENDED', endedAt: new Date() },
+          })
           .catch(() => undefined);
         conn.send({ t: 'ack', cid, seq: room.state.seq });
         return;

@@ -217,7 +217,10 @@ export async function roomRoutes(app: FastifyInstance): Promise<void> {
     }
 
     peekRoom(record.code)?.close();
-    await prisma.gameRoom.update({ where: { id: record.id }, data: { status: 'ENDED' } });
+    await prisma.gameRoom.update({
+      where: { id: record.id },
+      data: { status: 'ENDED', endedAt: new Date() },
+    });
     return reply.send({ ok: true });
   });
 }

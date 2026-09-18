@@ -19,6 +19,7 @@ export function TableClosed(): React.ReactElement | null {
   const seats = useGame((s) => s.seats);
   const closed = useGame((s) => s.room?.closed ?? false);
   const dismiss = useGame((s) => s.dismissGameOver);
+  const roomCode = useGame((s) => s.roomCode);
   // Une table close reste annoncée même après rechargement : l'information ne
   // vient plus d'un event qu'on aurait pu manquer, mais de l'état de la room.
   if (!gameOver && !closed) return null;
@@ -48,6 +49,24 @@ export function TableClosed(): React.ReactElement | null {
             >
               Regarder le terrain
             </button>
+          )}
+          {/*
+            Le seul chemin qui mène au lecteur depuis la table.
+
+            Sans lui, le replay existait sans que personne ne puisse le trouver :
+            il ne s'atteignait qu'en tapant son adresse à la main. C'est ici qu'il
+            a sa place — au moment précis où la partie vient de finir et où l'on a
+            envie de la revoir. Le lecteur porte son propre verrou et répond « pas
+            de replay » tant que la partie court, donc proposer le lien n'ouvre
+            rien : c'est le serveur qui décide, pas ce bouton.
+          */}
+          {roomCode && (
+            <Link
+              className="rounded border border-edge px-4 py-2 text-sm text-slate-200 hover:border-slate-500"
+              to={`/rooms/${roomCode}/replay`}
+            >
+              Revoir la partie
+            </Link>
           )}
           <Link
             className="rounded border border-edge bg-slate-800 px-4 py-2 text-sm text-slate-100 hover:border-slate-500"

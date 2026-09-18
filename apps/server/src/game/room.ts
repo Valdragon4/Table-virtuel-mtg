@@ -46,6 +46,7 @@ import {
   type SeatState,
 } from './state.js';
 import { reconcileTopReveals } from './topReveal.js';
+import { ReplayRecorder, frameOf, type ReplaySink } from '../replay/recorder.js';
 import { TokenBucket } from '../lib/throttle.js';
 
 export interface Connection {
@@ -84,6 +85,12 @@ export interface RoomHooks {
   persistLog?: (roomId: string, entries: LogEntry[]) => void;
   /** Résolution d'une carte pour CREATE_TOKEN. */
   lookupCard?: (scryfallId: string) => Promise<CardData | null>;
+  /**
+   * Puits d'enregistrement du replay. Absent = on n'enregistre rien, et la
+   * partie se déroule exactement comme avant : c'est le cas de tous les tests
+   * qui ne parlent pas de replay.
+   */
+  replaySink?: ReplaySink;
 }
 
 /**
@@ -122,6 +129,16 @@ export class Room {
   private readonly cursors = new Map<SeatId, CursorState>();
   private cursorTimer: NodeJS.Timeout | null = null;
   private pendingLog: LogEntry[] = [];
+  /**
+   * Enregistrement de la partie en cours, `null` hors partie.
+   *
+   * Ouvert par `startGame`, refermé par le premier `GAME_ENDED` qui passe par
+   * `commit`. Tant qu'il n'est pas refermé, le replay correspondant n'est
+   * lisible par personne : c'est le verrou, et il est porté par la donnée
+   * elle-même plutôt que par une garde de route qu'on pourrait oublier
+   * d'écrire sur la route suivante.
+   */
+  private recorder: ReplayRecorder | null = null;
 
   constructor(
     roomId: string,
@@ -880,6 +897,9 @@ export class Room {
       ...emissions,
     ]);
 
+    // Le point zéro du replay est ici : decks mélangés, mains distribuées.
+    this.openReplay();
+
     // Les mains viennent d'être distribuées : chacun reçoit la sienne, projetée.
     this.resendSnapshots();
   }
@@ -1233,17 +1253,23 @@ export class Room {
       // Le journal est diffusé à toute la table : ses ancres de carte doivent
       // donc supporter le même examen que son texte. Un objet de bibliothèque
       // n'existe pas pour les autres sièges, son identifiant non plus (§2.1).
-      const log = emission.log
+      const logPayload = emission.log
         ? {
-            log: {
-              text: emission.log.text,
-              cardIds: emission.log.cardIds.filter((id) => {
-                const obj = this.state.objects.get(id);
-                return !obj || isEnumerableZone(obj.zone.kind);
-              }),
-            },
+            text: emission.log.text,
+            cardIds: emission.log.cardIds.filter((id) => {
+              const obj = this.state.objects.get(id);
+              return !obj || isEnumerableZone(obj.zone.kind);
+            }),
           }
-        : {};
+        : null;
+      const log = logPayload ? { log: logPayload } : {};
+
+      // L'enregistrement du replay, et rien qu'ici : `commit` est le passage
+      // obligé de toute émission, donc le seul endroit où le flux est complet
+      // par construction. Le tout sous garde — une partie ne s'arrête pas
+      // parce qu'un replay ne s'écrit pas.
+      this.recordFrame(emission, seq, at, actor, logPayload);
+
       for (const seatId of recipients) {
         variants.set(seatId, { t: 'event', seq, at, actor, event: emission.build(seatId), ...log });
       }
@@ -1328,6 +1354,76 @@ export class Room {
 
   /** Vrai pendant la réconciliation des dessus révélés : voir `commit`. */
   private reconciling = false;
+
+  /**
+   * Enregistre un pas, et referme l'enregistrement sur `GAME_ENDED`.
+   *
+   * Tout est enveloppé : construire la variante omnisciente appelle du code de
+   * moteur, et une exception venue de là ferait échouer un intent parfaitement
+   * valide. Le replay est un témoin de la partie, jamais une condition de son
+   * déroulement — s'il tombe, il tombe seul.
+   */
+  private recordFrame(
+    emission: Emission,
+    seq: Seq,
+    at: number,
+    actor: SeatId | null,
+    log: { text: string; cardIds: ObjectId[] } | null,
+  ): void {
+    const recorder = this.recorder;
+    if (!recorder || recorder.isClosed) return;
+    try {
+      const frame = frameOf(this.state, emission, seq, at, actor, log ?? undefined);
+      recorder.record(frame);
+      // La fin de partie referme l'enregistrement **après** l'avoir inscrite :
+      // un replay qui s'arrête juste avant sa dernière ligne serait frustrant.
+      if (frame.event.type === 'GAME_ENDED') recorder.close(frame.event.reason);
+    } catch {
+      // Silence volontaire : cf. commentaire ci-dessus.
+    }
+  }
+
+  /**
+   * Ouvre l'enregistrement de la partie qui vient de commencer.
+   *
+   * Appelé **après** le commit de `GAME_STARTED` et des mains d'ouverture :
+   * le point zéro est donc la table telle qu'elle est au premier tour, decks
+   * mélangés et mains distribuées. Partir de l'event zéro aurait voulu dire
+   * rejouer aussi le salon — les chargements de deck, les allées et venues de
+   * sièges — pour arriver au même endroit, avec en prime la difficulté que
+   * `START_GAME` réattribue tous les identifiants au mélange.
+   */
+  private openReplay(): void {
+    const sink = this.hooks.replaySink;
+    if (!sink) return;
+    try {
+      this.recorder?.close('RESTART');
+      this.recorder = new ReplayRecorder(this.state.roomId, this.state.seq, sink, this.state);
+    } catch {
+      this.recorder = null;
+    }
+  }
+
+  /**
+   * Referme l'enregistrement d'une partie qu'aucun `GAME_ENDED` n'a close.
+   *
+   * C'est le cas de la table abandonnée : plus personne n'est connecté, le
+   * balayage la libère, et sans cet appel son enregistrement resterait ouvert
+   * — donc illisible — pour toujours. Voir `sweepRooms`.
+   */
+  abandonReplay(reason = 'TIMEOUT'): void {
+    try {
+      this.recorder?.close(reason);
+    } catch {
+      /* ignoré : voir `recordFrame` */
+    }
+    this.recorder = null;
+  }
+
+  /** Mesure de l'enregistrement en cours. Sert aux tests et au rapport de coût. */
+  get replayStats(): ReplayRecorder['stats'] | null {
+    return this.recorder ? this.recorder.stats : null;
+  }
 
   private flushLog(): void {
     if (this.pendingLog.length === 0 || !this.hooks.persistLog) return;

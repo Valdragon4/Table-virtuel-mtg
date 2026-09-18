@@ -13,6 +13,7 @@ import { userRoutes } from './users/routes.js';
 import { deckRoutes } from './decks/routes.js';
 import { cardRoutes } from './cards/routes.js';
 import { roomRoutes } from './rooms/routes.js';
+import { replayRoutes } from './replay/routes.js';
 import { adminRoutes } from './admin/routes.js';
 import { cardCount } from './cards/ingest.js';
 import { registerWebSocket } from './ws/server.js';
@@ -55,6 +56,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(deckRoutes);
   await app.register(cardRoutes);
   await app.register(roomRoutes);
+  await app.register(replayRoutes);
   // Toutes ses routes sont gardées par `requireAdmin`, qui refuse en 404 — la
   // même que celle rendue plus bas pour tout `/api` inconnu. Voir docs/admin.md.
   await app.register(adminRoutes);

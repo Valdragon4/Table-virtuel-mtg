@@ -11,6 +11,7 @@ import { DecksPage } from './pages/Decks.js';
 import { Tables } from './pages/Tables.js';
 import { RoomPage } from './pages/Room.js';
 import { Admin } from './pages/Admin.js';
+import { ReplayPage } from './pages/Replay.js';
 import { ForgotPasswordPage, ResetPasswordPage, VerifyEmailPage } from './pages/Tokens.js';
 import { LegalFooter } from './components/LegalFooter.js';
 import { registerServiceWorker, watchInstallPrompt } from './lib/pwa.js';
@@ -31,6 +32,16 @@ function App(): React.ReactElement {
         <Route path="/decks" element={<DecksPage />} />
         <Route path="/tables" element={<Tables />} />
         <Route path="/rooms/:code" element={<RoomPage />} />
+        {/* Le lecteur de replay. Comme pour /admin, cette déclaration n'ouvre
+            **rien** : le serveur refuse en 404 tant que la partie n'est pas
+            terminée, et l'écran affiche alors la même chose qu'une adresse
+            inexistante. Le `handle` est soit un jeton de partage, soit
+            l'identifiant du replay — voir docs/replay.md. */}
+        <Route path="/replays/:handle" element={<ReplayPage />} />
+        {/* Le chemin des joueurs, qui ne connaissent que leur code de table.
+            Il ne donne accès à rien de plus : le serveur y applique le même
+            verrou, et répond « pas de replay » tant que la partie court. */}
+        <Route path="/rooms/:code/replay" element={<ReplayPage />} />
         {/* La console d'administration. Cette déclaration n'ouvre **rien** :
             la route est publique comme toutes les routes du client, et c'est le
             serveur qui refuse en 404 sur chaque appel d'API (docs/admin.md).
