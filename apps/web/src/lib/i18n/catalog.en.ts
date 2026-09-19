@@ -962,11 +962,18 @@ export const en = defineTranslation({
   'assist.tokenMissingTitle': 'Token not found',
   'assist.tokenMissing':
     'The local catalog holds no token named exactly “{name}”. Nothing was created: use the token search to pick one yourself.',
+  'assist.armyMissing':
+    'The local catalog holds no Army-type token. Nothing was created: use the token search to pick one yourself.',
   'assist.amassNew': 'Amass N — new Army token…',
   'assist.amassThis': 'Amass N — on this card…',
   'assist.amassTitle': 'Amass',
   'assist.amassLabel': '+1/+1 counters',
   'assist.amassSubmit': 'Amass',
+  'assist.amassArmyDescription':
+    'Amass creates the Army your card names — Zombies, Orcs, Goblins… We do not read rules text: here are the ones the catalog knows, yours to point at. Any other Army is one token search away.',
+  'assist.amassArmyLabel': 'Which Army',
+  'assist.amassArmyHint':
+    'Nothing is preselected: this list is what the catalog holds, not a recommendation.',
   'assist.populate': 'Populate (copy this token)',
   'assist.proliferateOne': 'Proliferate on this card',
   'assist.proliferateMany': 'Proliferate on {count} cards',

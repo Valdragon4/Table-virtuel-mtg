@@ -1544,6 +1544,250 @@ async function findDoubleFaced() {
     await page.evaluate(() => window.localStorage.removeItem('mtg.tokenShelf'));
   });
 
+  // ------------------------------------------------- actions assistées du menu
+
+  /**
+   * Le tiroir « Actions assistées › » d'un permanent de notre champ.
+   *
+   * Réouvert à chaque création : l'entrée du tiroir referme le menu, et rien ne
+   * doit rester ouvert d'une itération à l'autre.
+   */
+  const ouvrirTiroirAssiste = async () => {
+    await myPermanent().click({ button: 'right' });
+    await page.locator('[data-test="card-menu"]').first().waitFor({ timeout: 5000 });
+    await page.locator('[data-test="card-menu"]').getByText('Actions assistées').click();
+    await page.locator('[data-test="card-submenu"]').first().waitFor({ timeout: 5000 });
+  };
+
+  /** Les jetons du champ, par identifiant : ce qui est neuf se lit par différence. */
+  const jetonsPoses = () =>
+    page.evaluate(() =>
+      [...window.__mtg.getState().cards.values()].filter((c) => c.kind === 'TOKEN').map((c) => c.id),
+    );
+
+  /**
+   * Ramasser ce qu'une étape a posé.
+   *
+   * Ces deux étapes créent des jetons **par-dessus** les permanents du champ, et
+   * les y laisser fait tomber une étape bien plus loin, dont le double-clic
+   * atteint alors le jeton au lieu de la carte visée — mesuré, pas supposé. Une
+   * étape rend donc la table telle qu'elle l'a trouvée, même quand elle échoue.
+   */
+  const ramasserJetons = async (deja) => {
+    await page
+      .evaluate((connus) => {
+        const s = window.__mtg.getState();
+        const neufs = [...s.cards.values()]
+          .filter((c) => c.kind === 'TOKEN' && !connus.includes(c.id))
+          .map((c) => c.id);
+        if (neufs.length > 0) s.send({ type: 'DESTROY_TOKEN', cardIds: neufs });
+        return neufs.length;
+      }, deja)
+      .catch(() => 0);
+    await page
+      .waitForFunction(
+        (connus) =>
+          [...window.__mtg.getState().cards.values()].filter((c) => c.kind === 'TOKEN').length <=
+          connus.length,
+        deja,
+        { timeout: 8000 },
+      )
+      .catch(() => undefined);
+  };
+
+  /*
+   * **Le garde-fou de la liste fermée**, et la raison d'être de cette étape.
+   *
+   * `CardMenu` porte une liste de jetons cherchés au catalogue par nom exact.
+   * Deux de ses six entrées ont vécu mortes sans que rien ne le dise : le
+   * catalogue n'a aucun jeton nommé « Incubator » — il s'appelle
+   * « Incubator // Phyrexian », recto-verso —, ni aucun nommé « Army » — c'est
+   * un type de créature, et les jetons s'appellent « Zombie Army », « Orc
+   * Army »… Le joueur ne recevait qu'un « Jeton introuvable ».
+   *
+   * Aucun test unitaire ne pouvait le voir : il n'a pas de catalogue, et un nom
+   * écrit de mémoire s'y compare à lui-même. Seule la recette, qui tourne
+   * contre la vraie base, confronte la liste à ce qui existe. On déclenche donc
+   * **chaque** entrée depuis le menu, et l'on tombe si l'une d'elles ne pose
+   * rien — en nommant laquelle.
+   *
+   * La liste n'est pas recopiée ici : elle est **lue dans le dialogue**, sur
+   * les options que le menu offre vraiment. Une entrée ajoutée demain à
+   * `NAMED_TOKENS` sera donc éprouvée sans que cette étape bouge.
+   */
+  await step('actions assistées : chaque jeton nommé du menu existe au catalogue', async () => {
+    const ouvrirJetonsNommes = async () => {
+      await ouvrirTiroirAssiste();
+      await page.locator('[data-test="card-submenu"]').getByText('Créer un jeton nommé…').click();
+      await page.locator('[data-test="dialog"]').first().waitFor({ timeout: 5000 });
+    };
+
+    const depart = await jetonsPoses();
+    try {
+      await ouvrirJetonsNommes();
+      const noms = await page
+        .locator('[data-test="dialog-option"][data-field="token"]')
+        .evaluateAll((els) => els.map((el) => el.getAttribute('data-value')));
+      if (noms.length === 0) throw new Error('le menu ne propose aucun jeton nommé');
+      console.log(`      liste fermée du menu : ${noms.join(', ')}`);
+
+      for (const [rang, nom] of noms.entries()) {
+        if (rang > 0) await ouvrirJetonsNommes();
+        const avant = await jetonsPoses();
+        await page
+          .locator(`[data-test="dialog-option"][data-field="token"][data-value="${nom}"]`)
+          .click();
+        await page.locator('[data-test="dialog-submit"]').click();
+
+        const cree = await page
+          .waitForFunction(
+            (n) =>
+              [...window.__mtg.getState().cards.values()].filter((c) => c.kind === 'TOKEN').length >
+              n,
+            avant.length,
+            { timeout: 10000 },
+          )
+          .then(() => true)
+          .catch(() => false);
+
+        if (!cree) {
+          // Le message du produit est l'aveu qu'on cherche : on le nomme dans
+          // l'échec, pour que le rapport dise *pourquoi* et pas seulement *quoi*.
+          const introuvable = await page
+            .getByText('Jeton introuvable')
+            .isVisible()
+            .catch(() => false);
+          await page.keyboard.press('Escape');
+          throw new Error(
+            introuvable
+              ? `« ${nom} » : le menu propose un jeton que le catalogue n’a pas (« Jeton introuvable »)`
+              : `« ${nom} » n’a posé aucun jeton`,
+          );
+        }
+
+        // Et c'est bien **ce** jeton-là qui est né, pas un voisin approchant.
+        const pose = await page.evaluate(async (deja) => {
+          const neuf = [...window.__mtg.getState().cards.values()].find(
+            (c) => c.kind === 'TOKEN' && !deja.includes(c.id),
+          );
+          if (!neuf) return null;
+          const reponse = await fetch('/api/cards/batch', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids: [neuf.scryfallId] }),
+          });
+          const corps = await reponse.json();
+          return corps.cards?.[0]?.name ?? null;
+        }, avant);
+        if (pose !== nom) throw new Error(`« ${nom} » a posé « ${pose} »`);
+        console.log(`      ${nom} : posé`);
+      }
+    } finally {
+      await ramasserJetons(depart);
+    }
+  });
+
+  /*
+   * L'armée d'« Amasser » : le catalogue propose, le joueur désigne.
+   *
+   * Il n'existe pas *une* armée mais une par race — et la prochaine extension
+   * en ajoutera. Choisir la plus fréquente en silence conclurait à la place du
+   * joueur, dont la carte dit peut-être « amassez des orques » : nous ne lisons
+   * pas le texte de règles. On vérifie donc les deux moitiés : la liste vient
+   * bien du catalogue (elle n'est pas vide, et ce qui naît est un jeton de type
+   * Armée), et rien n'est décidé pour le joueur — aucune option n'est retenue
+   * d'avance, et le dialogue refuse de se valider tant qu'il n'a pas désigné.
+   */
+  await step(
+    'actions assistées : l’armée d’« Amasser » vient du catalogue et reste au choix',
+    async () => {
+      const depart = await jetonsPoses();
+      try {
+        await ouvrirTiroirAssiste();
+        await page
+          .locator('[data-test="card-submenu"]')
+          .getByText('Amasser N — nouveau jeton Armée…')
+          .click();
+        await page.locator('[data-test="dialog"]').first().waitFor({ timeout: 8000 });
+
+        const armees = page.locator('[data-test="dialog-option"][data-field="army"]');
+        if ((await armees.count()) === 0) {
+          await page.keyboard.press('Escape');
+          throw new Error(
+            'le dialogue d’Amasser ne propose aucune armée : le catalogue n’est pas lu',
+          );
+        }
+        const libelles = await armees.evaluateAll((els) => els.map((el) => el.textContent.trim()));
+        console.log(`      armées du catalogue : ${libelles.join(', ')}`);
+
+        // Rien n'est retenu d'avance…
+        const dejaRetenue = await armees.evaluateAll(
+          (els) => els.filter((el) => el.getAttribute('aria-pressed') === 'true').length,
+        );
+        if (dejaRetenue > 0) {
+          await page.keyboard.press('Escape');
+          throw new Error('une armée est choisie d’avance : le menu conclut à la place du joueur');
+        }
+        // …et valider sans désigner ne crée rien.
+        const avant = await jetonsPoses();
+        await page.locator('[data-test="dialog-submit"]').click();
+        await page.waitForTimeout(400);
+        if (!(await page.locator('[data-test="dialog"]').first().isVisible())) {
+          throw new Error('le dialogue s’est validé sans qu’aucune armée soit désignée');
+        }
+
+        // Le joueur désigne, et l'armée naît avec ses marqueurs.
+        await armees.first().click();
+        await page.locator('[data-test="dialog-submit"]').click();
+        const ne = await page
+          .waitForFunction(
+            (deja) =>
+              [...window.__mtg.getState().cards.values()].find(
+                (c) => c.kind === 'TOKEN' && !deja.includes(c.id),
+              )?.id ?? false,
+            avant,
+            { timeout: 10000 },
+          )
+          .then((poignee) => poignee.jsonValue())
+          .catch(() => null);
+        if (!ne) {
+          const introuvable = await page
+            .getByText('Jeton introuvable')
+            .isVisible()
+            .catch(() => false);
+          await page.keyboard.press('Escape');
+          throw new Error(
+            introuvable
+              ? 'Amasser propose une armée que le catalogue n’a pas (« Jeton introuvable »)'
+              : 'Amasser n’a posé aucune armée',
+          );
+        }
+
+        const vu = await page.evaluate(async (id) => {
+          const carte = window.__mtg.getState().cards.get(id);
+          const reponse = await fetch('/api/cards/batch', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids: [carte.scryfallId] }),
+          });
+          const corps = await reponse.json();
+          return {
+            nom: corps.cards?.[0]?.name ?? null,
+            typeLine: corps.cards?.[0]?.typeLine ?? '',
+            marqueurs: carte.counters?.find((c) => c.kind === '+1/+1')?.value ?? 0,
+          };
+        }, ne);
+        if (!/(^|\s)Army(\s|$)/i.test(vu.typeLine)) {
+          throw new Error(`Amasser a posé « ${vu.nom} » (${vu.typeLine}), qui n’est pas une armée`);
+        }
+        if (vu.marqueurs < 1) throw new Error(`« ${vu.nom} » est née sans marqueur +1/+1`);
+        console.log(`      armée posée : ${vu.nom} avec ${vu.marqueurs} marqueur(s) +1/+1`);
+      } finally {
+        await ramasserJetons(depart);
+      }
+    },
+  );
+
   // ---------------------------------------------------------- fond de table
 
   await step('le fond de table est dessiné, dans le repère du monde', async () => {

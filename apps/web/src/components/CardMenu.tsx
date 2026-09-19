@@ -12,7 +12,7 @@ import { api } from '../lib/api.js';
 import { cardMeta, cardName } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
 import { useLanguage } from '../store/prefs.js';
-import { useT } from '../lib/i18n/index.js';
+import { tokenName, useT } from '../lib/i18n/index.js';
 import { PrintingPicker } from './PrintingPicker.js';
 import { useMenuPlacement } from '../lib/menu.js';
 import { askNumber, openDialog } from './Dialog.js';
@@ -114,6 +114,22 @@ export function assistedKeywords(meta: { keywords?: string[] | null } | undefine
 }
 
 /**
+ * L'Incubateur, et pourquoi son nom porte deux faces.
+ *
+ * Le jeton d'« Incuber » est **recto-verso** : le catalogue le nomme
+ * « Incubator // Phyrexian » — l'artefact d'un côté, la créature phyrexiane de
+ * l'autre — et il n'existe aucune impression nommée « Incubator » tout court.
+ * La recherche par nom exact ne pouvait donc pas le trouver, et l'entrée de
+ * menu ne rendait que « Jeton introuvable ».
+ *
+ * Le nom entier est la **clé de catalogue**, pas un libellé : ce que le joueur
+ * lit vient de `catalog.*` dans le dialogue, et du glossaire des jetons partout
+ * ailleurs — `tokenName('Incubator // Phyrexian', 'fr')` traduit face par face
+ * et rend « Incubateur // Phyrexian », le type phyrexian n'étant pas francisé.
+ */
+const INCUBATOR_TOKEN = 'Incubator // Phyrexian';
+
+/**
  * Les jetons que les raccourcis nommés savent créer, sous leur nom **anglais**.
  *
  * C'est une clé de recherche, pas un libellé : `/api/cards/search` n'interroge
@@ -122,14 +138,22 @@ export function assistedKeywords(meta: { keywords?: string[] | null } | undefine
  * le catalogue d'interface.
  *
  * La liste est **fermée exprès**, et ce n'est pas une limite technique : ces
- * cinq-là — plus l'Armée d'« Amasser » — sont les jetons génériques qu'on crée
- * dix fois par partie sans avoir à choisir lesquels. Tout le reste passe par la
- * recherche de jetons et l'étagère, qui ne bougent pas.
+ * cinq-là sont les jetons génériques qu'on crée dix fois par partie sans avoir
+ * à choisir lesquels. Tout le reste passe par la recherche de jetons et
+ * l'étagère, qui ne bougent pas.
+ *
+ * **Chaque nom est celui du catalogue, vérifié contre lui.** Deux d'entre eux
+ * avaient été écrits de mémoire et ne désignaient rien : l'entrée était morte
+ * et personne ne le savait. Un pas de recette (`scripts/verify-ui.mjs`,
+ * « chaque jeton nommé du menu existe au catalogue ») déclenche désormais
+ * chacune de ces entrées contre la vraie base et tombe si l'une d'elles rend
+ * « Jeton introuvable » — c'est le seul endroit où ce mensonge-là se voit, un
+ * test unitaire n'ayant pas de catalogue.
  */
-const NAMED_TOKENS = ['Clue', 'Treasure', 'Food', 'Blood', 'Incubator'] as const;
+const NAMED_TOKENS = ['Clue', 'Treasure', 'Food', 'Blood', INCUBATOR_TOKEN] as const;
 
-/** Le jeton d'« Amasser », cherché comme les autres. */
-const ARMY_TOKEN = 'Army';
+/** Le type de créature d'« Amasser », et la clé qui interroge le catalogue. */
+const ARMY_TYPE = 'Army';
 
 /**
  * L'impression d'un jeton nommé, cherchée dans le catalogue local.
@@ -153,6 +177,54 @@ async function namedTokenPrinting(name: string): Promise<string | null> {
     return exact?.scryfallId ?? null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * « Armée » est un **type de créature**, pas un nom de jeton.
+ *
+ * C'est toute l'erreur qu'on répare : il n'existe aucun jeton nommé « Army »,
+ * parce qu'« Amasser » crée l'armée de la race de la carte — Zombie Army, Orc
+ * Army, Goblin Army, Sliver Army, et la prochaine extension en ajoutera une
+ * autre. Le nom se lit donc sur la **ligne de type**, après le tiret cadratin,
+ * et non en comparant des noms écrits de mémoire.
+ *
+ * Les deux faces d'un jeton recto-verso sont examinées séparément : il suffit
+ * qu'une seule soit une armée.
+ */
+function isArmyTypeLine(typeLine: string | null | undefined): boolean {
+  if (typeof typeLine !== 'string') return false;
+  return typeLine.split('//').some((face) => {
+    const dash = face.search(/[—–]/);
+    return dash >= 0 && /(^|\s)Army(\s|$)/i.test(face.slice(dash + 1));
+  });
+}
+
+/**
+ * Les armées que **le catalogue** connaît, une impression par nom.
+ *
+ * Rien n'est écrit en dur, et c'est le point : une liste de noms figée ici
+ * rouvrirait le même défaut à la première extension qui amasse des elfes. On
+ * interroge la même recherche de jetons que l'étagère, sur le type, et l'on
+ * garde de chaque nom la **première** impression rendue — la recherche classe
+ * la mieux notée en tête, exactement ce que le joueur aurait cliqué au premier
+ * résultat.
+ *
+ * Une liste vide n'est pas une erreur silencieuse : l'appelant le dit.
+ */
+async function armyPrintings(): Promise<Array<{ name: string; scryfallId: string }>> {
+  try {
+    const found = await api.get<{
+      results: Array<{ scryfallId: string; name: string; typeLine: string }>;
+    }>(`/api/cards/search?q=${encodeURIComponent(ARMY_TYPE)}&type=token`);
+    const best = new Map<string, string>();
+    for (const hit of found.results) {
+      if (!isArmyTypeLine(hit.typeLine)) continue;
+      if (!best.has(hit.name)) best.set(hit.name, hit.scryfallId);
+    }
+    return [...best].map(([name, scryfallId]) => ({ name, scryfallId }));
+  } catch {
+    return [];
   }
 }
 
@@ -1402,6 +1474,19 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
     });
   };
 
+  /**
+   * Aucune armée au catalogue — un cas qui ne devrait pas arriver, et qui se
+   * dit donc à part : « Army » n'est le nom d'aucun jeton, et le message
+   * générique ci-dessus mentirait en prétendant l'avoir cherché comme un nom.
+   */
+  const sayNoArmy = (): void => {
+    void openDialog({
+      title: t('assist.tokenMissingTitle'),
+      description: t('assist.armyMissing'),
+      submitLabel: t('common.close'),
+    });
+  };
+
   /*
    * Jetons nommés — **aucun jugement**, le mot-clé ne fait que nommer.
    *
@@ -1432,7 +1517,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
             { value: 'Treasure', label: t('assist.tokenTreasure') },
             { value: 'Food', label: t('assist.tokenFood') },
             { value: 'Blood', label: t('assist.tokenBlood') },
-            { value: 'Incubator', label: t('assist.tokenIncubator') },
+            { value: INCUBATOR_TOKEN, label: t('assist.tokenIncubator') },
           ],
         },
         {
@@ -1449,7 +1534,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
           numeric: true,
           initial: '1',
           quick: [1, 2, 3, 4].map((n) => ({ label: String(n), value: String(n) })),
-          hidden: (values) => values['token'] !== 'Incubator',
+          hidden: (values) => values['token'] !== INCUBATOR_TOKEN,
         },
       ],
     }).then(async (result) => {
@@ -1459,7 +1544,8 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
       const count = Math.min(64, Math.max(1, Number.parseInt(result.values['count'] ?? '1', 10) || 1));
       const printing = await namedTokenPrinting(which);
       if (printing === null) return sayMissing(which);
-      const marks = which === 'Incubator' ? Number.parseInt(result.values['marks'] ?? '', 10) : Number.NaN;
+      const marks =
+        which === INCUBATOR_TOKEN ? Number.parseInt(result.values['marks'] ?? '', 10) : Number.NaN;
       send({
         type: 'CREATE_TOKEN',
         scryfallId: printing,
@@ -1484,7 +1570,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
    * `CREATE_TOKEN` avec ses marqueurs de l'autre — le protocole porte déjà
    * `counters` sur la création, précisément pour qu'un jeton naisse marqué.
    */
-  const askAmass = (onto: 'NEW_ARMY' | 'THIS_CARD'): void => {
+  const askAmassOnThisCard = (): void => {
     onClose();
     void askNumber({
       title: t('assist.amassTitle'),
@@ -1493,17 +1579,70 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
       quick: [1, 2, 3, 5],
       memory: 'assist-amass',
       submitLabel: t('assist.amassSubmit'),
-    }).then(async (n) => {
+    }).then((n) => {
       if (n === null) return;
-      if (onto === 'THIS_CARD') {
-        send({ type: 'ADD_COUNTER', targetId: card.id, kind: '+1/+1', delta: n });
-        return;
-      }
-      const printing = await namedTokenPrinting(ARMY_TOKEN);
-      if (printing === null) return sayMissing(ARMY_TOKEN);
+      send({ type: 'ADD_COUNTER', targetId: card.id, kind: '+1/+1', delta: n });
+    });
+  };
+
+  /*
+   * Créer l'armée : **on propose, le joueur tranche**, et aucune des deux
+   * moitiés de cette phrase n'est négociable.
+   *
+   * Prendre « Zombie Army » parce que c'est la plus imprimée **conclurait** à
+   * la place du joueur : la carte qu'il tient dit peut-être « amassez des
+   * orques », et nous ne pouvons pas le savoir — nous ne stockons ni
+   * `oracle_text` ni `flavor_text`, c'est un invariant de droits. Refuser de
+   * créer quoi que ce soit, à l'inverse, serait le défaut qu'on répare.
+   *
+   * La forme retenue tient dans les trois critères de l'action assistée :
+   *   - elle **n'interdit rien** — la recherche de jetons et l'étagère
+   *     restent le chemin ouvert, et le dialogue le rappelle ;
+   *   - elle **n'impose rien** — aucune armée n'est présélectionnée, le
+   *     dialogue refuse simplement de se valider tant que personne n'a
+   *     désigné ; l'ordre d'affichage est alphabétique, pas un classement ;
+   *   - elle **ne conclut rien** — la liste est ce que le catalogue contient,
+   *     pas ce que nous croyons que la carte dit.
+   */
+  const askAmassNewArmy = (): void => {
+    onClose();
+    void armyPrintings().then(async (armies) => {
+      if (armies.length === 0) return sayNoArmy();
+      const options = armies
+        .map((army) => ({ value: army.scryfallId, label: tokenName(army.name, language) ?? army.name }))
+        .sort((a, b) => a.label.localeCompare(b.label, language));
+
+      const result = await openDialog({
+        title: t('assist.amassTitle'),
+        description: t('assist.amassArmyDescription'),
+        submitLabel: t('assist.amassSubmit'),
+        memory: 'assist-amass-army',
+        fields: [
+          {
+            name: 'army',
+            label: t('assist.amassArmyLabel'),
+            hint: t('assist.amassArmyHint'),
+            // **Pas d'`initial`** : un champ vide n'est pas validable, donc le
+            // dialogue attend une désignation au lieu d'en souffler une.
+            options,
+          },
+          {
+            name: 'count',
+            label: t('assist.amassLabel'),
+            numeric: true,
+            initial: '1',
+            quick: [1, 2, 3, 5].map((n) => ({ label: String(n), value: String(n) })),
+          },
+        ],
+      });
+      if (!result) return;
+      const scryfallId = result.values['army'] ?? '';
+      if (!armies.some((army) => army.scryfallId === scryfallId)) return;
+      const n = Number.parseInt(result.values['count'] ?? '1', 10);
+      if (!Number.isFinite(n) || n < 1) return;
       send({
         type: 'CREATE_TOKEN',
-        scryfallId: printing,
+        scryfallId,
         counters: [{ kind: '+1/+1', value: n }],
         ...spawnAt(),
       });
@@ -1529,9 +1668,9 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
       { label: t('card.cascadeEntry'), run: () => askCascade('BELOW') },
       { label: t('card.discoverEntry'), run: () => askCascade('AT_MOST') },
       { label: t('assist.namedTokens'), separatorBefore: true, run: askNamedToken },
-      { label: t('assist.amassNew'), run: () => askAmass('NEW_ARMY') },
+      { label: t('assist.amassNew'), run: askAmassNewArmy },
       ...(inZone === 'BATTLEFIELD'
-        ? [{ label: t('assist.amassThis'), run: () => askAmass('THIS_CARD') }]
+        ? [{ label: t('assist.amassThis'), run: askAmassOnThisCard }]
         : []),
       /*
        * Peupler : « copiez un jeton de créature que vous contrôlez ». Le jeton

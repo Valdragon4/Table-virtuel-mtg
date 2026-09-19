@@ -1055,11 +1055,18 @@ export const fr = {
   'assist.tokenMissingTitle': 'Jeton introuvable',
   'assist.tokenMissing':
     'Le catalogue local ne contient aucun jeton nommé exactement « {name} ». Rien n’a été créé : passez par la recherche de jetons pour choisir vous-même.',
+  'assist.armyMissing':
+    'Le catalogue local ne contient aucun jeton de type Armée. Rien n’a été créé : passez par la recherche de jetons pour choisir vous-même.',
   'assist.amassNew': 'Amasser N — nouveau jeton Armée…',
   'assist.amassThis': 'Amasser N — sur cette carte…',
   'assist.amassTitle': 'Amasser',
   'assist.amassLabel': 'Marqueurs +1/+1',
   'assist.amassSubmit': 'Amasser',
+  'assist.amassArmyDescription':
+    'Amasser crée l’armée que votre carte nomme — zombies, orques, gobelins… Nous ne lisons pas le texte de règles : voici celles que le catalogue connaît, à vous de désigner la vôtre. Toute autre armée se trouve par la recherche de jetons.',
+  'assist.amassArmyLabel': 'Quelle armée',
+  'assist.amassArmyHint':
+    'Rien n’est présélectionné : cette liste est ce que contient le catalogue, pas une recommandation.',
   'assist.populate': 'Peupler (copier ce jeton)',
   'assist.proliferateOne': 'Proliférer sur cette carte',
   'assist.proliferateMany': 'Proliférer sur {count} cartes',
