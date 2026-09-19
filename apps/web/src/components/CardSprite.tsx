@@ -36,7 +36,7 @@ import {
   TOKEN_NAMES_FR,
   type CardLanguageMark,
 } from '../lib/i18n/index.js';
-import { useForceLocalizedPrinting, useLanguage } from '../store/prefs.js';
+import { useForceLocalizedPrinting, useShowKeywordBadges, useLanguage } from '../store/prefs.js';
 import { TokenNameBand, tokenBandName } from './TokenNameBand.js';
 
 /**
@@ -1696,7 +1696,24 @@ function KeywordBadges({
   /** L'ancre du panneau, relevée au clic. `null` : le panneau est fermé. */
   const [ancre, setAncre] = useState<{ x: number; y: number } | null>(null);
   const pastille = useRef<HTMLButtonElement | null>(null);
+  /*
+   * Sélecteur **scalaire**, comme `useForceLocalizedPrinting` juste à côté : un
+   * booléen se compare par `Object.is`, donc chaque vignette ne se re-rend que
+   * le jour où le joueur bascule la case. Un sélecteur qui fabriquerait un
+   * objet rendrait la table folle (React #185).
+   */
+  const afficher = useShowKeywordBadges();
 
+  /*
+   * La pastille est **éteinte par défaut** : c'est un repère de plus sur une
+   * table déjà chargée, et il ne s'allume que pour qui le demande. Rien ne se
+   * perd — le panneau de lecture reste atteignable par le menu de la carte et
+   * l'aperçu agrandi écrit les mécaniques en toutes lettres.
+   *
+   * Le test vient avant celui du tableau vide parce qu'il est plus fort :
+   * éteinte, il n'y a rien à compter.
+   */
+  if (!afficher) return null;
   if (keywords.length === 0) return null;
   const noms = keywords.map((kw) => keywordName(kw, language) ?? kw);
 

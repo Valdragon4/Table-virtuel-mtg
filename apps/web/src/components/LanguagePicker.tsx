@@ -23,7 +23,9 @@ import {
   useLanguage,
   useLanguageError,
   useLanguageSaving,
+  useShowKeywordBadges,
   useSetForceLocalizedPrinting,
+  useSetShowKeywordBadges,
   useSetLanguage,
 } from '../store/prefs.js';
 import { useT } from '../lib/i18n/index.js';
@@ -68,6 +70,8 @@ export function LanguagePicker({
   const setLanguage = useSetLanguage();
   const forcePrinting = useForceLocalizedPrinting();
   const setForcePrinting = useSetForceLocalizedPrinting();
+  const showBadges = useShowKeywordBadges();
+  const setShowBadges = useSetShowKeywordBadges();
   // `useId` plutôt qu'un identifiant fixe : le composant peut être monté deux
   // fois sur la même page (paramètres ouverts par-dessus la table), et deux
   // `<label for>` identiques désigneraient le mauvais champ.
@@ -197,6 +201,39 @@ export function LanguagePicker({
             {t('prefs.localizedPrinting')}
             <span className="block text-slate-500" id={`${fieldId}-printing-hint`}>
               {t('prefs.localizedPrintingHint')}
+            </span>
+          </span>
+        </label>
+      )}
+
+      {/*
+        L'affichage des pastilles de mécaniques, éteint par défaut.
+
+        **Hors de `showPrintingOption` à dessein** : l'option d'édition
+        disparaît en anglais, parce qu'il n'y a plus d'impression à substituer.
+        Celle-ci n'a rien à voir avec la langue — une table chargée est
+        chargée dans les deux langues —, donc elle reste offerte quoi qu'il
+        arrive.
+
+        Elle ne paraît qu'en variante complète (`!compact`) : la barre d'en-tête
+        n'a la place que du sélecteur de langue, et un réglage qu'on bascule une
+        fois pour toutes n'a rien à y faire.
+      */}
+      {!compact && (
+        <label className="mt-2 flex items-start gap-2 text-xs text-slate-300">
+          <input
+            aria-describedby={`${fieldId}-badges-hint`}
+            checked={showBadges}
+            className="mt-0.5"
+            data-test="keyword-badges-toggle"
+            disabled={saving}
+            type="checkbox"
+            onChange={(event) => void setShowBadges(event.target.checked)}
+          />
+          <span>
+            {t('prefs.showKeywordBadges')}
+            <span className="block text-slate-500" id={`${fieldId}-badges-hint`}>
+              {t('prefs.showKeywordBadgesHint')}
             </span>
           </span>
         </label>

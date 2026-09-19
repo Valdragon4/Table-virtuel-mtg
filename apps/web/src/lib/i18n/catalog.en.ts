@@ -81,6 +81,9 @@ export const en = defineTranslation({
   'prefs.localizedPrinting': 'Force a printing available in my language',
   'prefs.localizedPrintingHint':
     'Shows the art of another printing when the chosen one does not exist in your language, or when Scryfall only publishes a blurry scan of it — you then get the sharpest render available in your language. Only changes what you see: other players still see the chosen printing. Basic lands are left alone and keep their printing.',
+  'prefs.showKeywordBadges': 'Show the keyword badge on cards',
+  'prefs.showKeywordBadgesHint':
+    'Adds a small keyword counter to each card, which opens the details on click. Without it, keywords stay readable in the enlarged preview and from the card menu. This setting only changes your own screen.',
   'card.imageFallback': 'English art: this card does not exist in {language}.',
 
   // ═══ Écrans hors partie ═══════════════════════════════════════════════════

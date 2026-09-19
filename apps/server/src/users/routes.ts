@@ -38,6 +38,8 @@ export const prefsSchema = z
     // l'illustration que ce joueur-ci voit quand l'impression qu'il a choisie
     // n'existe pas dans sa langue.
     forceLocalizedPrinting: z.boolean().optional(),
+    // Même nature encore : un réglage d'affichage, écrit par la même route.
+    showKeywordBadges: z.boolean().optional(),
     extra: z.record(z.unknown()).optional(),
   })
   .strict();
@@ -71,6 +73,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       // avoir à connaître notre défaut. Lire `prefs.forceLocalizedPrinting`
       // marcherait les neuf premières fois et raterait celle du compte neuf.
       forceLocalizedPrinting: user.prefs?.forceLocalizedPrinting ?? false,
+      // À la racine pour la raison dite deux lignes plus haut.
+      showKeywordBadges: user.prefs?.showKeywordBadges ?? false,
       playmats: user.playmats,
     });
   });

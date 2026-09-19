@@ -43,6 +43,8 @@ const STORAGE_KEY = 'mtg.language';
  * comportement par défaut — l'illustration reste celle que le joueur a choisie.
  */
 const SUBSTITUTE_KEY = 'mtg.forceLocalizedPrinting';
+/** Même rôle, mêmes limites : un miroir pour le premier rendu, pas la vérité. */
+const KEYWORD_BADGES_KEY = 'mtg.showKeywordBadges';
 
 function readStoredSubstitute(): boolean {
   try {
@@ -55,6 +57,26 @@ function readStoredSubstitute(): boolean {
 function writeStoredSubstitute(value: boolean): void {
   try {
     window.localStorage.setItem(SUBSTITUTE_KEY, value ? '1' : '0');
+  } catch {
+    /* idem */
+  }
+}
+
+/*
+ * Le miroir de l'affichage des pastilles. Une valeur illisible retombe sur `false`,
+ * c'est-à-dire sur la pastille **absente**, qui est le défaut du produit.
+ */
+function readStoredShowKeywordBadges(): boolean {
+  try {
+    return window.localStorage.getItem(KEYWORD_BADGES_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeStoredShowKeywordBadges(value: boolean): void {
+  try {
+    window.localStorage.setItem(KEYWORD_BADGES_KEY, value ? '1' : '0');
   } catch {
     /* idem */
   }
@@ -119,6 +141,11 @@ export async function persistForceLocalizedPrinting(value: boolean): Promise<voi
   await api.patch<{ ok: boolean }>('/api/me', { forceLocalizedPrinting: value });
 }
 
+/** Même route encore : un réglage d'affichage du compte n'a qu'un point d'écriture. */
+export async function persistShowKeywordBadges(value: boolean): Promise<void> {
+  await api.patch<{ ok: boolean }>('/api/me', { showKeywordBadges: value });
+}
+
 /**
  * Ce qu'on lit de `GET /api/me`.
  *
@@ -131,6 +158,8 @@ interface MeLanguage {
   language?: string | null;
   /** À la racine lui aussi, et pour la même raison. */
   forceLocalizedPrinting?: boolean | null;
+  /** Idem. */
+  showKeywordBadges?: boolean | null;
 }
 
 interface PrefsState {
@@ -146,6 +175,15 @@ interface PrefsState {
    * divergence.
    */
   forceLocalizedPrinting: boolean;
+  /**
+   * Afficher la pastille de mécaniques sur les vignettes.
+   *
+   * Refusé par défaut : la pastille est un repère de plus sur une table déjà
+   * chargée. Purement local à celui qui regarde, comme l'option d'impression,
+   * et sans perte d'information — le panneau de lecture reste atteignable par
+   * le menu, et les autres joueurs gardent leur propre réglage.
+   */
+  showKeywordBadges: boolean;
   /** Vrai une fois `/api/me` lu : avant, `language` n'est qu'une estimation locale. */
   hydrated: boolean;
   /** Un enregistrement est en vol. Sert à désactiver le sélecteur, rien de plus. */
@@ -167,11 +205,14 @@ interface PrefsState {
   setLanguage: (language: Language) => Promise<void>;
   /** Même forme, même route, même optimisme que `setLanguage`. */
   setForceLocalizedPrinting: (value: boolean) => Promise<void>;
+  /** Même forme, même route, même optimisme. */
+  setShowKeywordBadges: (value: boolean) => Promise<void>;
 }
 
 export const usePrefs = create<PrefsState>((set, get) => ({
   language: initialLanguage(),
   forceLocalizedPrinting: typeof window === 'undefined' ? false : readStoredSubstitute(),
+  showKeywordBadges: typeof window === 'undefined' ? false : readStoredShowKeywordBadges(),
   hydrated: false,
   saving: false,
   error: null,
@@ -184,9 +225,11 @@ export const usePrefs = create<PrefsState>((set, get) => ({
       // Le serveur pose toujours le champ à la racine ; un serveur plus ancien
       // ne le pose pas, et l'on garde alors ce que le miroir local disait.
       const forceLocalizedPrinting = me.forceLocalizedPrinting ?? get().forceLocalizedPrinting;
+      const showKeywordBadges = me.showKeywordBadges ?? get().showKeywordBadges;
       writeStoredLanguage(language);
       writeStoredSubstitute(forceLocalizedPrinting);
-      set({ language, forceLocalizedPrinting, hydrated: true, error: null });
+      writeStoredShowKeywordBadges(showKeywordBadges);
+      set({ language, forceLocalizedPrinting, showKeywordBadges, hydrated: true, error: null });
     } catch {
       // Visiteur non connecté, ou serveur muet : on reste sur l'estimation
       // locale. Marquer `hydrated` évite de rejouer l'appel à chaque écran.
@@ -236,6 +279,23 @@ export const usePrefs = create<PrefsState>((set, get) => ({
       set({ saving: false, error: err instanceof Error ? err.message : 'SAVE_FAILED' });
     }
   },
+
+  setShowKeywordBadges: async (value) => {
+    if (value === get().showKeywordBadges && !get().error) return;
+
+    // Même optimisme que ses deux voisines : l'effet est immédiat à l'écran,
+    // et un échec laisse l'affichage sur le choix du joueur plutôt que de
+    // revenir sous ses yeux.
+    set({ showKeywordBadges: value, saving: true, error: null });
+    writeStoredShowKeywordBadges(value);
+
+    try {
+      await persistShowKeywordBadges(value);
+      set({ saving: false, hydrated: true });
+    } catch (err) {
+      set({ saving: false, error: err instanceof Error ? err.message : 'SAVE_FAILED' });
+    }
+  },
 }));
 
 /*
@@ -252,6 +312,10 @@ export const useSetLanguage = (): ((language: Language) => Promise<void>) =>
 export const useForceLocalizedPrinting = (): boolean => usePrefs((s) => s.forceLocalizedPrinting);
 export const useSetForceLocalizedPrinting = (): ((value: boolean) => Promise<void>) =>
   usePrefs((s) => s.setForceLocalizedPrinting);
+/** Booléen, donc scalaire : même règle que ci-dessus. */
+export const useShowKeywordBadges = (): boolean => usePrefs((s) => s.showKeywordBadges);
+export const useSetShowKeywordBadges = (): ((value: boolean) => Promise<void>) =>
+  usePrefs((s) => s.setShowKeywordBadges);
 
 /** La langue hors React : journal, titres de document, appels à l'API des cartes. */
 export const currentLanguage = (): Language => usePrefs.getState().language;

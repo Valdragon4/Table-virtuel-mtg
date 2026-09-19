@@ -524,6 +524,21 @@ model UserPrefs {
   /// l'ajoute sans rien détruire, et les lignes déjà présentes héritent de
   /// `false`, c'est-à-dire du comportement que leurs propriétaires avaient déjà.
   forceLocalizedPrinting Boolean @default(false)
+  /// Afficher la pastille de mécaniques sur les vignettes de carte.
+  ///
+  /// **Refusé par défaut**, donc la pastille ne paraît pas : sur une table
+  /// chargée, un repère de plus sur chaque carte encombre plus qu'il n'informe,
+  /// et celui qui connaît ses cartes n'en a pas besoin. L'option l'allume
+  /// **pour celui qui la coche**, et pour lui seul.
+  ///
+  /// Masquer n'est pas perdre : le panneau de lecture des mécaniques reste
+  /// atteignable par le menu de la carte et l'aperçu agrandi les écrit en
+  /// toutes lettres. Rien ne part au serveur de jeu, et chaque joueur a son
+  /// propre réglage.
+  ///
+  /// Booléen à valeur par défaut, comme ses voisins : `prisma db push`
+  /// l'ajoute sans rien détruire.
+  showKeywordBadges Boolean @default(false)
   /// Réglages d'interface libres (raccourcis personnalisés, panneaux repliés…).
   extra            Json?
 
