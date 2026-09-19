@@ -96,3 +96,68 @@ describe('PROLIFERATE : le joueur designe, le serveur n a rien a deviner', () =>
     expect(result.success).toBe(false);
   });
 });
+
+describe('CASCADE : un critère, et une destination qui ne se devine pas', () => {
+  it('accepte la cascade par valeur de mana, inchangée', () => {
+    const result = intentSchema.safeParse({ type: 'CASCADE', manaValue: 3, compare: 'BELOW' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepte un critère de type avec la destination du reste', () => {
+    const result = intentSchema.safeParse({
+      type: 'CASCADE',
+      criterion: { kind: 'TYPE', value: 'creature' },
+      rest: 'GRAVEYARD',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepte « permanent », qui n’a pas de valeur à saisir', () => {
+    const result = intentSchema.safeParse({
+      type: 'CASCADE',
+      criterion: { kind: 'PERMANENT' },
+      rest: 'LIBRARY_BOTTOM',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('refuse les deux critères à la fois : on ne s’arrête pas sur deux choses', () => {
+    const result = intentSchema.safeParse({
+      type: 'CASCADE',
+      manaValue: 3,
+      compare: 'BELOW',
+      criterion: { kind: 'PERMANENT' },
+      rest: 'GRAVEYARD',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('refuse l’absence de critère : le serveur n’en choisirait pas un', () => {
+    const result = intentSchema.safeParse({ type: 'CASCADE' });
+    expect(result.success).toBe(false);
+  });
+
+  /*
+   * Le point du geste : un critère de type sans destination du reste est un
+   * intent **incomplet**, pas un intent à compléter par un défaut. Les cartes
+   * ne sont pas unanimes — cimetière, dessous, main — et poser un défaut ici
+   * reviendrait à conclure à la place du joueur.
+   */
+  it('refuse un critère de type sans destination du reste', () => {
+    const result = intentSchema.safeParse({
+      type: 'CASCADE',
+      criterion: { kind: 'SUBTYPE', value: 'dragon' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('refuse une destination sans critère de type : la cascade n’en a pas à choisir', () => {
+    const result = intentSchema.safeParse({
+      type: 'CASCADE',
+      manaValue: 3,
+      compare: 'BELOW',
+      rest: 'HAND',
+    });
+    expect(result.success).toBe(false);
+  });
+});

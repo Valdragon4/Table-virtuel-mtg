@@ -21,7 +21,8 @@ import { NAMED_LOG_LIMIT } from '@mtg/shared';
 import { Room, type DeckPayload } from '../src/game/room.js';
 import { seededRandom } from '../src/game/random.js';
 import { getZone, type CardData } from '../src/game/state.js';
-import { isLandCard, manaValueOf, verdictFor } from '../src/game/cascade.js';
+import { criterionText, isLandCard, manaValueOf, matchesCriterion, verdictFor } from '../src/game/cascade.js';
+import { CARD_TYPES } from '@mtg/shared';
 import { auditInvariants } from './invariants.js';
 import { fakeConnection, type FakeConnection } from './fixture.js';
 
@@ -461,5 +462,294 @@ describe('déplier une cascade trop longue pour la phrase', () => {
         .logTail.find((e) => e.text.startsWith('Alice cascade'))!;
       expect(ligne.names).toEqual([...VUES, 'Trouvée']);
     }
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * « Découvrir sans N » : le critère est un type.
+ * ------------------------------------------------------------------------- */
+
+const DRAGON = { name: 'Dragon', typeLine: 'Creature — Dragon', manaCost: '{5}{R}' };
+const ANGE = { name: 'Ange', typeLine: 'Creature — Angel', manaCost: '{3}{W}' };
+const RITUEL = { name: 'Rituel', typeLine: 'Sorcery', manaCost: '{2}' };
+const EPHEMERE = { name: 'Éphémère', typeLine: 'Instant', manaCost: '{1}' };
+const ARTEFACT = { name: 'Artefact', typeLine: 'Artifact — Equipment', manaCost: '{2}' };
+
+/** L'exil d'Alice, par identifiant : ce que la ligne de journal peut ancrer. */
+function exileIds(room: Room): string[] {
+  return [...getZone(room.state, { seat: 'seat_0', kind: 'EXILE' })];
+}
+
+/**
+ * La lecture d'une ligne de type, et les pièges qu'elle tend.
+ *
+ * Aucun de ces cas n'est théorique : chacun aurait fait manquer une trouvaille
+ * ou en aurait inventé une.
+ */
+describe('lecture du type, sans texte de règles', () => {
+  it('trouve un type sur la ligne, en mot entier', () => {
+    expect(matchesCriterion(card(DRAGON), { kind: 'TYPE', value: 'creature' })).toBe(true);
+    expect(matchesCriterion(card(RITUEL), { kind: 'TYPE', value: 'creature' })).toBe(false);
+    // Le mot entier, sinon « art » attraperait « Artifact » et « Cartouche ».
+    expect(matchesCriterion(card(ARTEFACT), { kind: 'TYPE', value: 'art' })).toBe(false);
+    expect(matchesCriterion(card(ARTEFACT), { kind: 'TYPE', value: 'artifact' })).toBe(true);
+  });
+
+  it('sépare type et sous-type de part et d’autre du tiret cadratin', () => {
+    // « Dragon » est un sous-type, pas un type : demander l'un ne doit pas
+    // répondre à l'autre, sans quoi « jusqu'à un terrain » trouverait une
+    // *Island* par son sous-type autant que par son type.
+    expect(matchesCriterion(card(DRAGON), { kind: 'SUBTYPE', value: 'dragon' })).toBe(true);
+    expect(matchesCriterion(card(DRAGON), { kind: 'TYPE', value: 'dragon' })).toBe(false);
+    expect(matchesCriterion(card(ANGE), { kind: 'SUBTYPE', value: 'dragon' })).toBe(false);
+    expect(matchesCriterion(card(LAND), { kind: 'TYPE', value: 'land' })).toBe(true);
+    expect(matchesCriterion(card(LAND), { kind: 'SUBTYPE', value: 'forest' })).toBe(true);
+  });
+
+  it('lit les **deux** faces, contrairement à « est-ce un terrain »', () => {
+    const verso = card({
+      name: 'Éruption',
+      typeLine: 'Sorcery // Land',
+      manaCost: '{2}{R}',
+      faces: [
+        { name: 'Éruption', typeLine: 'Sorcery', manaCost: '{2}{R}' },
+        { name: 'Cratère', typeLine: 'Land' },
+      ],
+    });
+    // La cascade saute cette carte parce que son **recto** n'est pas un terrain ;
+    // « révélez jusqu'à un terrain » doit au contraire s'y arrêter.
+    expect(isLandCard(verso)).toBe(false);
+    expect(matchesCriterion(verso, { kind: 'TYPE', value: 'land' })).toBe(true);
+    // Et la même lecture doit marcher sans `faces`, sur la seule ligne réunie :
+    // toutes les lignes du catalogue ne sont pas dépliées.
+    const sansFaces = card({ name: 'Éruption 2', typeLine: 'Sorcery // Land', manaCost: '{2}{R}' });
+    expect(matchesCriterion(sansFaces, { kind: 'TYPE', value: 'land' })).toBe(true);
+  });
+
+  it('accepte le canon du lexique client : tiret ou espace', () => {
+    const lord = card({
+      name: 'Docteur',
+      typeLine: 'Legendary Creature — Time Lord Doctor',
+      manaCost: '{3}',
+    });
+    // `canonSubtype('Time Lord')` rend `time-lord` ; la ligne de type écrit une
+    // espace. Comparer littéralement ferait manquer tous les composés.
+    expect(matchesCriterion(lord, { kind: 'SUBTYPE', value: 'time-lord' })).toBe(true);
+    expect(matchesCriterion(lord, { kind: 'SUBTYPE', value: 'time lord' })).toBe(true);
+    const worker = card({
+      name: 'Ouvrier',
+      typeLine: 'Artifact Creature — Assembly-Worker',
+      manaCost: '{3}',
+    });
+    expect(matchesCriterion(worker, { kind: 'SUBTYPE', value: 'assembly-worker' })).toBe(true);
+  });
+
+  it('« permanent » est l’union, et rien qu’elle', () => {
+    const permanent = { kind: 'PERMANENT' } as const;
+    const familles = [
+      DRAGON,
+      LAND,
+      ARTEFACT,
+      { name: 'E', typeLine: 'Enchantment — Aura', manaCost: '{1}' },
+      { name: 'P', typeLine: 'Legendary Planeswalker — Jace', manaCost: '{4}' },
+      { name: 'B', typeLine: 'Battle — Siege', manaCost: '{3}' },
+    ];
+    for (const spec of familles) expect(matchesCriterion(card(spec), permanent)).toBe(true);
+    // Les deux seuls types qui n'en font pas.
+    expect(matchesCriterion(card(RITUEL), permanent)).toBe(false);
+    expect(matchesCriterion(card(EPHEMERE), permanent)).toBe(false);
+    // Un `Kindred Instant` n'est attrapé par aucun type permanent : c'est la
+    // liste qui répond, aucune règle n'a eu à être écrite pour l'exclure.
+    const kindred = card({ name: 'K', typeLine: 'Kindred Instant — Goblin', manaCost: '{1}{R}' });
+    expect(matchesCriterion(kindred, permanent)).toBe(false);
+  });
+
+  it('un mot que personne ne reconnaît ne trouve rien, et ce n’est pas une erreur', () => {
+    expect(matchesCriterion(card(DRAGON), { kind: 'SUBTYPE', value: 'licorne' })).toBe(false);
+    expect(matchesCriterion(card(DRAGON), { kind: 'TYPE', value: 'machin' })).toBe(false);
+  });
+
+  it('le journal a un mot français pour chaque type offert', () => {
+    // Le dialogue propose `CARD_TYPES` ; si l'un d'eux n'avait pas sa phrase,
+    // la ligne de journal sortirait en anglais entre guillemets — visible, mais
+    // c'est exactement ce que ce test empêche d'oublier.
+    for (const spec of CARD_TYPES) {
+      expect(criterionText({ kind: 'TYPE', value: spec.key })).not.toContain('«');
+    }
+    expect(criterionText({ kind: 'PERMANENT' })).toBe('un permanent');
+    expect(criterionText({ kind: 'SUBTYPE', value: 'time-lord' })).toBe('un sous-type Time-Lord');
+  });
+});
+
+describe('la séquence par type, sur la table', () => {
+  it('s’arrête sur la première carte du type, dès la première si elle convient', async () => {
+    const { room, a } = tableWith([DRAGON, ANGE]);
+    await room.handleIntent(a, 'c1', {
+      type: 'CASCADE',
+      criterion: { kind: 'TYPE', value: 'creature' },
+      rest: 'GRAVEYARD',
+    });
+    expect(exileNames(room)).toEqual(['Dragon']);
+    expect(libraryNames(room)).toEqual(['Ange']);
+    expect(room.state.log.at(-1)!.text).toContain("Alice révèle (jusqu'à une créature)");
+    auditInvariants(room.state);
+  });
+
+  it('creuse jusqu’à la énième carte, et le reste va où le joueur l’a dit', async () => {
+    const { room, a } = tableWith([RITUEL, EPHEMERE, LAND, DRAGON, ANGE]);
+    await room.handleIntent(a, 'c1', {
+      type: 'CASCADE',
+      criterion: { kind: 'SUBTYPE', value: 'dragon' },
+      rest: 'GRAVEYARD',
+    });
+    // Le terrain **n'est pas sauté** : les cartes qui révèlent jusqu'à un type
+    // ne disent pas « qui n'est pas un terrain », et le sauter rendrait
+    // « jusqu'à un terrain » impossible à demander.
+    expect(exileNames(room)).toEqual(['Dragon']);
+    // Les trois précédentes au cimetière, dans l'ordre du geste : la dernière
+    // révélée se retrouve sur le dessus, comme après une meule.
+    expect(
+      getZone(room.state, { seat: 'seat_0', kind: 'GRAVEYARD' }).map(
+        (id) => room.state.objects.get(id)!.card.name,
+      ),
+    ).toEqual(['Forêt', 'Éphémère', 'Rituel']);
+    expect(libraryNames(room)).toEqual(['Ange']);
+    expect(room.state.log.at(-1)!.text).toContain('3 carte(s) vont au cimetière');
+    auditInvariants(room.state);
+  });
+
+  it('« permanent » attrape la première famille venue et saute les sorts', async () => {
+    const { room, a } = tableWith([EPHEMERE, RITUEL, ARTEFACT, DRAGON]);
+    await room.handleIntent(a, 'c1', {
+      type: 'CASCADE',
+      criterion: { kind: 'PERMANENT' },
+      rest: 'LIBRARY_BOTTOM',
+    });
+    expect(exileNames(room)).toEqual(['Artefact']);
+    expect(libraryNames(room)[0]).toBe('Dragon');
+    expect(room.state.log.at(-1)!.text).toContain("jusqu'à un permanent");
+    auditInvariants(room.state);
+  });
+
+  it('va au bout de la bibliothèque sans rien trouver, et le dit', async () => {
+    const { room, a } = tableWith([RITUEL, EPHEMERE]);
+    await room.handleIntent(a, 'c1', {
+      type: 'CASCADE',
+      criterion: { kind: 'TYPE', value: 'creature' },
+      rest: 'LIBRARY_BOTTOM',
+    });
+    expect(exileNames(room)).toEqual([]);
+    expect(libraryNames(room).sort()).toEqual(['Rituel', 'Éphémère']);
+    expect(room.state.log.at(-1)!.text).toContain('sans rien trouver');
+    auditInvariants(room.state);
+  });
+
+  it('trouve une recto-verso dont seule la face arrière convient', async () => {
+    const { room, a } = tableWith([
+      {
+        name: 'Éruption',
+        typeLine: 'Sorcery // Land',
+        manaCost: '{2}{R}',
+        faces: [
+          { name: 'Éruption', typeLine: 'Sorcery', manaCost: '{2}{R}' },
+          { name: 'Cratère', typeLine: 'Land' },
+        ],
+      },
+      DRAGON,
+    ]);
+    await room.handleIntent(a, 'c1', {
+      type: 'CASCADE',
+      criterion: { kind: 'TYPE', value: 'land' },
+      rest: 'GRAVEYARD',
+    });
+    expect(exileNames(room)).toEqual(['Éruption']);
+    expect(libraryNames(room)).toEqual(['Dragon']);
+    auditInvariants(room.state);
+  });
+
+  /*
+   * Le point qui coûte cher, rejoué pour le nouveau critère : le retour en
+   * bibliothèque reste le **seul** cas où l'identifiant doit changer, et il
+   * doit le rester même quand la destination est choisie par le joueur.
+   */
+  it('anti-corrélation : le reste remis dessous change d’identifiant', async () => {
+    const { room, a, b } = tableWith([RITUEL, EPHEMERE, DRAGON, ANGE]);
+    const before = getZone(room.state, { seat: 'seat_0', kind: 'LIBRARY' }).slice(0, 2);
+    await room.handleIntent(a, 'c1', {
+      type: 'CASCADE',
+      criterion: { kind: 'SUBTYPE', value: 'dragon' },
+      rest: 'LIBRARY_BOTTOM',
+    });
+    for (const id of before) expect(room.state.objects.has(id)).toBe(false);
+    for (const conn of [a, b]) {
+      const hidden = conn.received.flatMap((m) =>
+        m.t === 'event' && m.event.type === 'CARD_HIDDEN' ? [m.event.cardId] : [],
+      );
+      for (const id of before) expect(hidden).toContain(id);
+    }
+    const bottom = getZone(room.state, { seat: 'seat_0', kind: 'LIBRARY' }).slice(-2);
+    for (const id of bottom) expect([...room.state.objects.get(id)!.knownTo]).toEqual([]);
+    const frames = [...a.frames, ...b.frames].join('\n');
+    for (const id of bottom) expect(frames).not.toContain(id);
+    auditInvariants(room.state);
+  });
+
+  /*
+   * La main, à l'inverse : ces cartes ont été vues de toute la table, et la
+   * connaissance est monotone (§5.2). Elles gardent donc leur identifiant —
+   * c'est le déplacement ordinaire du menu — et le journal dit où elles sont
+   * allées, parce que c'est la seule chose que les autres sièges peuvent
+   * encore vérifier.
+   */
+  it('le reste peut partir en main, et la ligne de journal le dit', async () => {
+    const { room, a } = tableWith([RITUEL, EPHEMERE, DRAGON]);
+    await room.handleIntent(a, 'c1', {
+      type: 'CASCADE',
+      criterion: { kind: 'SUBTYPE', value: 'dragon' },
+      rest: 'HAND',
+    });
+    expect(exileNames(room)).toEqual(['Dragon']);
+    const main = getZone(room.state, { seat: 'seat_0', kind: 'HAND' }).map(
+      (id) => room.state.objects.get(id)!.card.name,
+    );
+    expect(main).toEqual(['Rituel', 'Éphémère']);
+    const ligne = room.state.log.at(-1)!;
+    expect(ligne.text).toContain('2 carte(s) partent en main');
+    // Les noms sont dits — la table les a vus à l'exil, face visible — mais
+    // rien n'ancre des cartes que les autres sièges ne peuvent plus résoudre.
+    expect(ligne.text).toContain('Rituel');
+    expect(ligne.cardIds).toEqual(exileIds(room));
+    auditInvariants(room.state);
+  });
+
+  it('le reste au cimetière reste ancrable : la zone est publique', async () => {
+    const { room, a } = tableWith([RITUEL, EPHEMERE, DRAGON]);
+    await room.handleIntent(a, 'c1', {
+      type: 'CASCADE',
+      criterion: { kind: 'SUBTYPE', value: 'dragon' },
+      rest: 'GRAVEYARD',
+    });
+    const ligne = room.state.log.at(-1)!;
+    const cimetiere = getZone(room.state, { seat: 'seat_0', kind: 'GRAVEYARD' });
+    // Toutes les cartes du lot sont encore là où un client peut les retrouver :
+    // on les ancre donc toutes, et le survol surligne vraiment quelque chose.
+    expect([...ligne.cardIds].sort()).toEqual([...exileIds(room), ...cimetiere].sort());
+    auditInvariants(room.state);
+  });
+
+  it('refuse toujours la bibliothèque vide, et rien de plus', async () => {
+    const { room, a } = tableWith([DRAGON]);
+    await room.handleIntent(a, 'c1', {
+      type: 'CASCADE',
+      criterion: { kind: 'TYPE', value: 'creature' },
+      rest: 'GRAVEYARD',
+    });
+    a.received.length = 0;
+    await room.handleIntent(a, 'c2', {
+      type: 'CASCADE',
+      criterion: { kind: 'TYPE', value: 'creature' },
+      rest: 'GRAVEYARD',
+    });
+    expect(a.received.some((m) => m.t === 'reject' && m.code === 'ERR_BAD_ZONE')).toBe(true);
   });
 });

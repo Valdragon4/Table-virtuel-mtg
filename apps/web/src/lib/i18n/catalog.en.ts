@@ -419,6 +419,37 @@ export const en = defineTranslation({
   'cascade.unknownCost': 'This card’s cost is not known here: enter the value yourself.',
   'cascade.submit': 'Run the sequence',
 
+  // — Discover without N: the criterion is a type ————————————————————
+  'card.discoverTypeEntry': 'Discover by type…',
+  'discover.title': 'Discover by type',
+  'discover.description':
+    'Exiles cards from the top of your library one at a time until one carries the type you ask for. That card stays in exile, face up, and is yours to do with as you please; the rest goes wherever you say below.',
+  'discover.criterionLabel': 'Stop on',
+  'discover.criterionHint':
+    'Compared against the type line, both faces included. Nothing is read from the rules text: you are copying your own card here.',
+  'discover.searchPlaceholder': 'Type, or subtype (dragon, angel…)',
+  'discover.groupTypes': 'Card types',
+  'discover.groupSubtypes': 'Common subtypes',
+  'discover.permanent': 'Permanent (any permanent type)',
+  'discover.subtypeOption': 'Subtype “{name}”',
+  'discover.unknownSubtype':
+    '“{name}” is not in the lexicon: it will be looked for as written on the type line, which is in English.',
+  'discover.type.creature': 'Creature',
+  'discover.type.planeswalker': 'Planeswalker',
+  'discover.type.land': 'Land',
+  'discover.type.artifact': 'Artifact',
+  'discover.type.enchantment': 'Enchantment',
+  'discover.type.battle': 'Battle',
+  'discover.type.instant': 'Instant',
+  'discover.type.sorcery': 'Sorcery',
+  'discover.restLabel': 'The rest of the revealed cards',
+  'discover.restHint':
+    'Cards do not all say the same thing — some put the rest into the graveyard, others under the library, others into hand. Point at what yours says: nothing is chosen for you.',
+  'discover.restLibrary': 'Under the library, at random',
+  'discover.restGraveyard': 'Into the graveyard',
+  'discover.restHand': 'Into hand',
+  'discover.submit': 'Run the sequence',
+
   // — Marqueur personnalisé : aperçu et formulaire ————————————————
   'counter.preview': 'Live preview',
   'counter.modeFrozen': 'Frozen when placed',

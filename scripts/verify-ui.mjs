@@ -1788,6 +1788,149 @@ async function findDoubleFaced() {
     },
   );
 
+  /*
+   * « Découvrir sans N » : le critère est un type, et **rien n'est choisi
+   * d'avance**.
+   *
+   * Les cartes qui révèlent jusqu'à une créature, un artefact ou un Dragon ne
+   * disent pas toutes ce que devient le reste — cimetière, dessous, main —, et
+   * le dialogue ne peut donc pas le présélectionner sans conclure à la place du
+   * joueur. On éprouve ici les trois moitiés du geste : le lexique français
+   * mène bien au canon anglais (« chaman » propose `sub:shaman`), le dialogue
+   * refuse de se valider tant que les deux champs ne sont pas désignés, et la
+   * séquence s'arrête bel et bien sur un permanent.
+   *
+   * L'étape rend la table telle qu'elle l'a trouvée : tout ce qu'elle a bougé
+   * repart sous la bibliothèque, faute de quoi les étapes suivantes liraient un
+   * cimetière et un exil qu'elles n'ont pas remplis.
+   */
+  await step(
+    'actions assistées : « Découvrir par type » s’arrête sur le type désigné',
+    async () => {
+      const zones = () =>
+        page.evaluate(() => {
+          const s = window.__mtg.getState();
+          const mien = (kind) =>
+            [...s.cards.values()]
+              .filter((c) => c.zone.kind === kind && c.zone.seat === s.mySeat)
+              .map((c) => c.id);
+          return { exil: mien('EXILE'), cimetiere: mien('GRAVEYARD') };
+        });
+      const depart = await zones();
+      try {
+        await ouvrirTiroirAssiste();
+        await page.locator('[data-test="card-submenu"]').getByText('Découvrir par type…').click();
+        await page.locator('[data-test="dialog"]').first().waitFor({ timeout: 8000 });
+
+        const critere = '[data-test="dialog-option"][data-field="criterion"]';
+        const reste = '[data-test="dialog-option"][data-field="rest"]';
+        const retenues = async (selecteur) =>
+          page
+            .locator(selecteur)
+            .evaluateAll((els) => els.filter((el) => el.getAttribute('aria-pressed') === 'true').length);
+        if ((await retenues(critere)) > 0 || (await retenues(reste)) > 0) {
+          await page.keyboard.press('Escape');
+          throw new Error('le dialogue retient un critère ou une destination d’avance');
+        }
+
+        // Le lexique français mène au canon anglais : « chaman » → `shaman`,
+        // qui n'est dans aucune liste courte et arrive donc par la saisie libre.
+        const recherche = page.locator('[data-test="dialog-search"][data-field="criterion"]');
+        await recherche.fill('chaman');
+        await page
+          .locator(`${critere}[data-value="sub:shaman"]`)
+          .waitFor({ timeout: 5000 })
+          .catch(() => {
+            throw new Error('« chaman » ne propose pas le sous-type shaman : le lexique n’est pas lu');
+          });
+        // Un mot que le lexique ignore est **dit**, et proposé quand même.
+        await recherche.fill('zzzztruc');
+        await page.locator('[data-test="dialog-search-note"]').waitFor({ timeout: 5000 });
+        await recherche.fill('');
+
+        // Valider sans rien désigner ne lance rien.
+        await page.locator('[data-test="dialog-submit"]').click();
+        await page.waitForTimeout(300);
+        if (!(await page.locator('[data-test="dialog"]').first().isVisible())) {
+          throw new Error('le dialogue s’est validé sans critère ni destination');
+        }
+
+        await page.locator(`${critere}[data-value="permanent"]`).click();
+        // Toujours pas : la destination du reste n'est pas une formalité.
+        await page.locator('[data-test="dialog-submit"]').click();
+        await page.waitForTimeout(300);
+        if (!(await page.locator('[data-test="dialog"]').first().isVisible())) {
+          throw new Error('le dialogue s’est validé sans destination pour le reste');
+        }
+
+        await page.locator(`${reste}[data-value="GRAVEYARD"]`).click();
+        await page.locator('[data-test="dialog-submit"]').click();
+
+        const ligne = await page
+          .waitForFunction(
+            // La ligne nomme la carte déclenchante quand la table la voit
+            // (« révèle depuis X »), et pas autrement : on cherche donc le
+            // critère, qui est là dans les deux cas.
+            () => window.__mtg.getState().log.map((l) => l.text).find((t) => t.includes("jusqu'à un permanent")) ?? false,
+            undefined,
+            { timeout: 10000 },
+          )
+          .then((poignee) => poignee.jsonValue())
+          .catch(() => null);
+        if (!ligne) throw new Error('aucune ligne de journal pour « Découvrir par type »');
+        console.log(`      journal : ${ligne}`);
+        if (!ligne.includes('révèle')) {
+          throw new Error('la ligne de journal ne dit pas le geste');
+        }
+
+        const apres = await zones();
+        const neuf = apres.exil.filter((id) => !depart.exil.includes(id));
+        if (neuf.length !== 1) {
+          throw new Error(`la séquence a laissé ${neuf.length} carte(s) à l’exil, au lieu d’une`);
+        }
+        const trouvee = await page.evaluate(async (id) => {
+          const carte = window.__mtg.getState().cards.get(id);
+          const reponse = await fetch('/api/cards/batch', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids: [carte.scryfallId] }),
+          });
+          const corps = await reponse.json();
+          return { nom: corps.cards?.[0]?.name ?? null, typeLine: corps.cards?.[0]?.typeLine ?? '' };
+        }, neuf[0]);
+        const permanent = /\b(creature|land|artifact|enchantment|planeswalker|battle)\b/i;
+        if (!permanent.test(trouvee.typeLine)) {
+          throw new Error(
+            `la séquence s’est arrêtée sur « ${trouvee.nom} » (${trouvee.typeLine}), qui n’est pas un permanent`,
+          );
+        }
+        console.log(`      trouvée : ${trouvee.nom} — ${trouvee.typeLine}`);
+      } finally {
+        // Tout ce que l'étape a déplacé repart sous la bibliothèque.
+        const apres = await zones();
+        await page.evaluate(
+          ({ avant, maintenant }) => {
+            const s = window.__mtg.getState();
+            const neufs = [
+              ...maintenant.exil.filter((id) => !avant.exil.includes(id)),
+              ...maintenant.cimetiere.filter((id) => !avant.cimetiere.includes(id)),
+            ];
+            if (neufs.length > 0) {
+              s.send({
+                type: 'MOVE_CARDS',
+                cardIds: neufs,
+                to: { seat: s.mySeat, kind: 'LIBRARY' },
+                index: 'BOTTOM',
+              });
+            }
+          },
+          { avant: depart, maintenant: apres },
+        );
+        await page.waitForTimeout(300);
+      }
+    },
+  );
+
   // ---------------------------------------------------------- fond de table
 
   await step('le fond de table est dessiné, dans le repère du monde', async () => {

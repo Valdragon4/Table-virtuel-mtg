@@ -167,8 +167,31 @@ const intentUnion = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('CASCADE'),
     sourceId: objectId.optional(),
-    manaValue: z.number().int().min(0).max(99),
-    compare: z.enum(['BELOW', 'AT_MOST']),
+    /*
+     * Facultatifs **l'un par l'autre** : depuis « Découvrir sans N », l'intent
+     * porte soit ce seuil, soit un `criterion` de type. La contrainte croisée
+     * — l'un ou l'autre, jamais les deux ni aucun — vit dans `intentSchema`,
+     * comme celle de `CREATE_TOKEN` : Zod n'accepte qu'un objet par branche
+     * d'union discriminée.
+     */
+    manaValue: z.number().int().min(0).max(99).optional(),
+    compare: z.enum(['BELOW', 'AT_MOST']).optional(),
+    /*
+     * Le critère par type. `value` est une **chaîne libre** et non une énumération,
+     * et c'est le même choix que pour les marqueurs : le serveur ne tient aucune
+     * liste de mots reconnus, il cherche celui qu'on lui donne dans la ligne de
+     * type. L'interface propose `CARD_TYPES` et le lexique de sous-types ; un mot
+     * hors liste — un type à venir, un sous-type que personne n'a encore écrit —
+     * reste atteignable au lieu d'être refusé. La borne de longueur n'empêche
+     * qu'une saisie absurde.
+     */
+    criterion: z
+      .union([
+        z.object({ kind: z.enum(['TYPE', 'SUBTYPE']), value: z.string().min(1).max(64) }).strict(),
+        z.object({ kind: z.literal('PERMANENT') }).strict(),
+      ])
+      .optional(),
+    rest: z.enum(['LIBRARY_BOTTOM', 'GRAVEYARD', 'HAND']).optional(),
   }).strict(),
 
   /*
@@ -233,6 +256,35 @@ export const intentSchema = intentUnion.superRefine((intent, ctx) => {
       code: z.ZodIssueCode.custom,
       message: 'CREATE_TOKEN attend scryfallId ou copyOf, pas les deux ni aucun des deux.',
     });
+  }
+  if (intent.type === 'CASCADE') {
+    /*
+     * **Un critère, et un seul.** La séquence s'arrête soit sur une valeur de
+     * mana, soit sur un type ; les deux à la fois ne veut rien dire, et aucun
+     * des deux laisserait le serveur choisir — c'est-à-dire conclure.
+     */
+    const parMana = intent.manaValue !== undefined && intent.compare !== undefined;
+    if (parMana === (intent.criterion !== undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'CASCADE attend soit manaValue et compare, soit criterion — pas les deux ni aucun des deux.',
+      });
+    }
+    /*
+     * **La destination du reste est saisie, jamais devinée**, et le schéma le
+     * tient plutôt que de laisser un défaut s'installer. Les cartes à cascade
+     * disent toutes « dessous, au hasard » et n'ont donc rien à choisir ; celles
+     * qui révèlent jusqu'à un type ne sont pas unanimes, et un défaut posé ici
+     * conclurait pour le joueur. Ce n'est pas un refus de règle : c'est un
+     * intent incomplet, au même titre qu'un `CREATE_TOKEN` sans jeton.
+     */
+    if ((intent.rest !== undefined) !== (intent.criterion !== undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'CASCADE attend rest avec criterion, et seulement avec lui.',
+      });
+    }
   }
   if (intent.type === 'RESOLVE_LOOK') {
     const all = [

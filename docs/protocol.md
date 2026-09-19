@@ -917,9 +917,15 @@ interface Scoop         { type: 'SCOOP'; }                                      
 
 interface Cascade {
   type: 'CASCADE';
-  sourceId?: ObjectId;          // carte déclenchante, pour le journal seulement : elle n'est pas touchée
-  manaValue: number;            // le seuil, **saisi par le joueur** (0 à 99)
-  compare: 'BELOW' | 'AT_MOST'; // cascade (« strictement inférieure ») / découvrir N (« N ou moins »)
+  sourceId?: ObjectId;           // carte déclenchante, pour le journal seulement : elle n'est pas touchée
+  // **Un critère, et un seul** : soit la valeur de mana, soit le type. Vérifié par `intentSchema`.
+  manaValue?: number;            // le seuil, **saisi par le joueur** (0 à 99)
+  compare?: 'BELOW' | 'AT_MOST'; // cascade (« strictement inférieure ») / découvrir N (« N ou moins »)
+  criterion?:                    // « Découvrir sans N » : le mot est **saisi**, jamais lu sur la carte
+    | { kind: 'TYPE'; value: string }     // un type de carte, mot anglais de la ligne de type
+    | { kind: 'SUBTYPE'; value: string }  // un sous-type, canon anglais du lexique client
+    | { kind: 'PERMANENT' };              // l'union des types permanents
+  rest?: 'LIBRARY_BOTTOM' | 'GRAVEYARD' | 'HAND'; // obligatoire **avec** `criterion`, refusé sans lui
 }
 ```
 
@@ -1009,6 +1015,29 @@ résoudre, la ligne porte alors `LogEntry.names`, la liste dépliée que le clie
 affiche telle quelle (§5.4). C'est le seul intent qui en ait besoin. Elle ne dit
 rien de plus que la phrase : les mêmes noms, relevés au même moment, pendant que
 les cartes étaient à l'exil face visible.
+
+**« Découvrir sans N » : le critère peut être un type.** Certaines cartes révèlent
+jusqu'à une créature, un artefact ou un Dragon, sans aucun nombre. La séquence est la
+même au geste près, d'où le même intent : seuls changent le mot comparé (`criterion`)
+et la destination du reste (`rest`). La comparaison se fait sur la **ligne de type**,
+la seule donnée dont nous disposions — ni `oracle_text` ni `flavor_text` ne sont
+stockés —, et sur ses **deux faces** : une recto-verso dont seul le dos est un terrain
+est bien trouvée par « jusqu'à un terrain », là où `isLandCard` ne lit que le recto,
+et a raison de ne lire que lui. Le saut automatique des terrains **ne s'applique pas**
+à ce critère : les cartes concernées ne disent pas « qui n'est pas un terrain », et le
+sauter rendrait « jusqu'à un terrain » impossible à demander. `value` est une chaîne
+libre et non une énumération : le serveur ne tient aucune liste de mots reconnus, il
+cherche celui qu'on lui donne, et un mot que personne ne reconnaît ne trouve
+simplement rien — c'est un résultat, pas une erreur.
+
+**`rest` est obligatoire avec `criterion`, et c'est le §1.1 qui l'exige.** Les cartes
+à cascade disent toutes « le reste dessous, au hasard » : le serveur peut le faire sans
+rien décider. Celles qui révèlent jusqu'à un type ne sont **pas** unanimes — les unes
+mettent le reste au cimetière, d'autres dessous, d'autres en main. Un défaut posé ici
+**conclurait** ; le dialogue n'a donc aucune valeur présélectionnée et le schéma refuse
+l'intent incomplet, au même titre qu'un `CREATE_TOKEN` sans jeton. La bibliothèque
+reste le seul cas qui réattribue les identifiants ; le cimetière et la main sont des
+déplacements ordinaires, dont la ligne de journal dit le nombre et la destination.
 
 **Volontairement non annulable**, pour la raison de `TAKE_BACK` (§5.3) : rejouer l'état
 d'avant republierait, sous leurs anciens identifiants, des cartes que la bibliothèque
@@ -1706,4 +1735,5 @@ L'interface cible est celle de la capture de référence (`docs/ui-reference.md`
 | 9 | 2026-09-18 | **Amendement de l'invariant fondateur.** Le principe 5 de la §1 est conservé mot pour mot et reçoit une frontière écrite, la nouvelle **§1.1 : assister n'est pas arbitrer**. Motif : la cascade fait évaluer au serveur deux règles de Magic (« est-ce un terrain ? », « la valeur de mana est-elle sous le seuil ? »), et le taire aurait été pire que l'écrire. La §1.1 pose les **trois propriétés** qui rendent une assistance acceptable — elle n'interdit rien, elle n'impose rien, elle ne conclut pas — et les érige en critère de toute demande future ; elle consigne sans l'adoucir le **prix** : le saut automatique des terrains (`isLandCard`) est le seul endroit où une erreur du serveur a une conséquence de règles, et le garde-fou est que le journal nomme **toutes** les cartes exilées. Elle consigne aussi les deux endroits où l'on a **refusé de décider** : valeur de mana ambiguë (plusieurs faces portant un coût → la séquence s'arrête au lieu de juger) et « jouer sans payer son coût », qui n'existe pas sur une table sans pile. L'intent `CASCADE` est déclaré et décrit au §6.4, décision arrêtée en §13.5. **Ajout d'intent, donc non cassant : `PROTOCOL_VERSION` reste à 3** (§11). |
 | 10 | 2026-09-18 | **Déplier une ligne de journal qui n'a pas d'ancres** (§5.4, §6.4, §8.1). Défaut corrigé : une cascade qui exile plus de six cartes abrégeait sa phrase en « … et N autres cartes » sans que le joueur puisse lire les N — le dépliage du client se reconstruit depuis `cardIds`, et la cascade réattribue l'identifiant de tout ce qui repart sous la bibliothèque (§2.1), donc elle n'ancre que la carte restée à l'exil. Principe posé : **le dépliage sert à lire des noms, pas à survoler des cartes** ; les ancres restent le bonus qui permet de surligner, elles ne sont plus la condition pour savoir ce qui est passé. `LogEntry` gagne `names?: string[]`, la forme non abrégée de l'énumération, remplie par `namedBatch`/`namesForLog` **seulement** quand la ligne est abrégée et que ses ancres ne couvrent pas le lot — `CASCADE` est aujourd'hui le seul cas. Aucune règle de visibilité nouvelle : les noms sortent du même `publicName`, au même instant, dans la même zone d'arrivée publique, et une carte non identifiable y reste « une carte ». Ils sont relevés **pendant que les cartes sont à l'exil face visible** : on ne lit jamais une bibliothèque, on redit sans replier ce que la table a vu (§5.2). Le client fait primer `names` sur `cardIds` pour la taille du lot, le libellé du bouton et le contenu du dépliage ; le survol continue de ne surligner que ce qui a encore un identifiant. **Champ facultatif et ajouté : `PROTOCOL_VERSION` reste à 3** (§11) — un client ancien l'ignore, et monter la version déconnecterait les tables en cours. |
 | 11 | 2026-09-18 | **Le filtre d'ancres de `commit`, refait sur le bon critère** (§5.4). Deux défauts opposés, et ils se tenaient : le filtre du wire retirait les ancres d'une consultation en mode `REVEAL` — des identifiants que toute la table venait de recevoir par `LOOK_STARTED` — parce qu'il jugeait sur la seule zone ; et `state.log` n'était pas filtré du tout, si bien qu'une ancre retenue en direct ressortait par `logTail`, donc par le snapshot de chaque siège. Propager le premier sur le second aurait transporté le mauvais critère. Le critère retenu : **une ancre est un identifiant, pas une identité** — la question est « chaque siège détient-il déjà cet identifiant ? », pas « peut-il lire la carte ? ». Zone énumérable : oui toujours, y compris face cachée, dont l'identifiant est public même quand l'identité ne l'est pas. `LIBRARY` : seulement si **tous** les sièges connaissent l'identité, condition que `REVEAL` appliquait déjà chez lui et qui est hissée dans `commit` (`ancresPubliables`). Le tri se fait **une seule fois** et sert le wire, le replay et `state.log` : le direct et le rattrapage disent désormais la même chose, ce qui est la propriété à tenir. **Aucun format de message ne change : `PROTOCOL_VERSION` reste à 3.** |
+| 12 | 2026-09-19 | **« Découvrir sans N » : le critère d'arrêt peut être un type** (§6.4). Les cartes qui révèlent jusqu'à une créature, un artefact ou un Dragon demandent la séquence de la cascade au mot comparé près : `CASCADE` est donc **étendu** plutôt que doublé. `manaValue`/`compare` deviennent facultatifs l'un par l'autre avec le nouveau `criterion` (`TYPE` / `SUBTYPE` / `PERMANENT`), et `intentSchema` tient la contrainte croisée — un critère, jamais deux ni aucun — là où vit déjà celle de `CREATE_TOKEN`. La comparaison se fait sur la **ligne de type**, ses deux faces comprises, et le saut automatique des terrains ne s'applique pas à ce critère. `CARD_TYPES` (`@mtg/shared`) porte la liste des types et leur permanence, une seule fois pour le client et le serveur ; `value` reste une chaîne libre, pour qu'un mot hors liste soit comparé plutôt que refusé. Nouveau `rest` (`LIBRARY_BOTTOM` / `GRAVEYARD` / `HAND`), **obligatoire avec `criterion` et refusé sans lui** : ces cartes-là ne sont pas unanimes sur le sort du reste, et un défaut aurait conclu à la place du joueur (§1.1). Le retour en bibliothèque garde la réattribution d'identifiants (§2.1) ; le cimetière et la main sont des déplacements ordinaires, ancrés seulement quand la zone d'arrivée est publique. **Champs facultatifs et ajoutés : `PROTOCOL_VERSION` reste à 3** (§11), comme pour `CASCADE` et `PROLIFERATE` — un client ancien ne les émet jamais, et client et serveur sont déployés ensemble. |
 | 3 | 2026-09-15 | Durcissement : `CARD_HIDDEN` à l'entrée en bibliothèque (§2.1), gardes de `MOVE_CARDS` et d'`ATTACH` (§6.1), `copyOf` restreint au champ de bataille (§6.3), verrou de zone et `sortIndex` brassé des `LOOK` (§6.4), `REVEAL_HAND` comme droit de zone (§6.5), `START_GAME` et `SIT_DOWN` durcis (§6.8), cas de bascule du delta et snapshot sans siège (§8.1), fermeture de l'annulation (§9), critères §12.6 et §12.7 |

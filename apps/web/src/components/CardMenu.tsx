@@ -6,22 +6,25 @@
  * Le vocabulaire et les raccourcis suivent ceux de la table de référence.
  */
 import { useEffect, useRef, useState } from 'react';
-import type { CardView, ZoneKind } from '@mtg/shared';
+import { CARD_TYPES } from '@mtg/shared';
+import type { CardView, CascadeCriterion, ZoneKind } from '@mtg/shared';
 import { useGame } from '../store/game.js';
 import { api } from '../lib/api.js';
 import { cardMeta, cardName } from '../lib/cards.js';
 import { localizedCard, localizedCardName, useLocalizationTick } from '../lib/cardLocalization.js';
 import { useLanguage } from '../store/prefs.js';
-import { tokenName, useT } from '../lib/i18n/index.js';
+import { tokenName, useT, type CatalogKey } from '../lib/i18n/index.js';
 import { PrintingPicker } from './PrintingPicker.js';
 import { useMenuPlacement } from '../lib/menu.js';
 import { askNumber, openDialog } from './Dialog.js';
 import { shelveToken } from './TokenShelf.js';
 import { allTapped, tapIntent } from '../lib/tap.js';
 import {
+  COMMON_SUBTYPES,
   COMPUTED_SIGIL,
   COUNT_SOURCES,
   HIDDEN_REFUSAL,
+  canonSubtype,
   computedCounter,
   describeComputed,
   editCounter,
@@ -32,6 +35,7 @@ import {
   parseOffset,
   ptCounter,
   renderSide,
+  subtypeLabel,
   subtypeOptions,
 } from './CardSprite.js';
 import { CARD_HEIGHT, CARD_WIDTH } from '../lib/cards.js';
@@ -111,6 +115,55 @@ export function assistedKeywords(meta: { keywords?: string[] | null } | undefine
   if (!Array.isArray(list)) return { cascade: false, discover: false, known: false };
   const has = (word: string): boolean => list.some((k) => k.toLowerCase() === word);
   return { cascade: has('cascade'), discover: has('discover'), known: true };
+}
+
+/**
+ * Le mot français d'un type de carte, pour le dialogue de « Découvrir par type ».
+ *
+ * **La liste des types, elle, n'est pas ici** : elle vient de `CARD_TYPES`
+ * (`@mtg/shared`), la même que celle sur laquelle le serveur compare, dans le
+ * même ordre. Cette table-ci ne fait que l'habiller ; un type ajouté là-bas
+ * apparaît donc ici tout seul, sous son mot anglais tant que personne ne lui a
+ * écrit de libellé — visible, corrigible, et jamais absent du dialogue.
+ *
+ * Les clés sont distinctes des `type.*` des pastilles de zone parce que le
+ * nombre l'est : on désigne ici **une** carte à trouver, pas un tas à compter.
+ */
+const TYPE_LABELS = {
+  creature: 'discover.type.creature',
+  planeswalker: 'discover.type.planeswalker',
+  land: 'discover.type.land',
+  artifact: 'discover.type.artifact',
+  enchantment: 'discover.type.enchantment',
+  battle: 'discover.type.battle',
+  instant: 'discover.type.instant',
+  sorcery: 'discover.type.sorcery',
+} as const satisfies Record<string, CatalogKey>;
+
+/*
+ * Le détour par un `Record` indexable, et pourquoi il n'est pas gratuit : `t`
+ * n'accepte une clé sans paramètre qu'en la connaissant précisément, et un
+ * `CatalogKey` quelconque exigerait un objet de variables. Le `satisfies`
+ * ci-dessus garde donc les huit clés littérales, et cette vue-ci sert à les
+ * interroger par un mot venu de `CARD_TYPES`, que le typage ne peut pas
+ * anticiper.
+ */
+const TYPE_LABEL_OF: Readonly<Record<string, (typeof TYPE_LABELS)[keyof typeof TYPE_LABELS] | undefined>> =
+  TYPE_LABELS;
+
+/**
+ * Ce que le dialogue rend, relu en critère de protocole.
+ *
+ * Les valeurs du champ sont préfixées parce qu'un sous-type et un type peuvent
+ * s'écrire pareil — `Vehicle` est un sous-type d'artefact, et rien n'interdira
+ * jamais à un type de s'appeler comme une tribu. Le préfixe dit de quel côté du
+ * tiret cadratin on cherche, ce qui est exactement la question.
+ */
+export function criterionOfValue(raw: string): CascadeCriterion | null {
+  if (raw === 'permanent') return { kind: 'PERMANENT' };
+  if (raw.startsWith('type:') && raw.length > 5) return { kind: 'TYPE', value: raw.slice(5) };
+  if (raw.startsWith('sub:') && raw.length > 4) return { kind: 'SUBTYPE', value: raw.slice(4) };
+  return null;
 }
 
 /**
@@ -1425,6 +1478,132 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
   };
 
   /*
+   * « Découvrir sans N » — **le critère est un type, et il est désigné**.
+   *
+   * Les cartes qui révèlent jusqu'à une créature, un artefact ou un Dragon
+   * demandent exactement la séquence de la cascade ; seul le mot comparé
+   * change. Le dialogue tient les trois critères de l'action assistée :
+   *
+   *  - il **n'interdit rien** — exiler du dessus une à une reste offert, sur
+   *    cette carte comme sur n'importe quelle autre, et l'entrée est dans le
+   *    tiroir de toutes les cartes, sans détection de mot-clé qui pourrait la
+   *    fermer (Scryfall n'étiquette pas ces cartes-là : il n'y a pas de
+   *    mot-clé à détecter, et c'est très bien ainsi) ;
+   *  - il **n'impose rien** — aucun critère n'est présélectionné et la
+   *    destination du reste non plus ; le dialogue refuse de se valider tant
+   *    que les deux ne sont pas désignés, comme celui d'« Amasser » ;
+   *  - il **ne conclut rien** — la liste des types est celle du protocole, pas
+   *    une lecture de la carte : nous ne stockons ni `oracle_text` ni
+   *    `flavor_text`, et nous ne devinons donc jamais ce que la carte demande.
+   *
+   * Le lexique de sous-types est celui des marqueurs calculés — `canonSubtype`
+   * ramène « ange » sur `angel` et « chaman » sur `shaman`, `subtypeLabel`
+   * réécrit le mot en français officiel. Ce qui part au serveur est le **canon
+   * anglais**, parce que la ligne de type du catalogue l'est ; le français
+   * n'est qu'un vernis d'affichage, et c'est la règle du projet.
+   */
+  const askDiscoverType = (): void => {
+    onClose();
+    const typeGroup = t('discover.groupTypes');
+    const options = [
+      /*
+       * « Permanent » vient **en premier** parce que c'est l'union et non un
+       * type : le joueur qui cherche un type précis le reconnaît tout de suite
+       * en dessous, celui qui cherche « un permanent » ne le trouverait au
+       * milieu d'une liste alphabétique que par hasard.
+       */
+      { value: 'permanent', label: t('discover.permanent'), group: typeGroup, keywords: 'permanent' },
+      ...CARD_TYPES.map((spec) => {
+        const key = TYPE_LABEL_OF[spec.key];
+        return {
+          value: `type:${spec.key}`,
+          label: key ? t(key) : spec.key,
+          group: typeGroup,
+          keywords: spec.key,
+        };
+      }),
+      ...COMMON_SUBTYPES.map((canon) => ({
+        value: `sub:${canon}`,
+        label: subtypeLabel(canon),
+        group: t('discover.groupSubtypes'),
+        // Le canon anglais entre dans les mots de recherche : « angel » trouve
+        // « Ange » sans que le joueur ait à deviner de quel côté il est.
+        keywords: `${canon} sous-type tribu`,
+      })),
+    ];
+
+    void openDialog({
+      title: t('discover.title'),
+      description: t('discover.description'),
+      submitLabel: t('discover.submit'),
+      fields: [
+        {
+          name: 'criterion',
+          label: t('discover.criterionLabel'),
+          hint: t('discover.criterionHint'),
+          // **Pas d'`initial`** : le dialogue attend une désignation plutôt
+          // que d'en souffler une. C'est le précédent d'« Amasser ».
+          options,
+          search: {
+            placeholder: t('discover.searchPlaceholder'),
+            /*
+             * Tout mot tapé devient un sous-type proposé — les 350 sous-types
+             * du jeu ne tiennent dans aucune liste, et c'est ce qui rend
+             * atteignable celui qu'une extension vient d'imprimer. Sauf s'il
+             * est **déjà** dans la liste : proposer deux fois « Dragon » ne
+             * ferait que semer le doute sur la différence entre les deux.
+             */
+            freeform: (query) => {
+              const canon = canonSubtype(query);
+              if (canon === '' || options.some((option) => option.value === `sub:${canon}`)) {
+                return [];
+              }
+              return [
+                {
+                  value: `sub:${canon}`,
+                  label: t('discover.subtypeOption', { name: subtypeLabel(canon) }),
+                  group: t('discover.groupSubtypes'),
+                },
+              ];
+            },
+            /*
+             * Le lexique ignore ce mot : on le **dit**, et on propose quand
+             * même. Un sous-type absent du lexique se compare tel quel à la
+             * ligne de type, qui est anglaise — « gobelin » trouverait, « pirate
+             * » aussi, mais un mot français sans parenté anglaise ne trouvera
+             * rien, et mieux vaut l'avoir lu avant que pendant.
+             */
+            note: (query, matches) => {
+              const brut = query.trim();
+              if (brut === '' || matches > 0 || isKnownSubtype(brut)) return null;
+              return t('discover.unknownSubtype', { name: brut });
+            },
+          },
+        },
+        {
+          name: 'rest',
+          label: t('discover.restLabel'),
+          hint: t('discover.restHint'),
+          // Pas d'`initial` non plus, et c'est le point du geste : les cartes
+          // ne sont pas unanimes, présélectionner conclurait.
+          options: [
+            { value: 'GRAVEYARD', label: t('discover.restGraveyard') },
+            { value: 'LIBRARY_BOTTOM', label: t('discover.restLibrary') },
+            { value: 'HAND', label: t('discover.restHand') },
+          ],
+        },
+      ],
+    }).then((result) => {
+      if (!result) return;
+      const criterion = criterionOfValue(result.values['criterion'] ?? '');
+      const rest = result.values['rest'] ?? '';
+      if (!criterion) return;
+      if (rest !== 'GRAVEYARD' && rest !== 'LIBRARY_BOTTOM' && rest !== 'HAND') return;
+      send({ type: 'CASCADE', sourceId: card.id, criterion, rest });
+    });
+  };
+
+  /*
    * Le raccourci, et sa seule exception.
    *
    * Mot-clé détecté **et** valeur de mana certaine : un clic suffit, et le
@@ -1667,6 +1846,7 @@ export function CardMenu({ card, x, y, onClose }: CardMenuProps): React.ReactEle
     submenu: [
       { label: t('card.cascadeEntry'), run: () => askCascade('BELOW') },
       { label: t('card.discoverEntry'), run: () => askCascade('AT_MOST') },
+      { label: t('card.discoverTypeEntry'), run: askDiscoverType },
       { label: t('assist.namedTokens'), separatorBefore: true, run: askNamedToken },
       { label: t('assist.amassNew'), run: askAmassNewArmy },
       ...(inZone === 'BATTLEFIELD'

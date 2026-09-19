@@ -163,18 +163,86 @@ export interface TakeBack { type: 'TAKE_BACK'; cardId: ObjectId; to: 'HAND' | 'F
  *  - `BELOW` — cascade, « strictement inférieure » à la valeur de mana du sort ;
  *  - `AT_MOST` — découvrir N, « N ou moins ».
  *
+ * Un **troisième** critère est venu depuis, et il ne compare aucun nombre :
+ * `criterion` arrête la séquence sur un **type de carte**, un **sous-type** ou
+ * un **permanent**. C'est « Découvrir sans N » — les cartes qui révèlent
+ * jusqu'à trouver une créature, un artefact, un Dragon. Le geste est le même au
+ * détail près, d'où le même intent plutôt qu'un second : seuls changent le mot
+ * comparé et, parce que ces cartes-là ne sont pas unanimes, la destination du
+ * reste (`rest`). Voir `CascadeCriterion` et `CascadeRest`.
+ *
  * La carte trouvée **reste à l'exil, face visible**, et le joueur en dispose
  * avec le menu ordinaire. « Jouer sans payer son coût » n'a pas de sens sur une
  * table sans pile ni coûts : il n'y a pas de lancement, seulement des
  * déplacements, et choisir à sa place où la carte atterrit serait arbitrer.
  */
+/**
+ * Le critère d'arrêt quand ce n'est **pas** une valeur de mana.
+ *
+ * « Révélez des cartes du dessus de votre bibliothèque jusqu'à ce que vous
+ * révéliez une carte de créature » : la séquence est celle de la cascade au
+ * geste près, seul le mot que l'on compare change. Trois familles, et elles
+ * sont exactement celles que les cartes emploient :
+ *
+ *  - `TYPE` — un type de carte (`creature`, `land`, `battle`…). `value` est le
+ *    mot **anglais**, en minuscules, tel qu'une ligne de type l'écrit ; la
+ *    liste offerte par l'interface vient de `CARD_TYPES`, mais le champ reste
+ *    une chaîne libre : un mot hors liste est comparé tel quel plutôt que
+ *    refusé ;
+ *  - `SUBTYPE` — un sous-type (`dragon`, `angel`, `assembly-worker`). `value`
+ *    est le canon anglais du lexique client (`canonSubtype`), pour la raison
+ *    habituelle : le catalogue est en anglais, le français est un vernis
+ *    d'affichage. Les sous-types en deux mots s'écrivent avec un tiret ou une
+ *    espace, indifféremment ;
+ *  - `PERMANENT` — l'union des types permanents, sans autre valeur à saisir.
+ *
+ * Le serveur compare sur la **ligne de type**, seule donnée dont il dispose :
+ * ni `oracle_text` ni `flavor_text` ne sont stockés, c'est un invariant de
+ * droits. Il ne lit donc rien de ce que la carte déclenchante raconte — le
+ * critère est **saisi par le joueur**, exactement comme le seuil de mana l'est
+ * depuis toujours.
+ */
+export type CascadeCriterion =
+  | { kind: 'TYPE'; value: string }
+  | { kind: 'SUBTYPE'; value: string }
+  | { kind: 'PERMANENT' };
+
+/**
+ * Où va le **reste** des cartes révélées, quand le critère est un type.
+ *
+ * Question tranchée par le troisième critère de l'action assistée — *elle ne
+ * conclut rien*. Les cartes à cascade disent toutes « le reste dessous, au
+ * hasard », et le serveur peut donc le faire sans rien décider. Les cartes qui
+ * révèlent jusqu'à un type, elles, ne sont **pas** unanimes : les unes mettent
+ * le reste au cimetière, d'autres dessous, d'autres en main. Choisir pour le
+ * joueur serait conclure ; le champ est donc obligatoire dès qu'un `criterion`
+ * est là, et le dialogue qui l'alimente n'a aucune valeur présélectionnée.
+ */
+export type CascadeRest = 'LIBRARY_BOTTOM' | 'GRAVEYARD' | 'HAND';
+
 export interface Cascade {
   type: 'CASCADE';
   /** Carte déclenchante, pour le journal seulement : elle n'est pas touchée. */
   sourceId?: ObjectId;
-  /** Le seuil, tel que le joueur l'a saisi. */
-  manaValue: number;
-  compare: 'BELOW' | 'AT_MOST';
+  /**
+   * Le seuil, tel que le joueur l'a saisi. Avec `compare`, c'est le critère
+   * « valeur de mana » — celui de la cascade et de « Découvrir N ».
+   *
+   * **Facultatif depuis l'arrivée de `criterion`, et seulement à cause de lui.**
+   * Les deux critères s'excluent : l'intent porte l'un **ou** l'autre, jamais
+   * les deux ni aucun, et `intentSchema` le vérifie. Aucun appel existant ne
+   * change — le chemin par valeur de mana envoie toujours les deux champs — et
+   * `PROTOCOL_VERSION` ne bouge pas, pour la raison qui a déjà valu à `CASCADE`
+   * et `PROLIFERATE` d'entrer dans la version 3 sans la lever : un ajout
+   * facultatif qu'un client antérieur n'émet simplement jamais, et client et
+   * serveur sont déployés ensemble.
+   */
+  manaValue?: number;
+  compare?: 'BELOW' | 'AT_MOST';
+  /** Le critère par type, qui remplace la comparaison de valeur de mana. */
+  criterion?: CascadeCriterion;
+  /** Obligatoire avec `criterion`, refusé sans lui : voir `CascadeRest`. */
+  rest?: CascadeRest;
 }
 
 /**

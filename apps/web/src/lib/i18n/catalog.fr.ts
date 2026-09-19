@@ -495,6 +495,45 @@ export const fr = {
   'cascade.unknownCost': 'Le coût de cette carte n’est pas connu ici : saisissez la valeur vous-même.',
   'cascade.submit': 'Lancer la séquence',
 
+  // — Découvrir sans N : le critère est un type ————————————————————
+  /*
+   * Le pendant de « Découvrir N », pour les cartes qui révèlent jusqu'à un
+   * **type** plutôt que jusqu'à une valeur de mana. Le vocabulaire suit celui
+   * des cartes françaises : « éphémère » et « rituel », jamais « instant » ni
+   * « sorcery », et « bibliothèque » jamais « deck ».
+   */
+  'card.discoverTypeEntry': 'Découvrir par type…',
+  'discover.title': 'Découvrir par type',
+  'discover.description':
+    'Exile les cartes du dessus de votre bibliothèque une à une jusqu’à une carte qui porte le type demandé. Elle reste à l’exil, face visible, et vous en faites ce que vous voulez ; le reste va où vous le dites ci-dessous.',
+  'discover.criterionLabel': 'S’arrêter sur',
+  'discover.criterionHint':
+    'Comparé sur la ligne de type, les deux faces comprises. Rien n’est lu du texte de règles : c’est votre carte que vous recopiez ici.',
+  'discover.searchPlaceholder': 'Type, ou sous-type (dragon, ange…)',
+  'discover.groupTypes': 'Types de carte',
+  'discover.groupSubtypes': 'Sous-types courants',
+  'discover.permanent': 'Permanent (n’importe quel type de permanent)',
+  'discover.subtypeOption': 'Sous-type « {name} »',
+  'discover.unknownSubtype':
+    '« {name} » n’est pas dans le lexique : il sera cherché tel quel sur la ligne de type, qui est en anglais.',
+  /* Au singulier, contrairement aux `type.*` des pastilles de zone : ici on
+   * désigne une carte, pas un tas. */
+  'discover.type.creature': 'Créature',
+  'discover.type.planeswalker': 'Planeswalker',
+  'discover.type.land': 'Terrain',
+  'discover.type.artifact': 'Artefact',
+  'discover.type.enchantment': 'Enchantement',
+  'discover.type.battle': 'Bataille',
+  'discover.type.instant': 'Éphémère',
+  'discover.type.sorcery': 'Rituel',
+  'discover.restLabel': 'Le reste des cartes révélées',
+  'discover.restHint':
+    'Les cartes ne disent pas toutes la même chose — les unes le mettent au cimetière, d’autres sous la bibliothèque, d’autres en main. Désignez ce que dit la vôtre : rien n’est choisi à votre place.',
+  'discover.restLibrary': 'Sous la bibliothèque, au hasard',
+  'discover.restGraveyard': 'Au cimetière',
+  'discover.restHand': 'En main',
+  'discover.submit': 'Lancer la séquence',
+
   // — Marqueur personnalisé : aperçu et formulaire ————————————————
   'counter.preview': 'Aperçu en direct',
   'counter.modeFrozen': 'Figé à la pose',
